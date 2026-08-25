@@ -13,7 +13,7 @@
 These come first deliberately: the guarantee must be in place and proven before confidential content is ever deployed. See design.md — Migration Plan.
 
 - [ ] 2.1 Create the Cloudflare Worker and attach the custom domain (the concrete hostname is a deployment parameter, held in the vault repository rather than here); verify the hostname resolves and serves the Worker
-- [ ] 2.2 Disable the `workers.dev` route for the Worker and verify by requesting the `workers.dev` address directly that it does not serve content — this is the highest-consequence check in the project
+- [ ] 2.2 Disable every bypass hostname for the Worker — the `workers.dev` route and, if explicitly enabled, Preview URLs — and verify by requesting each address directly that it does not serve content; this is the highest-consequence check in the project. Disabling in the dashboard is not durable on its own: `workers_dev: false` must also be set in the `wrangler` configuration (7.3), because a dashboard-only toggle is re-enabled by the next `wrangler deploy`. Preview URLs follow the `workers_dev` setting unless they were explicitly configured, in which case they are disabled separately
 - [ ] 2.3 Create the Cloudflare Access application on that custom domain, scoped to the apex so every path is covered rather than a subpath, and verify a request to a nested path is intercepted
 - [ ] 2.4 Add the one-time PIN login method and an Access policy of `Include → Emails → the reader addresses`; verify the policy lists exactly the intended addresses
 - [ ] 2.5 Deploy a placeholder page and verify an unauthenticated request is refused, an allow-listed address receives a code and gains access, and a non-allow-listed address is refused and receives no email
@@ -63,7 +63,7 @@ These come first deliberately: the guarantee must be in place and proven before 
 
 - [ ] 7.1 Write `action.yml` as a composite action running `npm ci` and the CLI from `$GITHUB_ACTION_PATH`, with no committed `dist/`; verify a workflow in this repo consumes the action against a fixture vault and produces output
 - [ ] 7.2 Tag the first release as `v1` and verify `uses: emmz-makes-stuff/vault-publisher@v1` resolves from another repository
-- [ ] 7.3 Add the `wrangler` configuration with `assets.directory` pointing at the build output and no Worker script; verify `wrangler deploy` uploads a fixture site to the Worker
+- [ ] 7.3 Add the `wrangler` configuration with `assets.directory` pointing at the build output and no Worker script; verify `wrangler deploy` uploads a fixture site to the Worker. The configuration MUST carry `workers_dev: false` — verify it is present _before_ the first deploy, and re-request the `workers.dev` address afterwards to confirm the deploy did not re-enable the route that 2.2 disabled
 - [ ] 7.4 Add `.github/workflows/publish.yml` to the vault repository, triggered `on: push: branches: [main]`, running the action and deploying with `wrangler`; verify a push to main publishes and a push to another branch does not
 - [ ] 7.5 Store the Cloudflare deploy token as a secret in the vault repository and verify the workflow authenticates without it appearing in logs
 - [ ] 7.6 Verify a push changing only `publish.config.yaml` rebuilds the site, and that a note removed from the config no longer has a published page
@@ -73,6 +73,6 @@ These come first deliberately: the guarantee must be in place and proven before 
 
 - [ ] 8.1 Publish the real selected set and verify the site contains exactly those notes, with the explorer showing no trace of excluded ones
 - [ ] 8.2 Re-verify unauthenticated refusal on the live site — a page, a nested path, and a static asset — after real content is deployed
-- [ ] 8.3 Re-verify the `workers.dev` address serves nothing now that real content exists
+- [ ] 8.3 Re-verify every bypass hostname serves nothing now that real content exists — the `workers.dev` address and any Preview URL — since the deploys in section 7 ran between this check and 2.2
 - [ ] 8.4 Have each reader complete a login end to end and confirm they reach the site
 - [ ] 8.5 Review the publish log's `[WARNING]` lines with the Product Owner and confirm each degraded link is expected
