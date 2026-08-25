@@ -865,6 +865,35 @@ Three tasks added, none ticked:
 Section 2 is therefore **not closed**; it now has three unticked tasks and needs a second supervisor
 pass once they are verified.
 
+**[architect]** **2.7 verified and ticked**, by an unplanned natural experiment rather than a
+constructed test — which makes it better evidence than the test would have been.
+
+An address removed from the policy earlier in this section still held a live session in the browser
+where it had signed in. Both halves of the amended scenario were then observed directly:
+
+- **Persistence:** a page that browser had **never fetched** rendered for the removed address. The
+  choice of an unvisited path is what makes this evidence — a previously-loaded page can render from
+  cache and look identical to live access while access is already gone, so the obvious version of
+  this check proves nothing. The request demonstrably reached the origin and was served.
+- **Withdrawal:** after a per-user revoke, that same browser no longer had access.
+
+So the behaviour is exactly what the corrected spec now says, and the correction was not theoretical:
+an address removed from the allow-list was still being served client-confidential content
+some time later, and only stopped when explicitly revoked.
+
+**Session duration recorded: 24 hours** (the application session duration; the policy inherits it).
+
+A draft of **2.9** is written at `docs/runbooks/removing-a-reader.md`, for the Product Owner's
+review before ticking. It leads with the failure mode rather than the procedure — removing someone
+does not sign them out — because that is the part that is counter-intuitive and the part that costs
+something when missed. It specifies the **per-user** revoke rather than the application-level one,
+since the latter ends every reader's session and turns a routine removal into an interruption for
+people who were not removed. It also carries the confirmation method that this section learned the
+hard way: check with a page the browser has not visited, or the cache will tell you what you want to
+hear.
+
+**2.8 remains open** — credential reuse and expiry.
+
 ## NEXT
 
 **Section 1 is closed** — supervisor `Approve` on `c756850..1b20150`, after one remediation block.
