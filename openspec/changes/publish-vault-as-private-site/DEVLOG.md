@@ -918,6 +918,10 @@ that nothing has yet exercised**.
 With that, section 2 has one task outstanding: **2.9**, the removal runbook, drafted at
 `docs/runbooks/removing-a-reader.md` and awaiting the Product Owner's review.
 
+**[architect]** **2.9 approved by the Product Owner and ticked.** All nine tasks in section 2 are
+now complete, including the three added during remediation. Handing back to the supervisor for the
+second review pass over the full section range.
+
 ## NEXT
 
 **Section 1 is closed** — supervisor `Approve` on `c756850..1b20150`, after one remediation block.

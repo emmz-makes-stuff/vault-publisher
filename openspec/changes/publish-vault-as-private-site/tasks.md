@@ -20,7 +20,7 @@ These come first deliberately: the guarantee must be in place and proven before 
 - [x] 2.6 Verify that a static asset (an image) placed alongside the placeholder is equally refused when requested directly by its address while unauthenticated
 - [x] 2.7 Record the application's session duration, and verify the two-step removal the spec now describes: sign in as an address, remove it from the policy, and confirm the live session persists; then revoke the existing session and confirm access is withdrawn. Restore the policy to exactly the intended addresses afterwards
 - [x] 2.8 Verify credential reuse: a credential that has already been used is refused, and a new one can be obtained. (Expiry is verified in 8.6 — it needs a wait longer than the credential's lifetime and does not gate the content pipeline)
-- [ ] 2.9 Write the removal procedure down where the owner will find it when removing a reader — both steps, and the consequence of doing only the first. Removal is the operation most likely to be performed under time pressure and believed complete when it is not
+- [x] 2.9 Write the removal procedure down where the owner will find it when removing a reader — both steps, and the consequence of doing only the first. Removal is the operation most likely to be performed under time pressure and believed complete when it is not
 
 ## 3. Configuration and selection
 
