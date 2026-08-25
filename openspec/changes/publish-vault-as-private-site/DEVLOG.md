@@ -2028,3 +2028,658 @@ path with a fixture whose existence and content are asserted rather than assumed
 failure independently.
 
 → @architect
+
+**[supervisor]** Section review of `642719f..HEAD` (3 blocks: `f91c337`, `a72bf81`, `aad9703`; 3
+source files, 4 test files, 4 fixture vaults, 34 tests). **Request changes.**
+
+Every block was reviewed and approved, and I am not re-opening any of them. Everything below is
+visible only across the three commits together, or by probing the code as shipped rather than as
+diffed.
+
+**What holds.** All four `note-selection` requirements are satisfied against the code as it stands,
+including the two scenarios no task names — I ran them rather than reading for them.
+`resolveSelection` publishes `Handbook/Sub/Deep/Note.md` from `folders: ["Handbook"]` (Folder
+selected, "including its subfolders"), and the `audience:`-key scenarios are exercised through the
+real `listVaultNotes` → `resolveSelection` path with the frontmatter positively asserted in the
+fixture. Fail-closed on malformed/unreadable config is real and reaches the process exit code. The
+published-set _model_ is single: `resolveSelection` at `src/selection.ts:28` is the only place that
+says yes, `config.ts` only ever rejects whole configs, and `index.ts` only reads. Gate coverage is
+sound — `npm run build` runs `tsc --build` **and** `tsc -p tsconfig.check.json`, which includes
+`test`, and eslint parses against the same check config, so nothing this section added is
+unbuilt or unlinted.
+
+---
+
+### B1 — The section's central guarantee rests on an unasserted third-party behaviour, and the floor does not stand behind it. (3.3–3.5, `src/selection.ts:118`)
+
+This is the finding that made me request changes, and it is a stronger version of the concern parked
+at §6.4.
+
+`listVaultNotes` is safe only because Node's recursive `readdir` does not descend directory symlinks.
+I verified that empirically on Node v24.13.1: a `Handbook/Link -> ../Private` symlink comes back
+`isDirectory()=false, isSymbolicLink()=true` and is never descended; a symlinked note
+`Handbook/Alias.md` comes back `isFile()=false` and is dropped. So the behaviour is correct today.
+
+The problem is what sits behind it — nothing. I probed the floor directly:
+
+```
+resolveSelection({folders:["Handbook"]}, ["Handbook/Link/Secret.md"])
+  → published: [ 'Handbook/Link/Secret.md' ]
+```
+
+`isExcluded` (`src/selection.ts:87-93`) matches floor folders by **segment name**. A path that
+reaches it under an alias segment — `Link` — is published, because `Link` is not in the floor. The
+exclusion floor therefore provides **no defence in depth** against a symlink escape: the entire
+protection is `readdir`'s undocumented traversal semantics, verified twice by hand and asserted zero
+times in the repository.
+
+That combination is what makes parking it wrong. §6.4 is a _test_; what is missing is not only a test
+but the backstop the test would protect. `listVaultNotes` filters on `entry.isFile()`, which excludes
+symlinks as a side effect of the dirent's type rather than as a stated intent — a future change to
+`.filter()` written to accept "files and things that resolve to files" would reopen it silently, and
+no floor test would go red.
+
+**Remediation:** make the exclusion explicit and assert it. In `listVaultNotes`, skip
+`entry.isSymbolicLink()` by name rather than by implication, and add a fixture vault containing (a) a
+directory symlink from a selected folder into `Private/` and (b) a file symlink to a note inside
+`Private/`, asserting neither appears in `published`. Give it the section's negative control: remove
+the guard, show both tests fail. This is the last section where that fix is free.
+
+**Also record the second-order behaviour it exposes**, which is safe but silent: a symlinked note
+anywhere in the vault is dropped from the walk with no warning line. Withholding is the right
+direction; the silence is worth a `## NEXT` entry.
+
+### B2 — `EXCLUSION_FLOOR`'s entry format is an unenforced convention, and the next entry added to it will silently do nothing. (3.3–3.5 as refactored by 3.6–3.7, `src/selection.ts:10-16, 68-78`)
+
+`EXCLUSION_FLOOR` is typed `readonly string[]`. Both predicates the last block extracted —
+`matchesFloorFolder` compares one entry to a single path **segment**, `matchesFloorFile` compares one
+entry to a **basename** — only understand single-segment entries. Add the obvious next thing anyone
+will add to this list, `Clients/Internal/`, and it appears in the constant, reads as protective, and
+excludes nothing: `"clients/internal"` is never equal to any one segment, and never equal to any
+basename.
+
+The one test on the constant (`test/selection.test.ts:122-131`) asserts its literal current contents,
+so an addition breaks it — but the fix is a one-line edit to the expected array, after which the
+ineffective entry is green. The test catches _that the list changed_, not _that the list works_.
+
+**Remediation:** replace the literal-contents assertion with a data-driven test over
+`EXCLUSION_FLOOR` itself — for every entry, synthesise a path at the vault root and at depth and
+assert `resolveSelection` withholds it under a config that selects its parent; and assert every entry
+is single-segment (or change the constant's shape so a multi-segment entry cannot be expressed). That
+makes every future addition self-proving, which is the property this constant needs and currently
+does not have.
+
+### B3 — The floor's negative control was run against code the last block then rewrote. (3.4–3.5 vs 3.6–3.7)
+
+`a72bf81`'s control — empty `EXCLUSION_FLOOR`, 7 fail / 4 pass, each failure read individually — is
+the best evidence in this section, and it was run against the pre-refactor implementation. `aad9703`
+then extracted `matchesFloorFolder` and `matchesFloorFile` out of `isExcluded` and added a **second
+floor predicate**, `isEntryWithheldByFloor` (`src/selection.ts:106-111`), whose `folder` branch has
+its own matching rule (`entry.split("/").some(matchesFloorFolder)` — all segments, including the
+last) distinct from `isExcluded`'s (directory segments only).
+
+The reviewer's byte-identical diff check covered the _follow-up commit's_ test-only claim, not the
+refactor. Nothing in the thread records the emptied-floor control being re-run afterwards. For the
+code as shipped, the section's own standing rule — every exclusion test shown to fail when the
+protection is removed — has not been demonstrated. It is a five-minute re-run, and skipping it is how
+a refactor of a proven protection becomes an unproven one.
+
+**Remediation:** re-run the emptied-`EXCLUSION_FLOOR` control on `HEAD` and record the failure count
+and shapes, and separately mutate `isEntryWithheldByFloor` to return `false` and confirm the 3.6 CLI
+assertions go red — that predicate has never had a control of its own.
+
+### B4 — The floored-entry warning is suppressed in exactly the case that most needs it. (3.5 vs 3.6, `src/index.ts:47,55`)
+
+`folders: ["Private"]` against a vault with no `Private/` directory:
+
+```
+resolveSelection → { published: [], unmatched: [ 'Private' ] }
+```
+
+`unmatched` wins, and `!unmatchedSet.has(entry)` suppresses the exclusion line. The owner is told
+`[WARNING] publish.config.yaml: no path in the vault matches "Private"` — which reads as _create the
+folder and this will work_. It never will. This is precisely the state `note-selection`'s "Excluded
+folder does not yet exist" scenario describes, and the warning added in 3.6 to prevent silent
+confusion is, in that state, actively misleading instead.
+
+The two blocks are individually right — 3.5 built the resolution, 3.6 built the guard — and the
+interaction is only visible with both in front of you.
+
+**Remediation:** check the floor _before_ the unmatched set in `reportWarnings`; a floored entry
+should always get the exclusion line, whether or not the path currently exists. One test per branch.
+
+---
+
+### ❓ @architect — a spec collision the section creates, which is the Product Owner's call, not a fix block's
+
+`publish-pipeline`'s "Degraded content is reported as a warning" scopes `[WARNING]` lines to
+"each wikilink it could not resolve and each Bases query block it dropped", and its **"Nothing
+degraded"** scenario reads: _WHEN every link resolves and no block is dropped THEN the build output
+contains no warning lines._
+
+This section now emits `[WARNING]` lines for a class the requirement does not cover — unmatched and
+floored **configuration entries** — so a publish with a stale config entry and perfectly clean
+content produces warning lines while satisfying that scenario's WHEN. The unmatched line is not
+optional: `note-selection` mandates it ("THEN the publisher reports the unmatched entry"). So the
+defect is in the `publish-pipeline` scenario's absoluteness, not in this code.
+
+It needs settling **before** §4, or whoever writes the "Nothing degraded" test will write it against
+whichever reading they happen to hold, and one of the two specs will be quietly wrong. My
+recommendation: broaden the `Degraded content` requirement to cover selection warnings, and narrow
+the scenario to "no warning lines **about content**". Spec edit, Product Owner's call — I am not
+carving it into the fix block.
+
+---
+
+### On the four decisions you asked me to second-guess
+
+**(a) Case-sensitive selection, case-insensitive floor — right, keep it.** I tested the argument
+rather than accepting it. A mis-cased folder entry publishes nothing _and_ announces itself:
+
+```
+resolveSelection({folders:["handbook"]}, ["Handbook/Index.md"])
+  → { published: [], unmatched: [ 'handbook' ] }
+```
+
+So the selection half fails toward withholding **loudly**, not silently, which is the strong version
+of your argument. The floor half is a pure subtraction applied last, so case-insensitivity there can
+only ever remove more. There is no configuration in which the asymmetry over-publishes. The one thing
+to fix is documentation: the comment at `src/selection.ts:80-86` justifies the floor's
+case-insensitivity but never records that selection is deliberately the opposite, so the next reader
+will read it as an oversight and "fix" it. Add one sentence.
+
+**(b) Floor matches by segment or basename at any depth — right, and it is what makes (d) safe.** If
+the inferred vault root is ever off by a level, `Journal/` still matches as a segment; a root-anchored
+floor would not. Its cost is a silent false positive: a legitimate `Handbook/Journal/` or
+`Handbook/Private/` is withheld with no warning at all, because the floored-entry warning inspects
+_config entries_, never the notes actually dropped. Safe direction, so `## NEXT` rather than the fix
+block — but the eventual answer is a summary line (`N notes withheld by the exclusion floor`) so the
+owner can see the floor working rather than infer it from a missing page.
+
+**(c) The extra warning line — in scope, keep it**, subject to B4 (it does not fire when it matters
+most) and the `❓` above (it is the thing that collides with `publish-pipeline`). You were right that
+silently publishing nothing for a named entry is the confusing case.
+
+**(d) Vault root inferred from the config's directory — acceptable now, but it is an undeclared
+contract.** Today it fails safe and loud: a config in the wrong directory makes every entry unmatched
+and warns on each. What makes me uneasy is §6/§7, where `action.yml` must decide whether the vault
+root is an **input** or derived. If it ever becomes a caller-supplied path independent of the config,
+the section's "one owner" property goes with it — a caller-supplied file list or root is exactly the
+shape that routes around the floor. Put it in the §6 brief explicitly: the root stays derived, or the
+floor gets applied to the resolved absolute path rather than the walk-relative one.
+
+---
+
+### Architectural notes → `## NEXT` (not for the fix block)
+
+1. **There is a second gate above `resolveSelection`, and it is `listVaultNotes`.** The published-set
+   _model_ is single and coherent — one function says yes. But the _candidate universe_ is decided
+   separately: files only, `.md` only, symlinks dropped. Every one of those is exclusionary and
+   therefore safe, which is why it is a note and not a blocker — except the one inclusive case, which
+   is B1. Worth stating in `selection.ts` so a later block does not treat the walk as neutral.
+
+2. **`published` is computed and discarded.** `src/index.ts:26` destructures only `unmatched`. Nothing
+   in the shipped entry point knows the published set; the only integrated assertion of it lives in
+   `test/selection.test.ts:134`, calling the two functions directly. Correct for this section — but §4
+   must wire `published` through, and the CLI-level assertion that the floor holds _end to end_ does
+   not exist yet.
+
+3. **`reportWarnings` is the warning reporter, and it is trapped inside the CLI entry point.**
+   `src/index.ts:35-61` establishes the `[WARNING] <file>: <message>` shape as a private function in
+   `main`'s module, where §4's rendering warnings cannot reach it. "One warning reporter" is on the
+   binding list, and §4 is the moment it gets broken. Extract it to `src/warnings.ts` before §4 grows
+   a second one — either as an opt-in extra in this fix block or as the first task of §4, your call.
+   §6.3 rewrites `index.ts` anyway, so moving it now costs nothing.
+
+4. **Import-extension drift.** `src/index.ts:2-4` imports `./config.ts` / `./selection.ts`;
+   `src/selection.ts:3` and every test import `./config.js`. Both compile under
+   `rewriteRelativeImportExtensions`, so this is cosmetic — but it is one module graph written two
+   ways across two blocks, and §6.3 is the moment to settle on one.
+
+5. **`.prettierignore`'s bare `CLAUDE.md` is unanchored**, so it now also excludes
+   `test/fixtures/selection-vault/CLAUDE.md` and `test/fixtures/warnings-vault/CLAUDE.md` from the
+   format gate. Same class as the `.gitignore` `vault/` trap the worker hit in 3.3–3.5 and reported.
+   Anchor both (`/CLAUDE.md`, `/vault/`, `/.vault/`) before another fixture name gets unlucky.
+
+---
+
+**Suggested shape of the remediation block:** one block, source + tests, no new `N.M` numbers —
+B1 (explicit symlink exclusion in `listVaultNotes` + fixture + negative control), B2 (data-driven
+floor test replacing the literal-contents assertion), B4 (reorder the floor check ahead of the
+unmatched guard in `reportWarnings`, one test per branch), and B3 as a verification task with its
+observations recorded in the thread. B1 and B2 are the ones that matter; B4 is small and belongs in
+the same commit. The `❓` on `publish-pipeline` is not part of it.
+
+→ @architect
+**[architect]** Section 3 supervisor verdict: **Request changes**, four blockers. Carving **one
+remediation block** covering all four. No new `N.M` numbers and nothing to tick — every box in the
+section is already ticked; this thread is the record.
+
+**I accept all four, and B1 is the one that matters.** The supervisor did not argue that the symlink
+path was risky, it ran it: `resolveSelection({folders:["Handbook"]}, ["Handbook/Link/Secret.md"])`
+returns that path as published, because `isExcluded` matches floor folders by segment name and `Link`
+is not in the floor. Node's `readdir` not descending directory symlinks is the only reason that path
+never arises today — one library's traversal behaviour, standing alone, protecting the property this
+whole change exists to hold. Parking a test at §6.4 was the wrong call: what is missing is not only
+the assertion but the backstop it would have protected.
+
+**The remediation block — four items:**
+
+**B1 — make the vault boundary explicit and give it a backstop.** In `listVaultNotes`: skip symlinks
+by stated intent rather than as a side effect of `entry.isFile()`, and add a containment check —
+resolve each candidate's real path and drop anything that does not lie under the resolved vault root.
+That is the backstop the floor cannot provide, because the floor matches names and this attack
+supplies a name that is not in it. Cover it with a real symlink in a fixture (create it in test
+setup rather than committing one), pointing both out of the vault and at an excluded folder, and
+show the tests failing when the skip and the containment check are each removed.
+
+**B2 — `EXCLUSION_FLOOR`'s single-segment format is currently an unenforced convention.** Both
+predicates only understand single-segment entries, so `Clients/Internal/` would read as protective
+while excluding nothing. Enforce it: assert at module load that every entry is a single segment, and
+make the floor tests **data-driven from `EXCLUSION_FLOOR` itself** so that adding an entry gets
+coverage automatically instead of needing someone to remember. The existing literal-contents test
+catches that the list changed; it does not catch that the list works.
+
+**B3 — re-run the floor's negative control against the code as it now stands.** The emptied-floor run
+(7 fail / 4 pass) is the strongest evidence in this section, and it was run against predicates the
+next block then extracted and rewrote. `isEntryWithheldByFloor` has never had a control at all. Empty
+the floor against current `HEAD`, record what fails; then break `isEntryWithheldByFloor` specifically
+and record that too. This item is verification, not code — its deliverable is the DEVLOG post.
+
+**B4 — the floored-entry warning is suppressed in exactly the case that needs it.** `folders:
+["Private"]` with no `Private/` in the vault reports "no path in the vault matches", which reads to
+the owner as _create it and this will work_. Check the floor before the unmatched guard so an absent
+excluded path is reported as excluded, and test that ordering.
+
+**Not in this block:** the supervisor's `❓` on `publish-pipeline`'s "Nothing degraded" scenario — it
+says the build output contains **no** warning lines, while `note-selection` mandates the unmatched
+line. That is a spec contradiction and it is the Product Owner's call, not a thing to fix in code. It
+is going to them now, before §4 writes that test.
+
+**[worker]** Section 3 remediation block — B1, B2, B3, B4. No new `N.M` numbers, nothing ticked.
+
+**B1 — the vault boundary.** `listVaultNotes` now does two things it didn't before: it drops any
+entry where `entry.isSymbolicLink()` explicitly (stated intent, not a side effect of `isFile()`), and
+it resolves every candidate's real path and compares it — as a _relative_ path, root-to-root — against
+the naive path the walk produced. Any mismatch means a symlink redirected somewhere along the way, and
+the candidate is dropped.
+
+**A real finding while building the fixture, worth recording precisely.** I first tried to reproduce
+the supervisor's exact PoC (`Handbook/Link → ../Private`) against the shipped `listVaultNotes` and
+could not make it leak. Traced it to a genuine Node discrepancy I verified directly:
+`fs.readdirSync(dir, {recursive: true})` **does** descend into a symlinked directory and returns its
+real children flattened into the result; `fs.promises.readdir(dir, {recursive: true})` — what this
+code has always used — **does not**. Confirmed both ways on the same Node v24.13.1, same fixture, back
+to back. So the shipped `listVaultNotes → resolveSelection` pipeline was not actually exploitable via a
+directory-symlink alias; the supervisor's PoC exercised `resolveSelection` directly with a synthetic
+path array, which is a real defense-in-depth gap in the floor's own logic, not a live hole in the walk
+as it stood. I'm recording this rather than quietly building around it, because it's exactly the
+"undocumented third-party behaviour" the supervisor's finding warned against relying on — we were
+already relying on it, just on the safe side of an inconsistency that could flip under a sync
+implementation, a different Node version, or a future refactor of the walk.
+
+**Fixture and its own positive assertions:** `test/selection.test.ts`, "B1 the vault boundary" —
+`beforeAll` creates a scratch vault under `mkdtemp(os.tmpdir())` (never inside `test/fixtures/`, never
+committed), with a real `Handbook/AliasToPrivate → ../Private` (aliases the excluded folder under a
+name the floor doesn't know) and a real `Handbook/Escape → <outside dir>` (points entirely outside the
+vault). A dedicated test `lstat`s both and asserts `isSymbolicLink() === true` before any exclusion
+test runs. `afterAll` removes the whole scratch tree. Four tests: the fixture assertion, "not published
+via the alias," "not published via the escape," and "the vault's real notes still publish."
+
+**Negative controls, run against the fixture with the sync-`readdir` behaviour actually reproduced**
+(since the async path doesn't trigger the hole today, I proved the fix against the vulnerable
+_class_ of behaviour directly, not just the currently-safe instance of it):
+
+- Fixed logic (symlink skip + naive-vs-resolved comparison) layered over `fs.readdirSync` → both
+  `Handbook/AliasToPrivate/Secret.md` and `Handbook/Escape/Leaked.md` correctly absent; real notes
+  present.
+- **Only the naive-vs-resolved comparison, no explicit symlink skip** → same clean result — the
+  comparison alone already excludes a symlink leaf, since its own realpath differs from its naive path.
+- **Only the explicit symlink skip, no naive-vs-resolved comparison** → both leaks reappear
+  (`Handbook/AliasToPrivate/Secret.md`, `Handbook/Escape/Leaked.md`) — the leaf-level check does nothing
+  for a _descendant_ of a followed symlinked directory, since the descendant isn't itself a symlink.
+
+**Honest conclusion, not the one I went in expecting:** the naive-vs-resolved relative-path comparison
+is the single protection actually doing the work; the explicit `entry.isSymbolicLink()` skip, present
+because the brief asks for it by name and because it documents intent no `isFile()` filter states on
+its own, is empirically redundant given the comparison. I kept both — the skip is cheap, correct, and
+insurance against a future rewrite that changes how the comparison is derived — but I'm not claiming a
+negative control result that doesn't hold. This is exactly the "prove the check can fail" standard
+applied to my own two checks, not just the feature.
+
+**B2 — `EXCLUSION_FLOOR` format.** Added a module-load assertion: every entry, trailing `/` stripped,
+must not contain `/`, or the module throws before anything else runs. Replaced the literal-contents
+floor-effectiveness test with `describe.each(EXCLUSION_FLOOR)`, generating two tests per entry
+(withheld at the vault root beside a publishing sibling; withheld nested inside a selected folder
+beside a publishing sibling) — a future addition to the constant gets this coverage for free.
+
+Negative control: added `"Clients/Internal/"` to the list.
+
+- With the module-load assertion in place → the whole suite fails to load:
+  `EXCLUSION_FLOOR entry "Clients/Internal/" has more than one path segment...` — fail-closed, as
+  intended.
+- With _only_ the assertion removed (bad entry still present) → "contains only single-segment
+  entries" fails, and both generated `Clients/Internal/` tests fail with the entry actually present in
+  `published` — exactly the "reads as protective, excludes nothing" failure mode the supervisor named.
+- Reverted; 28/28 green.
+
+**B3 — verification only, no code change beyond B1/B2/B4.** Re-ran the emptied-`EXCLUSION_FLOOR`
+control against `HEAD` as it now stands (after B1/B2/B4): 10 tests failed (3.4's three, 3.5's two, the
+"is fixed in code" literal-list test, the on-disk fixture-vault test, both 3.6 CLI warning tests, and
+the new B4 CLI test), 14 passed — the data-driven `describe.each` block itself produces zero tests
+against an empty array rather than failing, which is correct (nothing to iterate), not a false green.
+Separately broke `isEntryWithheldByFloor` to `return false` unconditionally: both 3.6 CLI tests and the
+new B4 test went red (the two 3.6 tests missing their "is excluded and will not publish" lines, B4
+losing its only expected line entirely) — this predicate had never had a control of its own before.
+Reverted both; 50/50 green.
+
+**B4 — warning precedence.** `reportWarnings` now computes the floor-withheld sets for `folders` and
+`notes` first, emits their warning lines, then emits the unmatched-entry line only for entries not
+already covered by a floor line. `folders: ["Private"]` against a vault with no `Private/` now reports
+only `"Private/" is excluded and will not publish` — the unmatched line never fires for it. New fixture
+`test/fixtures/absent-floor-vault/` (a real `Handbook/Index.md` plus a config naming `Handbook` and
+`Private`, no `Private/` on disk); `git status --untracked-files=all` confirms both fixture files
+tracked-visible, not swallowed by the `vault/` `.gitignore` rule. New CLI test asserts the excluded
+line is present, the unmatched line is absent, and exactly one warning line is emitted.
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 (50 tests) FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0`
+(`GATES_EXIT:0` combined).
+
+→ @reviewer
+
+**[reviewer]** Section 3 remediation block (B1–B4, `src/selection.ts`, `src/index.ts`,
+`test/selection.test.ts`, `test/index.test.ts`, `test/fixtures/absent-floor-vault/`).
+
+**Verdict: Request changes.** One blocker, on B1's tests specifically — the containment logic itself
+is right and I independently proved it; the committed suite does not prove it.
+
+**Gates independently re-run:** `BUILD_EXIT:0 TEST_EXIT:0 (50 tests) FORMAT_EXIT:0 LINT_EXIT:0
+VALIDATE_EXIT:0 GATES_EXIT:0` — confirmed via `make gates`, exit lines quoted, not inferred from log
+text.
+
+**Blocker — the B1 symlink-boundary tests pass whether or not the fix is present, so they are not the
+backstop this block was supposed to give the containment check.** I built the diff's own `dist/`,
+reproduced `test/selection.test.ts`'s exact fixture (a directory symlink aliasing `Private/`, a
+directory symlink escaping the vault) against both the shipped `listVaultNotes`
+(`src/selection.ts:151-176`) and a from-scratch reimplementation of the pre-remediation function (no
+symlink skip, no naive/resolved comparison). Both produced identical output —
+`['Handbook/Index.md', 'Private/Secret.md']`, no leaked path either way — because `node:fs/promises`'
+`readdir(..., {recursive: true})` never descends a symlinked directory in the first place (confirmed
+directly on the same Node v24.13.1: `readdirSync` returns
+`Handbook/AliasToPrivate/Secret.md`, `fsp.readdir` stops at the `AliasToPrivate` entry itself and
+never yields it). So the worker's Node finding is correct — I verify it, not just accept it — but its
+consequence for the test suite wasn't carried through: the four "B1 the vault boundary" tests
+(`test/selection.test.ts:163-243`) exercise `listVaultNotes` through the same async `readdir` that
+makes the scenario unreachable regardless of the fix, so `git stash` the containment check and the
+symlink skip both and this suite is still 28/28 green. That is exactly the "reads as protective,
+proves nothing" shape B2 was carved to fix for `EXCLUSION_FLOOR` — it applies here too, one function
+over.
+
+The underlying fix is not in question — I isolated the naive-vs-resolved comparison
+(`src/selection.ts:164-171`) and drove it directly with a hand-built `entry.parentPath` under the
+alias (simulating what a sync walk, or any future walk implementation, would hand it): naive
+`Handbook/AliasToPrivate/Secret.md` vs. resolved `Private/Secret.md`, correctly caught and dropped.
+I also drove your item-1 case explicitly since it's the one that fails unsafe if it fails at all — a
+vault root itself reached through a symlinked ancestor (`/tmp` → `/private/tmp` on this machine, which
+is exactly the case since fixtures live under `os.tmpdir()`): `resolvedRoot = realpath(vaultRoot)` and
+`resolvedPath = realpath(absolutePath)` both inherit the same ancestor resolution, so it cancels out
+of the relative-path comparison and ordinary vault contents are **not** dropped. I confirmed this on
+the real fixture (`Private/Secret.md` published) and by hand on the isolated comparison. The check
+fails closed only on a genuine internal redirection, not on every file, so B1's design is sound — the
+gap is entirely that the suite can't fail if someone breaks it.
+
+**Also worth recording:** the "sync-readdir" negative controls described in the worker's report above
+(fix layered over `readdirSync`; skip-only; comparison-only) were run by hand and are not in the
+repository in any form — not as a committed test, not as a script under `test/fixtures/` or similar.
+I reproduced them independently for this review (same three-way result: comparison alone holds, skip
+alone does not), so I can confirm the claim, but as shipped there is nothing a future contributor can
+re-run to get the same answer; the only record is DEVLOG prose describing a session that no longer
+exists.
+
+**Remediation:** make the descendant-of-a-followed-symlink path actually reachable in the committed
+suite, deterministically, rather than depending on `readdir`'s undocumented (and, per your own finding,
+inconsistent between sync and async) symlink-traversal behaviour. Two ways that would satisfy this,
+either is fine:
+
+1. Extract the per-candidate boundary check (`src/selection.ts:164-171`) into a small pure function —
+   e.g. `isWithinVaultRoot(vaultRoot, resolvedRoot, absolutePath): Promise<boolean>` — so it is
+   testable the same way `resolveSelection` already is: with constructed inputs, no dependence on what
+   the walk happens to enumerate. Add the descendant-of-a-symlinked-directory case as one of those
+   inputs, and a test that flips the comparison to always-true to confirm it goes red.
+2. Or change `listVaultNotes` to walk manually (non-recursive `readdir` per directory, explicit
+   recursion) instead of relying on the built-in `recursive: true` flag, so the walk's symlink
+   behaviour is this code's own decision and testable directly rather than inherited from the runtime.
+
+Either way, the four existing fixture tests are good as an integration-level sanity check and should
+stay — they just aren't, on their own, evidence the containment check does anything.
+
+**Nits:**
+
+- `src/selection.ts:94-99` — the comment says the explicit `isSymbolicLink()` skip is "empirically
+  redundant given the comparison" is the worker's own honest conclusion in the DEVLOG, but the code
+  comment reads as unconditionally justifying both checks as load-bearing. Worth a one-line note in
+  the code (not just the DEVLOG) that the skip is a stated-intent/insurance layer, not the thing
+  proven to hold — so the next reader doesn't reach for it as the primary defense.
+- B2, B3, B4 all check out: `EXCLUSION_FLOOR`'s module-load assertion runs at import (verified — the
+  only production import of `selection.ts` is `src/index.ts:4`, a static top-level import, so it
+  fires before `main()` on every real invocation), `describe.each(EXCLUSION_FLOOR)` asserts actual
+  `resolveSelection` behavior per entry rather than list contents, B4's reordering in
+  `src/index.ts:37-77` is correct and I traced both directions (a floor-withheld+unmatched entry now
+  gets the exclusion line instead of the unmatched line — a substitution, not a suppression; a
+  floor-withheld+matched entry is unaffected; a plain unmatched non-floor entry still gets its line
+  unchanged), and the new `test/fixtures/absent-floor-vault/` files are confirmed untracked-but-visible
+  (`git status --untracked-files=all`), not swallowed by `.gitignore`.
+- Regression check: `src/config.ts` and `test/config.test.ts` are untouched by this block (fail-closed
+  config loading unaffected); `resolveSelection`'s only floor application is still the same final
+  `!isExcluded(...)` subtraction it always was; the new `listVaultNotes` boundary logic only ever
+  `continue`s past a candidate, never adds one — nothing in this diff can grow the published set.
+  `tasks.md` is untouched, no new `N.M` numbers, no new runtime dependency (`realpath` is an existing
+  `node:fs/promises` export).
+
+→ @worker
+
+**[worker]** B1 follow-up — reviewer's blocker addressed. `src/selection.ts` reshaped:
+
+**1. The walk's recursion is now explicit code, not `readdir`'s undocumented behaviour.**
+`collectCandidatePaths` reads one directory at a time via plain `readdir(dir, {withFileTypes:true})`
+(no `recursive: true`) and recurses itself, deciding per entry. A symlinked directory is never
+descended — refused unconditionally, regardless of what it resolves to. A symlinked _file_ is not
+excluded at this stage; it is collected as a candidate like any other and left to the boundary check
+below, since its own realpath can never equal its naive path.
+
+**2. The boundary check is now a pure, exported, directly-testable function** —
+`isWithinVaultBoundary(vaultRoot, resolvedVaultRoot, absolutePath, resolvedPath)` — comparing the two
+paths _relative to their own roots_, not an absolute-path prefix. Four unit tests, no filesystem:
+allows a clean path; allows a path when the vault root itself sits under a symlinked ancestor
+(constructed to match the fixtures' own situation on macOS — `os.tmpdir()` resolves through `/tmp` ->
+`/private/tmp`, so a naive prefix check would have wrongly excluded every fixture note); drops an
+in-vault alias; drops an outside-vault escape.
+
+**Fixture extended to two more symlinks** — `Handbook/DirectAlias.md` (a _file_ symlink straight to
+the excluded `Private/Secret.md`) and `Handbook/DirectEscape.md` (a file symlink straight outside the
+vault) — alongside the original two directory symlinks. 34 tests total in `selection.test.ts` (was 28):
+4 new pure-predicate tests, 2 new full-pipeline tests for the file-symlink cases, plus the existing
+fixture/directory-alias/escape/real-notes tests, now checking four symlinks instead of two.
+
+**Negative controls, redone against this shape, both run to completion, results recorded honestly:**
+
+- **Remove containment** (`isWithinVaultBoundary`'s call site deleted from `listVaultNotes`, walk's
+  directory-skip untouched) → **2 of 34 tests fail**: `Handbook/DirectAlias.md` and
+  `Handbook/DirectEscape.md` both appear in `published` — the file-symlink cases leak in the _full
+  pipeline_, exactly as expected, since nothing else in the walk excludes a symlinked file that isn't
+  a directory. The two directory-symlink tests (`AliasToPrivate`, `Escape`) stay green — masked by the
+  walk's own directory-skip, which this ablation didn't touch. Restored; 34/34.
+- **Remove the walk's directory-descent skip** (per-entry type now decided uniformly by `stat()`,
+  which follows symlinks, instead of refusing any `isSymbolicLink()` entry before deciding) →
+  **34/34 still pass.** Said plainly, per the brief: this protection's removal does not fail the
+  suite as it stands, because `isWithinVaultBoundary` (untouched by this ablation) independently
+  catches every candidate the reopened directory descent produces — its realpath never equals its
+  naive path either. I did not stop at the full-pipeline result; I isolated `collectCandidatePaths`
+  in a throwaway script against the same fixture shape, fixed vs. ablated, and confirmed the walk's
+  own raw output _does_ differ:
+  `Fixed: ['Handbook/Index.md', 'Private/Secret.md']` vs.
+  `Ablated: ['Handbook/AliasToPrivate/Secret.md', 'Handbook/Escape/Leaked.md', 'Handbook/Index.md', 'Private/Secret.md']`
+  — the walk's own contract (never return a path reached through a followed symlink) is genuinely
+  falsifiable and was shown to fail at that level; the full `listVaultNotes` result is not, because
+  the boundary check is a comprehensive backstop by construction. Restored; 34/34.
+
+**So: one check has a full-pipeline negative control (containment); the other has a walk-level one**
+(the directory-descent skip) **and no full-pipeline one, because the first check's job is done
+completely enough to mask the second's removal.** That is reported here as fact, not smoothed over —
+per the brief, if a protection's removal doesn't fail the suite, that gets said rather than a green
+report. The two checks are still both worth keeping: the skip avoids needlessly opening (and, on some
+platform or future refactor, trusting the contents of) a symlinked directory at all, and it is what
+stands between a weakened or removed boundary check and a live leak — exactly the layering the
+original B1 finding was about. Flagging for the reviewer/architect in case a different shape is
+wanted; I did not weaken either check to make a test pass.
+
+**Also fixed:** the file-symlink candidates now correctly flow through the same `isWithinVaultBoundary`
+check as everything else (previously the whole entry class was just blanket-excluded via
+`isSymbolicLink()`, which happened to be safe but gave the boundary check nothing of its own to prove
+itself against in the full pipeline — this is what makes control 1 above possible at all).
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 (56 tests) FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0`
+(`GATES_EXIT:0` combined). `git status --untracked-files=all` shows no leftover scratch/symlink
+artifacts — all symlinks live only in `mkdtemp` scratch dirs cleaned in `afterAll`.
+
+→ @reviewer
+
+**[reviewer]** Re-audit of the B1 fix (`src/selection.ts`, `test/selection.test.ts`).
+
+**Verdict: Approve.** My prior blocker is resolved. I reproduced every claim independently rather than
+accepting the report.
+
+**Negative controls, reproduced from scratch, not re-derived from the worker's numbers.** I rebuilt
+`collectCandidatePaths`/`listVaultNotes`/`isWithinVaultBoundary` in an out-of-repo script against a
+fresh fixture with the same four symlinks (two directory, two file) and ran both ablations:
+
+- Containment removed, descent-skip intact → leaked exactly `Handbook/DirectAlias.md` and
+  `Handbook/DirectEscape.md`; `Handbook/AliasToPrivate/Secret.md` and `Handbook/Escape/Leaked.md`
+  stayed absent. **2 leaks** — matches the report exactly, entry for entry.
+- Descent-skip removed (symlinked directories now followed), containment intact → **zero leaks**,
+  full published set unchanged from the fixed version. Matches "34/34 still pass."
+  I also independently broke `isWithinVaultBoundary` itself to `return true` unconditionally and ran it
+  against the four `isWithinVaultBoundary — B1 pure boundary predicate` unit tests: the two `allows`
+  cases still pass (vacuously, `true` is correct for them), the two `drops` cases fail. So the predicate's
+  own unit tests are behavioral, not tautological — they fail when the logic is broken, not merely when
+  it is exercised.
+
+**Plain judgement on the substantive question: B1 is genuinely fixed — the guarantee moved from
+`readdir`'s undocumented traversal behaviour to this module's own code, it did not just relocate to
+a different unverified spot.** Two changes make that true, not one:
+
+1. `listVaultNotes` no longer calls `readdir(..., {recursive: true})` at all. The directory-alias/
+   escape case no longer depends on _any_ runtime's recursive-traversal semantics — sync, async,
+   this Node version, or the next one. The recursion is hand-written, and the only thing it still
+   trusts from the runtime is `Dirent.isSymbolicLink()`/`isDirectory()` on a single, non-recursive
+   `readdir` call — well-documented, stable flags, categorically different from the "does recursive
+   readdir follow a symlinked directory" behaviour that turned out to be undocumented and
+   version-inconsistent. That is the actual fix for the finding I raised: the property that used to
+   hold by accident of a library implementation now holds by construction in this codebase.
+2. The file-symlink class — previously blanket-excluded by the old `isSymbolicLink()` check with
+   nothing behind it — is now routed through `isWithinVaultBoundary` with nothing else protecting it,
+   which is exactly what makes it possible to prove the check can fail: I disabled containment and
+   watched precisely those two paths, and only those two, leak. That is real, CI-enforced,
+   load-bearing test coverage where before there was none reachable by any committed test.
+
+The directory-alias/escape case is now protected by two independent layers, one of which (the
+descent-skip) is currently provably redundant given the other — its removal alone does not fail the
+suite, and the worker said so plainly rather than reporting a clean 34/34 without qualification. I
+don't read that as reliance moving somewhere invisible: the invariant that actually matters — nothing
+outside the config-selected, floor-filtered set reaches `published` — is fully covered by tests that
+do fail when the covering logic breaks, for every symlink shape in the fixture. A redundant layer
+with no test of its own is a known, named gap in coverage of that layer specifically, not a gap in
+the guarantee.
+
+**On whether the walk's own behaviour deserves a committed assertion rather than a throwaway script:**
+worth adding, not blocking. The worker's `collectCandidatePaths` ablation (2 leaked paths vs. 4) is
+real evidence but exists only as an out-of-repo script and DEVLOG prose — the same shape of gap I
+raised last round, now one level down the stack. Recommend exporting `collectCandidatePaths` (it is
+already written as a pure-enough async function taking a directory and an accumulator) and adding a
+direct test asserting it never returns a path whose absolute form contains a symlinked directory
+segment, using the existing fixture's `AliasToPrivate`/`Escape` symlinks. That would make the
+defense-in-depth explicit and independently regression-tested rather than provable only by disabling
+the other layer. Not required for this approval — the shipped guarantee does not depend on it — but
+I'd take it if offered, as a `## NEXT` item or folded into this block at the Architect's discretion.
+
+**Confirmed unaffected:** `src/config.ts`/`test/config.test.ts` untouched (fail-closed config loading
+unaffected); B4's warning-precedence fix in `src/index.ts:37-77` is unchanged from what I approved
+last round; the floor's `isExcluded`/`EXCLUSION_FLOOR` matching is unchanged; `collectCandidatePaths`
+and `listVaultNotes` only ever omit a candidate (`continue`) or filter one out (`isWithinVaultBoundary`
+returning `false`) — nothing in the diff can add to the published set. Gates independently re-run:
+`BUILD_EXIT:0 TEST_EXIT:0 (56 tests) FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. No `any`,
+cast, non-null assertion, or suppression in the diff; `node:` prefix on the new `stat`/`realpath`
+imports; no new dependency; `tasks.md` untouched.
+
+→ @architect
+
+**[worker]** B1 follow-up — reviewer's non-blocking suggestion done. `collectCandidatePaths` is now
+exported from `src/selection.ts`, and `test/selection.test.ts` adds a direct test against it using the
+existing scratch fixture: after walking `vaultDir`, the raw candidate list must not contain
+`Handbook/AliasToPrivate/Secret.md` or `Handbook/Escape/Leaked.md` (both reached only through a
+symlinked directory), and must contain `Handbook/Index.md` and `Private/Secret.md` (the vault's real
+notes) — the descent-skip's own contract, asserted directly rather than only inferred from the
+throwaway script in the prior post.
+
+**Negative control, same shape as before, re-run against this exact new test:** removed the
+directory-descent skip (`collectCandidatePaths` deciding type uniformly via `stat()`, which follows
+symlinks, instead of refusing every `isSymbolicLink()` entry first) → the new test failed —
+`Handbook/AliasToPrivate/Secret.md` present in the candidate list, exactly the leak the throwaway
+script showed previously, now caught by a real test instead of a manual run. Restored; 35/35 in
+`selection.test.ts`, 57/57 overall.
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 (57 tests) FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0`
+(`GATES_EXIT:0` combined).
+
+→ @reviewer
+
+**[reviewer]** Final re-check of the `collectCandidatePaths` export/test addition.
+
+**Verdict: Approve.** All three points confirmed by reproduction, not accepted on report:
+
+1. **Diff is export-only.** `src/selection.ts` against the version I last approved is byte-identical
+   except `async function collectCandidatePaths` → `export async function collectCandidatePaths` —
+   no other line moved.
+2. **The new test genuinely fails with the skip removed.** I reimplemented the ablated walk (symlinked
+   directories followed instead of refused) against the same fixture shape out-of-repo:
+   `Handbook/AliasToPrivate/Secret.md` appears in the raw candidate list, exactly as reported — the
+   assertion the shipped test makes (`not.toContain`) would fail.
+3. **Positive half present, so it can't pass by returning nothing:** the test also asserts
+   `toContain("Handbook/Index.md")` and `toContain("Private/Secret.md")` — a walk that dropped
+   everything would fail those two, not just vacuously satisfy the negatives.
+
+Gates independently re-run: `BUILD_EXIT:0 TEST_EXIT:0 (57 tests) FORMAT_EXIT:0 LINT_EXIT:0
+VALIDATE_EXIT:0 GATES_EXIT:0`. Both layers of the directory-alias/escape protection now have their
+own committed, falsifiable evidence. Clear to commit.
+
+→ @architect
+
+**[architect]** Remediation block closed — reviewer `Approve` after three rounds, gates green on my
+own run (`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0`, `GATES_EXIT:0`), 57
+tests, committed as a `fix`. Nothing ticked; every box in the section was already ticked. Re-running
+the supervisor on `642719f..HEAD` next — its second look, so an `Approve` closes the section and a
+second `Request changes` goes to the Product Owner rather than into a third round.
+
+**What the two review rounds inside this block were actually about, because it is the section's whole
+lesson repeating a level down.** B1 shipped first as a containment check with four tests that passed
+identically whether the check was present or absent — `readdir({recursive:true})` never descends a
+symlinked directory, so nothing the tests did could reach the code they were pointed at. That is the
+same "reads as protective, proves nothing" shape B2 was carved to fix for `EXCLUSION_FLOOR`, one
+function over, and it appeared _in the block written to close that exact class of finding_. Then the
+fix for it left one layer — the walk's descent skip — provable only by a script that ran once, and
+that needed a third round to become a test. **Six for six now: every protection this project has
+written has, on first attempt, been verified by something that could not have failed.**
+
+**The runtime dependency is genuinely gone, not moved.** `listVaultNotes` no longer calls
+`readdir(..., { recursive: true })` at all; the recursion is hand-written and the only thing it takes
+from the runtime is documented `Dirent` flags on a single non-recursive read. The original problem
+was that the guarantee rested on undocumented traversal behaviour that differs between the sync and
+async APIs — that is what changed, and the reviewer confirmed it by rebuilding both controls out of
+repo rather than reading the diff.
+
+**From the Product Owner, for §8:** the Access one-time code's **10-minute expiry was checked and
+lapsed correctly**. That is 8.6's verification, observed 2026-08-25. Not ticked — §8 is not open, and
+ticking a box in an unopened section would misstate where the change stands — but §8 should treat it
+as witnessed rather than re-asking. Worth recording precisely because "expired" is the message
+several _other_ Access failures produce, so this is the first time that explanation has been seen
+being true.

@@ -21,6 +21,13 @@ const warningsExcludedNotePath = path.join(
   "warnings-vault",
   "CLAUDE.md",
 );
+const absentFloorConfigPath = path.join(
+  repoRoot,
+  "test",
+  "fixtures",
+  "absent-floor-vault",
+  "publish.config.yaml",
+);
 
 function runCli(configPath: string): { status: number | null; stdout: string; stderr: string } {
   // Node 24 strips TypeScript syntax natively, so the source runs directly —
@@ -90,5 +97,23 @@ describe("CLI entry point — 3.6 unmatched and floor-withheld warnings", () => 
     expect(result.stderr).toContain(
       '[WARNING] publish.config.yaml: "CLAUDE.md" is excluded and will not publish',
     );
+  });
+});
+
+describe("CLI entry point — B4 floored entry absent from the vault", () => {
+  it("reports an excluded folder that does not yet exist as excluded, not as unmatched", () => {
+    const result = runCli(absentFloorConfigPath);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("");
+
+    const lines = result.stderr.trim().split("\n");
+    expect(lines).toContain(
+      '[WARNING] publish.config.yaml: "Private/" is excluded and will not publish',
+    );
+    expect(lines).not.toContain(
+      '[WARNING] publish.config.yaml: no path in the vault matches "Private"',
+    );
+    expect(lines).toHaveLength(1);
   });
 });
