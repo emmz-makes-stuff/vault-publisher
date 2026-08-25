@@ -1534,69 +1534,6 @@ a defect in any agent's work and the Architect's pre-commit run catches it every
 still happening in section 4, the honest fix is for the format gate to stop being the last thing
 anyone runs, not for another three blocks to rediscover it.
 
-## NEXT
-
-**Sections 1 and 2 are closed** (supervisor `Approve` on each, one remediation round apiece).
-16/58 tasks. Next is **section 3 — configuration and selection**.
-
-**Revocation check — done, clear.** The supervisor's open item was whether 2.7's revoke had caught a
-current reader, since revocation persists on the user and would surface at 8.4 as no email, no log
-row and "expired". The Product Owner checked: the reader whose address replaced the substituted one
-holds an active session, so it was not caught. The other two readers have never authenticated, and a
-user record only exists once someone has, so there is no state on them to be wrong. The revocation
-belongs to the address removed at 2.4, which is where it should be.
-
-**One consequence to keep in view:** that address remains revoked. If it is ever restored to the
-allow-list it will still fail to authenticate, with no email and no log row, until the revocation is
-lifted as well. The runbook covers this symptom — it instructs checking the Users screen first when a
-reader reports no code arriving — which is the case for it having been written before it was needed
-rather than after.
-
-**Section 3 is where confidentiality stops being Cloudflare's job.** The exclusion floor decides
-which notes can _never_ publish, whatever the configuration says. It is the first code in this change
-where a bug is a disclosure rather than a defect, and 3.4–3.5 are its tests.
-
-**Brief the worker with this, because it is the lesson of the whole change so far.** Five times in
-two sections a check reported green over territory it had never examined:
-
-1. `.prettierignore` excluded `openspec/` and `docs/`, and prettier applies its ignore file even to
-   explicitly named paths — so `--check` on those paths passed having read nothing. 11 files were
-   unformatted behind it.
-2. No gate type-checked anything outside `src/`; a type error in `test/` passed every gate.
-3. A 404 from a `workers.dev` address is indistinguishable from a mistyped hostname — the check that
-   the project's highest-consequence property rested on.
-4. A `grep` for leaked identifiers reported clean while running in the wrong directory.
-5. A publishability check named, in full, the address it was reporting as absent.
-
-For section 3 the equivalent is an exclusion test that passes because the fixture never contained the
-excluded path, the selection logic never ran, or the assertion could not fail. **Every exclusion test
-must be shown to fail when the floor is removed** — the negative control that 1.4, 1.5 and B3 all
-used, and that 7.8 is written to require. A test that cannot fail proves nothing, and here what it
-would falsely prove is that confidential notes are unpublishable.
-
-**Carried architectural notes:**
-
-- `eslint.config.js`'s `ignores` and `tsconfig.check.json`'s `include` must move together — adding a
-  path to `ignores` removes the only backstop catching it going untype-checked.
-- `test/**` is bound by `strict`, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`; a
-  fixture written `{ notes: undefined }` fails the build. Brief the worker or it reads as the
-  scaffold fighting them.
-- vitest globals are off; tests import from `"vitest"` explicitly.
-- `package.json` still has no `bin`/`main`/`exports`; ADR-0003's Action needs a CLI entry, so
-  `src/index.ts` should become it in §6 rather than the placeholder lingering.
-- `design.md § 6` needs a sentence when next edited: "the build gate also type-checks the tests" is
-  not deducible from that table, and its validate row no longer matches the Makefile's per-change
-  loop.
-- **Unobserved claims in `reader-access`**, from the supervisor's second pass: removal's "can no
-  longer authenticate" half, and the non-disclosure scenario's timing.
-- **The DEVLOG stays in the format gate**; an agent's `FORMAT_EXIT` is provisional by construction,
-  since every agent runs its gates before writing its post. The Architect's pre-commit run is the
-  gate of record.
-- **Committer identity**: the Product Owner's personal address is the git author on every commit and
-  would go public with the repository. A decision to take deliberately before publishing, not to
-  discover after — rewriting authorship across a whole history is far more disruptive than setting it
-  now.
-
 **[worker]** Implemented 3.3–3.5.
 
 `src/selection.ts` — `EXCLUSION_FLOOR` (exported, `readonly`, exactly `CLAUDE.md`, `.claude/`,
@@ -2683,3 +2620,199 @@ ticking a box in an unopened section would misstate where the change stands — 
 as witnessed rather than re-asking. Worth recording precisely because "expired" is the message
 several _other_ Access failures produce, so this is the first time that explanation has been seen
 being true.
+
+**[supervisor]** Second pass over `642719f..HEAD` (4 commits, now including `ae2234c`; 57 tests).
+**Approve. Section 3 is closed.**
+
+I reproduced every claim by ablation rather than reading the diff — for a section whose whole lesson
+is that a protection is worth what its negative control is worth, accepting this one on report would
+have been the seventh instance of the thing.
+
+**B1 — closed, and the guarantee is now the code's.** Two layers, each independently falsifiable, and
+I confirmed they do _different_ work:
+
+| ablation (scratch copy, `test/selection.test.ts`)                       | result                                                                                            |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| baseline                                                                | 35 passed                                                                                         |
+| descent-skip removed (`stat()`-based type resolution, follows symlinks) | **1 failed** — `collectCandidatePaths never returns a path reached through a symlinked directory` |
+| `isWithinVaultBoundary` → `return true`                                 | **4 failed** — both pure-predicate `drops` cases, both file-symlink pipeline cases                |
+
+The first row is the important one. With the descent skip gone, the four `listVaultNotes` boundary
+tests **still pass**, because containment catches the leak downstream — which is correct
+defence-in-depth and precisely why the round-three `collectCandidatePaths` test had to exist. Without
+it that layer would have been protected by nothing, and the suite would have stayed green while half
+the fix was deleted. The reviewer was right to push for it and right that a script that ran once was
+not enough.
+
+Against a hostile fixture (directory symlink aliasing `Private/`, directory symlink escaping the
+vault, file symlink to each) the shipped walk behaves exactly as documented: `AliasToPrivate/Secret.md`
+and `Escape/Leaked.md` never enter the candidate list at all, while `DirectAlias.md` and
+`DirectEscape.md` _do_ enter it and are dropped by containment. Two mechanisms, two failure modes, both
+asserted. I also drove the macOS `/tmp` → `/private/tmp` case and a case-mismatched vault root: both
+return the full correct note list, so the boundary check does not misfire into dropping real content.
+
+**On the sync/async divergence — it does change my reading, and it makes the original finding worse,
+not better.** I verified it directly on Node v24.13.1, same process, same fixture:
+
+```
+readdirSync (recursive):  Handbook/AliasToPrivate/Secret.md | Handbook/Escape/Leaked.md   ← both yielded
+fsp.readdir (recursive):  (neither — traversal stops at the symlink entry)
+```
+
+So the disclosure I demonstrated was not merely reachable in principle through some future rewrite —
+it was reachable through the _sibling function in the same standard library_, one word of a diff away,
+with no test anywhere that would have gone red. "Undocumented" undersells it; the two APIs disagree
+with each other, which means there was never a behaviour to rely on. Section 3 shipping on
+`readdir({recursive:true})` was closer to the edge than my first post said.
+
+**B2 — closed, and the fail-closed direction is right.** Verified both halves:
+
+- multi-segment entry added, load assertion in place → the module throws at import and the **whole
+  suite fails to collect** (`Tests: no tests`). A floor that cannot be trusted stops the build rather
+  than degrading quietly. Correct choice.
+- assertion removed as well → 4 failures, including both auto-generated `Clients/Internal/` cases
+  showing the entry present in `published` — the exact "reads as protective, excludes nothing" mode I
+  named, now caught automatically for any entry anyone adds.
+
+`describe.each(EXCLUSION_FLOOR)` is the right shape: the coverage is a property of the constant, not
+of someone remembering.
+
+**B3 — closed.** The re-run against current code (10 failed / 14 passed) and the first-ever control on
+`isEntryWithheldByFloor` are both recorded with their failure shapes. The observation that the
+`describe.each` block yields _zero_ tests against an emptied floor — correctly, nothing to iterate,
+rather than a false green — is exactly the kind of thing that needed saying out loud.
+
+**B4 — closed.** `src/index.ts` computes the floor-withheld sets first and suppresses the unmatched
+line for those entries. `folders: ["Private"]` with no `Private/` on disk now reports only
+`"Private/" is excluded and will not publish`. The misleading advice is gone.
+
+---
+
+### The five parked items: four were right to park, one is mis-sequenced
+
+You asked me to say if any belonged in this block. Four did not. The fifth is not a scope question but
+a **sequencing** one, and it needs correcting now rather than in §6:
+
+**`reportWarnings` cannot wait for §6.** You wrote that you intend to extract it in §6 "before §4
+needs a second reporter" — but §4 _is_ §6's predecessor. `4.5` (degradation to plain text) and `4.6`
+(ambiguous wikilink target "treated as a warning") both require emitting warnings, and the reporter is
+`6.1`. §4 will therefore need warning output two whole sections before the thing that owns warning
+output exists, and it will get there by growing its own emitter or threading an ad-hoc callback — which
+is the "one warning reporter" hazard arriving exactly on schedule. Extract `reportWarnings` into
+`src/warnings.ts` as the **first task of §4**, or move `6.1` to the front of §4. Either works; leaving
+it at `6.1` does not. This is a `## NEXT` correction, not a section-3 defect — the code as it stands is
+fine.
+
+**And `6.3` will change the contract behind decision (d).** It takes "the vault path, config path and
+output directory" as _separate_ arguments, so the vault root stops being `path.dirname(configPath)`.
+When that lands, `listVaultNotes`'s `realpath(vaultRoot)` and every relative path the floor matches
+against must be re-pointed at the **supplied** root, and the boundary check re-verified against it —
+a caller-supplied root is the one input shape that can route around the floor. Brief it explicitly.
+
+---
+
+### One residual, recorded rather than blocked: hardlinks
+
+New finding, not a regression, and I am deliberately not making it a second `Request changes` — it is
+materially less reachable than the symlink case and it predates this section. Recording it precisely so
+it is a decision rather than an oversight.
+
+`isWithinVaultBoundary` compares a naive path to its `realpath`. A **hardlink** has no separate real
+path — `realpath` returns the link itself — so the check passes. Verified on the fixture:
+
+```
+ln Private/Secret.md Handbook/HardAlias.md
+listVaultNotes            → Handbook/HardAlias.md, Handbook/Index.md, Private/Secret.md
+published(folders:[Handbook]) → Handbook/HardAlias.md, Handbook/Index.md      ← contents of Private/Secret.md
+```
+
+The floor cannot see it (`HardAlias.md` is not a floor name; `Handbook` is not a floor folder), so
+excluded _content_ reaches the published set under an unexcluded _path_. Strictly the spec's wording
+holds — the excluded path is not published — but the confidentiality intent does not.
+
+Why I am not blocking on it: it requires a deliberate `ln` (not `ln -s`); no Obsidian workflow creates
+hardlinks; and unlike the symlink case it cannot arise from ordinary vault housekeeping. Detecting it
+means comparing inodes across the whole vault including floored files — a real piece of work, and the
+right place for it is §6/§8 hardening with the Product Owner's view on whether the threat model
+includes it at all. `## NEXT`.
+
+Also still true and still safe: a symlinked note anywhere in the vault is silently dropped from the
+walk. Withholding is the right direction; the silence is the `## NEXT` item from my first post.
+
+---
+
+**Verdict: Approve** — the section satisfies all four `note-selection` requirements, the exclusion
+floor is now enforced by code this repository owns rather than by a library behaviour that turned out
+not to be a behaviour at all, and every protection in it has been shown to fail when removed. That
+last clause is the one that was missing in round one, and it is the reason this closes.
+
+Two items for `## NEXT` beyond my first post's five: the `reportWarnings` sequencing correction above
+(actionable before §4 opens) and the hardlink residual. The `❓` on `publish-pipeline`'s "Nothing
+degraded" scenario is still open and still the Product Owner's call — it wants settling before `4.5`
+and `4.6` are written, since they are the tasks that will assert against it.
+
+→ @architect
+
+## NEXT
+
+**Sections 1, 2 and 3 are closed** (supervisor `Approve` on each, one remediation round apiece).
+23/58 tasks. Next is **section 4 — the markdown pipeline**.
+
+**Two things need the Product Owner before §4 is briefed.** Both are named below; neither is a thing
+to improvise around.
+
+**Section 3 delivered the published-set model.** `src/config.ts` validates and never returns a
+partial config; `src/selection.ts` resolves selection, applies the exclusion floor last and
+unconditionally, and refuses any path that leaves the vault; `src/index.ts` reports. There is exactly
+one place that says a note publishes — `resolveSelection`'s return filter — and §4 must not add a
+second.
+
+**Six for six.** Every protection this project has written has, on first attempt, been verified by
+something that could not have failed: the `.prettierignore` that made `--check` read nothing; the
+gate that type-checked no tests; the `workers.dev` 404 indistinguishable from a typo; the `grep` run
+in the wrong directory; the publishability check that named the address it called absent; and now
+B1's four boundary tests, which passed identically with the boundary check deleted. **The last one
+appeared inside the block carved to fix that exact class of finding**, one function over. Assume the
+next one is already written and not yet found; the only thing that has ever surfaced them is running
+the code with the protection removed.
+
+**Carried into §4 — the sequencing problem, flagged by the supervisor:**
+
+- **`reportWarnings` is trapped in the CLI entry point and §4 needs it first.** Tasks 4.5 and 4.6
+  both emit warnings, but the reporter is 6.1 — two sections later. Either extract `src/warnings.ts`
+  as the opening task of §4 or move 6.1 to the front of it. **Product Owner's call**, since it
+  reorders the change's tasks.
+- **`6.3` changes the contract behind the vault root.** It takes vault path and config path
+  separately, so the root stops being `path.dirname(configPath)`; `realpath(vaultRoot)` and the
+  boundary check must be re-pointed at the supplied root when it lands. Put this in the §6 brief.
+- **Hardlinks defeat `isWithinVaultBoundary`** — `realpath` returns the link itself, so
+  `ln Private/Secret.md Handbook/HardAlias.md` publishes excluded content under an unexcluded path.
+  Verified by the supervisor. It needs a deliberate non-symlink `ln`, no Obsidian workflow creates
+  one, and detecting it means inode comparison across the vault. **A threat-model decision for the
+  Product Owner**, parked for §6/§8 hardening rather than treated as an oversight.
+- **`❓` `publish-pipeline`'s "Nothing degraded" scenario says the build output contains _no_ warning
+  lines**, while `note-selection` mandates a `[WARNING]` for unmatched config entries — both can be
+  true at once. The scenario is too absolute as written; the likely fix is narrowing its wording to
+  degradation warnings, changing no behaviour. **Product Owner's call, and it must be settled before
+  4.5/4.6 are written**, because those are the tasks that will assert against it.
+
+**Carried architectural notes:**
+
+- `listVaultNotes` is effectively a second gate above `resolveSelection` — safe, but say so in code.
+- `published` is computed and discarded at `src/index.ts`; §6 gives it a consumer.
+- Import-extension drift: `index.ts` imports `.ts`, everything else `.js`.
+- `.prettierignore`'s unanchored `CLAUDE.md` silently skips two fixtures — same class as the
+  `.gitignore` `vault/` trap that swallowed a fixture directory in 3.3–3.5.
+- **The format gate is the last thing everyone runs, so it is provisionally green for all of them.**
+  `FORMAT_EXIT:1` hit my pre-commit run on three of four §3 blocks, always the DEVLOG alone, because
+  every agent formats before writing its post. `make format-fix` now exists as the write half. If §4
+  repeats it, fix the sequence rather than rediscovering it per block.
+- `eslint.config.js`'s `ignores` and `tsconfig.check.json`'s `include` must move together.
+- `test/**` is bound by `strict`, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`; vitest
+  globals are off; `verbatimModuleSyntax` means `import type`.
+- **Unobserved claims in `reader-access`**: removal's "can no longer authenticate" half, and the
+  non-disclosure scenario's timing.
+- **Access one-time code expiry: observed lapsing correctly at 10 minutes, 2026-08-25** — 8.6's
+  verification, witnessed, not yet ticked because §8 is not open.
+- **Committer identity**: the Product Owner's personal address is the git author on every commit and
+  would go public with the repository. Decide before publishing, not after.
