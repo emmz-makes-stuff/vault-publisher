@@ -458,6 +458,30 @@ be refused exactly as a page is. Access gates the whole hostname at the edge, so
 construction; the point of the task is to have proven it rather than assumed it, since an asset
 served unauthenticated would leak images from confidential notes.
 
+**[architect]** Correction to the 2.1 runbook step — the Cloudflare create-Worker UI changed again
+(observed 2026-08-25). The screen is now titled **Ship something new** and offers: Continue with
+GitHub, Connect GitLab, Start with Hello World!, Select a template, Upload your static files.
+
+- **Use "Upload your static files"**, not the "Hello World" the original post named. It creates an
+  assets-only Worker with no script, which is the shape ADR-0003 specifies and that 7.3 deploys;
+  "Hello World" creates a Worker script that section 7 would then have to replace. It also carries
+  2.5's placeholder in the same step — any trivial `index.html`, no vault content.
+- **Do not use "Continue with GitHub"** despite its prominence. It wires a git integration and
+  Cloudflare-side CI builds, which is not this project's topology: deploys come from the vault
+  repository's own workflow via `wrangler`. Connecting a repository here creates a second, competing
+  publish path.
+- The custom-domain half of 2.1 is unchanged, re-confirmed against current docs: the Worker →
+  **Settings** → **Domains & Routes** → **Add** → **Custom Domain**. Cloudflare creates the DNS
+  record.
+- **Expected, not a fault:** a newly created Worker comes up with its `workers.dev` subdomain
+  enabled. 2.2 is the step that removes it. This is precisely why design.md orders this section
+  before any content exists — there is a window in which the Worker is publicly reachable, and
+  nothing but a placeholder may be on it while that is true.
+
+This is the second UI change to hit this runbook. Treat the dashboard navigation in these posts as
+perishable and re-retrieve; the verification commands and the properties being verified are the
+durable part.
+
 ## NEXT
 
 **Section 1 is closed** — supervisor `Approve` on `c756850..1b20150`, after one remediation block.
