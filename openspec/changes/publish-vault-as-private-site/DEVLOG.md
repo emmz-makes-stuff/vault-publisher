@@ -482,6 +482,43 @@ This is the second UI change to hit this runbook. Treat the dashboard navigation
 perishable and re-retrieve; the verification commands and the properties being verified are the
 durable part.
 
+**[architect]** Operational finding from 2.3–2.5 verification — **first OTP login can fail silently
+for several minutes after the Access policy is created, then start working with no configuration
+change.** Recording it because 8.4 has each reader completing a first login, and this failure mode
+is indistinguishable from a misconfiguration while you are in it.
+
+Observed: with the Access application created, the one-time PIN provider present as the only login
+method, and an `Include → Emails` policy listing the reader addresses, a login attempt from a
+listed address produced the code entry screen but **no email, no authentication log entry, and
+"expired" in response to any code typed**. Adding a second address to the policy produced an
+immediate, working code for that address; the originally-listed address then also began working,
+in a different browser, with no further change.
+
+Why it is hard to diagnose: every layer is deliberately silent. The login page says "a code has been
+emailed to you" whether or not one was sent, because it must not disclose the allow-list. Access
+logs an authentication attempt only once a code is evaluated against identity, so a submission
+rejected as expired leaves **no** log row — an empty log therefore does not mean "nothing reached
+authentication", which is how it was misread at the time. The result is that a propagation delay, a
+per-address OTP rate-limit from repeated "Resend" clicks, and a genuinely wrong allow-list all
+present identically.
+
+Cause not established. Candidates, none excluded: policy propagation lag; OTP rate-limiting after
+repeated resends; stale browser session state. The policy edit, the passage of time and the browser
+change all coincided.
+
+**For 8.4 — brief the readers before they try.** A first login that produces no email is expected to
+resolve on its own: wait a few minutes, then request **one** code rather than clicking Resend
+repeatedly, since repeated requests both invalidate the previous code and may trigger the
+rate-limit. Only escalate if a second address also receives nothing, which is the check that
+distinguishes a Cloudflare-side problem from a mail-side one.
+
+**Separately, a genuine mail-side risk worth pre-empting:** one reader's address silently filed the
+codes rather than delivering them, having received mail from the same sender previously. An
+accidental "report spam" on an earlier message is enough to cause it permanently. Readers should
+allow-list `noreply@notify.cloudflare.com` — design.md already anticipates this under the
+link-scanning risk; this is the same mitigation for a different cause. A listed address that cannot
+receive is worse than an absent one, because it looks configured.
+
 ## NEXT
 
 **Section 1 is closed** — supervisor `Approve` on `c756850..1b20150`, after one remediation block.
