@@ -64,7 +64,12 @@ The reader allow-list SHALL be held outside the vault repository and SHALL be ch
 #### Scenario: Removing a reader
 
 - **WHEN** the owner removes an email address from the allow-list
-- **THEN** that person can no longer obtain access
+- **THEN** that person can no longer authenticate, and cannot start a new session
+
+#### Scenario: Removing a reader who is currently signed in
+
+- **WHEN** the owner removes an email address from the allow-list while that person holds a live session
+- **THEN** removal alone does not end the existing session, which persists until it expires; the owner revokes the existing session to withdraw access immediately
 
 #### Scenario: Reader record
 
