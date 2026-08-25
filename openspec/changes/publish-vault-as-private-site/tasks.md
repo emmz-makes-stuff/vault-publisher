@@ -29,8 +29,8 @@ These come first deliberately: the guarantee must be in place and proven before 
 - [x] 3.3 Implement selection resolution — named folders publish recursively, named notes publish individually, everything else does not; verify unit tests cover folder selection, individual-note selection, and a note covered by neither
 - [x] 3.4 Implement the exclusion floor as a fixed list in code covering `CLAUDE.md`, `.claude/`, `.obsidian/`, `Journal/`, `Private/`; verify tests assert each is withheld even when the config names it directly
 - [x] 3.5 Verify by test that an excluded folder nested inside a selected folder is withheld while its siblings publish, and that an absent excluded path (`Private/`) does not error
-- [ ] 3.6 Report configuration entries that match no path in the vault as warnings and publish what did match; verify a test asserts the warning and a successful exit
-- [ ] 3.7 Verify by test that a note's `audience:` frontmatter value has no effect on selection in either direction
+- [x] 3.6 Report configuration entries that match no path in the vault as warnings and publish what did match; verify a test asserts the warning and a successful exit
+- [x] 3.7 Verify by test that a note's `audience:` frontmatter value has no effect on selection in either direction
 
 ## 4. Markdown pipeline
 

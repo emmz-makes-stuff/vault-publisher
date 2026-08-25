@@ -1,9 +1,11 @@
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { PublishConfig } from "../src/config.js";
 import { EXCLUSION_FLOOR, listVaultNotes, resolveSelection } from "../src/selection.js";
 
 const fixtureVault = fileURLToPath(new URL("./fixtures/selection-vault", import.meta.url));
+const audienceFixtureVault = fileURLToPath(new URL("./fixtures/audience-vault", import.meta.url));
 
 function config(partial: Partial<PublishConfig>): PublishConfig {
   return { folders: [], notes: [], ...partial };
@@ -166,5 +168,39 @@ describe("listVaultNotes over a real on-disk fixture vault", () => {
     // Every entry matched something in the vault; the floor filtered
     // afterward without producing a false unmatched report.
     expect(unmatched).toStrictEqual([]);
+  });
+});
+
+describe("resolveSelection — 3.7 audience frontmatter has no effect on selection", () => {
+  it("does not publish a note carrying audience: public that configuration does not select", async () => {
+    const content = await readFile(`${audienceFixtureVault}/Outside/NotSelected.md`, "utf8");
+    expect(content).toContain("audience: public");
+
+    const walked = await listVaultNotes(audienceFixtureVault);
+    expect(walked).toContain("Outside/NotSelected.md");
+
+    const { published } = resolveSelection(config({ folders: ["Handbook"] }), walked);
+
+    expect(published).not.toContain("Outside/NotSelected.md");
+  });
+
+  it("publishes a selected note carrying audience: private, and a selected note with no audience key", async () => {
+    const withAudience = await readFile(`${audienceFixtureVault}/Handbook/Selected.md`, "utf8");
+    expect(withAudience).toContain("audience: private");
+
+    const withoutAudience = await readFile(
+      `${audienceFixtureVault}/Handbook/NoAudienceKey.md`,
+      "utf8",
+    );
+    expect(withoutAudience).not.toContain("audience:");
+
+    const walked = await listVaultNotes(audienceFixtureVault);
+    expect(walked).toContain("Handbook/Selected.md");
+    expect(walked).toContain("Handbook/NoAudienceKey.md");
+
+    const { published } = resolveSelection(config({ folders: ["Handbook"] }), walked);
+
+    expect(published).toContain("Handbook/Selected.md");
+    expect(published).toContain("Handbook/NoAudienceKey.md");
   });
 });

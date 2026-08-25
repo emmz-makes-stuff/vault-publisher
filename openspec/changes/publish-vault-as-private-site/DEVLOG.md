@@ -1457,6 +1457,83 @@ explicit test rather than a verified-once claim; §6.4's end-to-end run against 
 where it belongs. Also carried: `.gitignore`'s `vault/` rule is unanchored and swallowed this block's
 first fixture directory silently.
 
+**[architect]** Brief — block **3.6–3.7**, the section's last: unmatched configuration entries
+reported as warnings, and proof that `audience:` frontmatter does not affect selection in either
+direction. Scope is those two tasks. Section 4's pipeline is not open.
+
+**Spec.** `note-selection` — _Selection failures do not publish more than intended_: "**WHEN** a
+configuration entry names a folder or note absent from the vault **THEN** the publisher reports the
+unmatched entry and publishes only what did match". And _Configuration is the sole source of truth
+for selection_: no frontmatter key, tag, or naming convention causes a note to publish or be withheld;
+its two scenarios are a note carrying `audience:` with any value, and a selected note carrying no
+`audience:` key at all. `publish-pipeline` — _Warnings never fail a publish_.
+
+**3.6 — the warning, and what it is not.** `resolveSelection` already returns `unmatched`; this block
+reports it. **Do not build the warning reporter** — that is 6.1, and a second reporter here is
+scaffolding it will have to delete. Emit the line from `src/index.ts` in the shape 6.1 will keep:
+
+```
+[WARNING] publish.config.yaml: no path in the vault matches "Meetings/2027"
+```
+
+- **Warnings go to stderr**, and the process still **exits 0**. Keeping stdout clean preserves 3.2's
+  assertions and keeps the channel free for output; 6.1 inherits this choice.
+- One line per unmatched entry, naming the entry. Every unmatched entry is reported, not the first.
+- An entry matching nothing does **not** fail the publish and does not reduce what else publishes.
+
+**One addition of mine, flagged as mine.** An entry that names a path the exclusion floor withholds
+is _not_ unmatched — the path exists — but publishing nothing for it in silence is the confusing
+case, so give it its own line: `[WARNING] publish.config.yaml: "Journal/" is excluded and will not
+publish`. It changes no behaviour, and warnings never fail a publish. If you or `@reviewer` judge it
+outside the change's scope, say so and it comes back to me rather than being quietly dropped.
+
+**3.7 — the test that is hardest to write honestly.** Nothing in the code reads frontmatter, so a
+test asserting "`audience:` has no effect" passes trivially, including if selection were deleted
+entirely. Make it real:
+
+- Fixture notes carrying `audience: public` that the config does **not** select — assert they do not
+  publish. A frontmatter-driven implementation would publish these; that is the direction that leaks.
+- Fixture notes carrying `audience: private`, and notes carrying no `audience:` key at all, that the
+  config **does** select — assert they publish.
+- Run through the real path (`listVaultNotes` then `resolveSelection`), not a hand-written path list,
+  and assert positively that the fixtures contain the frontmatter the test claims.
+- **Negative control:** make `listVaultNotes` or `resolveSelection` temporarily consult the file's
+  frontmatter — skip notes whose content carries `audience: private`, say — and show the 3.7 tests
+  failing. Restore, re-verify, and record what you did and what you saw. Without that, the test
+  cannot distinguish "frontmatter is ignored" from "the test cannot fail".
+
+**Fixtures:** `.gitignore` swallows any directory named `vault` — this block's fixture directory must
+not be called that, and check with `git status --untracked-files=all` that every fixture file is
+actually visible to git. An ignored fixture is a test running over an empty directory.
+
+**Process:** toolchain changes (tsconfig, eslint config, .prettierignore, package.json) come to me,
+not to you; the Makefile is not yours at all. `test/**` is type-checked under `strict`,
+`noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`; vitest globals are off;
+`verbatimModuleSyntax` means `import type`.
+
+**Done-gates:** `make build` → `BUILD_EXIT:0`, `make test` → `TEST_EXIT:0`, `make format` →
+`FORMAT_EXIT:0`, `make lint` → `LINT_EXIT:0`, `make validate` → `VALIDATE_EXIT:0`. Quote the exit
+lines. Do not commit, do not tick boxes. Post to the DEVLOG, hand off `→ @reviewer`.
+
+**[architect]** Block **3.6–3.7** closed — reviewer `Approve` after a re-audit of the final state,
+gates green on my own run (`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0`,
+`GATES_EXIT:0`), 34 tests, 3.6 and 3.7 ticked, committed. **Section 3's tasks are all ticked; the
+section is not closed until the supervisor has reviewed it.**
+
+**The nit was worth the round trip.** `isEntryWithheldByFloor`'s `note` branch — a `notes:` entry
+naming `CLAUDE.md` — was untested, and it was untested code that _I_ introduced by asking for the
+floor-withheld warning. Parking it in `## NEXT` would have left my own addition as the one piece of
+this section nothing exercised. The re-audit also verified, rather than accepted, the worker's claim
+that the follow-up was test-only: both source files diffed byte-identical against the reviewer's own
+saved copies.
+
+**`FORMAT_EXIT:1` on my first run again, the DEVLOG alone, for the third block running.** The
+`## NEXT` note has now been demonstrated three times in one section: an agent's `FORMAT_EXIT:0` is
+provisional by construction, because every agent runs its gates and _then_ writes its post. It is not
+a defect in any agent's work and the Architect's pre-commit run catches it every time — but if it is
+still happening in section 4, the honest fix is for the format gate to stop being the last thing
+anyone runs, not for another three blocks to rediscover it.
+
 ## NEXT
 
 **Sections 1 and 2 are closed** (supervisor `Approve` on each, one remediation round apiece).
@@ -1718,5 +1795,236 @@ as config validation, confirmed by reading the code rather than trusting the tes
 control is genuine — I reproduced it independently and every one of the 7 failures is the right
 failure for the right reason. The fixture is fully tracked and the `.gitignore` issue that bit it once
 is genuinely fixed, not relocated. Scope stayed inside 3.3–3.5.
+
+→ @architect
+
+**[worker]** Implemented 3.6–3.7.
+
+**3.6 — unmatched and floor-withheld warnings.** `src/index.ts` now runs the real selection path
+after `loadConfig` succeeds: derives `vaultRoot` as `path.dirname(configPath)` (config lives in the
+vault root per `design.md § 2`), calls `listVaultNotes(vaultRoot)`, then `resolveSelection`, then
+`reportWarnings`. Did not touch `src/selection.ts`'s `resolveSelection`/`unmatched` — only consumed
+it, per the brief.
+
+One line per unmatched entry, exact shape from the brief:
+`[WARNING] <configName>: no path in the vault matches "<entry>"` — every unmatched entry, not just
+the first. `configName` is `path.basename(configPath)` rather than a hardcoded literal, so it names
+the file actually passed. All warnings go to stderr; `process.exitCode` is never touched by
+`reportWarnings`, so the process stays at its default 0 — a warning cannot fail the publish.
+
+**The architect's flagged addition (floor-withheld entries) — implemented as scoped.** Added
+`isEntryWithheldByFloor(entry, kind)` to `src/selection.ts`, exported alongside `resolveSelection`.
+It answers a narrower question than `resolveSelection`'s own floor filtering: whether the
+_configuration entry itself_ — not some note beneath it — names a path the floor withholds. Refactored
+`isExcluded`'s inline floor-matching into two shared predicates (`matchesFloorFolder`,
+`matchesFloorFile`) so `isEntryWithheldByFloor` reuses exactly the same matching rules rather than a
+parallel copy that could drift. For a `note` entry this is `isExcluded(entry)` unchanged; for a
+`folder` entry it checks every path segment of the entry against floor folder names — so `Journal`
+(named directly) trips it, but `Handbook` (which merely contains a nested `Private/`) does not, which
+is deliberately consistent with 3.5's "still publishes" case not needing a warning. Entries already
+reported unmatched are skipped so the two warning kinds never both fire for the same entry. I judge
+this in scope: it is pure reporting layered on data `resolveSelection` already computes accessibly
+through the exported floor semantics, changes no selection behaviour, and the brief was explicit that
+it should come back to the architect if I judged otherwise — I don't.
+
+**3.7 — `audience:` frontmatter proven inert, through the real path.** New fixture vault
+`test/fixtures/audience-vault/` (not named `vault`; confirmed with
+`git status --untracked-files=all` — all three files listed `??`, none swallowed):
+
+- `Outside/NotSelected.md` — real YAML frontmatter `audience: public`, outside the config's selected
+  folder.
+- `Handbook/Selected.md` — real frontmatter `audience: private`, inside the selected folder.
+- `Handbook/NoAudienceKey.md` — no frontmatter at all, inside the selected folder.
+
+Tests run the real path (`listVaultNotes` then `resolveSelection`, config `{ folders: ["Handbook"] }`),
+not a hand-written path list, and each test first `readFile`s the fixture and asserts positively that
+the frontmatter it claims is actually there (and, for the no-key fixture, that `"audience:"` is
+genuinely absent from the file). Then: the `audience: public` note outside the selected folder does
+not publish; the `audience: private` note and the no-key note, both inside the selected folder, do.
+
+**Negative controls, both per the brief's "make the check demonstrably falsifiable" instruction —
+each backed up, mutated, run, observed failing, then restored byte-identical (`diff` confirmed):**
+
+- **3.6** — commented out `reportWarnings`' body (early `return`). Re-ran `test/index.test.ts`
+  directly: the new 3.6 test failed — `expected [ '' ] to include '[WARNING] publish.config.yaml: no
+pat…'` — stderr was empty instead of carrying the two warning lines. The other three CLI tests
+  (which don't assert stderr content) stayed green. Restored `src/index.ts`.
+- **3.7** — made `listVaultNotes` read every file's content and drop any note containing
+  `"audience: private"` (a plausible-looking frontmatter-driven implementation). Re-ran
+  `test/selection.test.ts` directly: the "publishes a selected note carrying `audience: private`…"
+  test failed — `Handbook/Selected.md` was missing from the walk entirely — while the sibling test
+  (the `audience: public` note staying unpublished) stayed green, since that mutation doesn't touch
+  it. This is the asymmetry the brief was pointing at: a test that can't fail in _either_ direction
+  isn't proof. Restored `src/selection.ts`.
+
+Both restorations verified `diff`-identical to the pre-mutation file before re-running the real gate
+set below.
+
+**Fixtures — visibility confirmed.** `git status --untracked-files=all` lists all six new fixture
+files (three under `warnings-vault/`, three under `audience-vault/`) as untracked-but-visible; neither
+directory name matches the `.gitignore` `vault/`/`.vault/` pattern.
+
+**Gates:** `BUILD_EXIT:0` `TEST_EXIT:0` `FORMAT_EXIT:0` `LINT_EXIT:0` `VALIDATE_EXIT:0`. 33 tests
+total (3 scaffold + 13 selection + 13 config + 4 CLI). `make format-fix` used once, on this block's
+own new/changed files only (`src/index.ts`, `test/index.test.ts`, `test/selection.test.ts`), per the
+architect's format-fix convention from section 1.
+
+Not touched: `src/config.ts`, the toolchain (`tsconfig.json`, `eslint.config.js`,
+`.prettierignore`, `package.json`, `Makefile`), section 4's pipeline.
+
+**[reviewer]** Block **3.6–3.7** — audit.
+
+Re-ran independently: `BUILD_EXIT:0`, `TEST_EXIT:0` (33 tests, matches the report), `FORMAT_EXIT:0`,
+`LINT_EXIT:0`, `VALIDATE_EXIT:0`, `GATES_EXIT:0`. `git diff --stat` matches the reported file set —
+`src/index.ts`, `src/selection.ts`, `test/index.test.ts`, `test/selection.test.ts`, two new fixture
+directories, `DEVLOG.md`. No toolchain file touched. `git status --untracked-files=all` shows nothing
+outside that set. Grepped for `any\b`, `as`, `!.`, `@ts-ignore`, `@ts-expect-error`,
+`eslint-disable` in the two changed source files — no hits.
+
+**On the six points asked for:**
+
+1. **`listVaultNotes(path.dirname(configPath))` — sound as a bridge, not a wrong assumption baked
+   in.** `design.md § 2` states the config file lives in the vault root beside what it selects, so
+   deriving the root from the config's directory is exactly that decision restated, not a new one
+   invented here. §6.3 (`tasks.md:62`) replaces `argv[2]`-as-config-path entirely with
+   `util.parseArgs` taking vault path and config path as separate flags — at that point `vaultRoot`
+   becomes a real parameter and this line is deleted outright, not adapted. Nothing downstream
+   (`resolveSelection`, `isEntryWithheldByFloor`) depends on the derivation; only this one line in
+   `main()` does. Sound.
+
+2. **The floor-predicate refactor — re-verified, behaviour unchanged, and the reporting path cannot
+   influence what publishes.** Traced it by hand rather than trusting the tests: the pre-existing
+   `isExcluded` loop matched folder-shaped floor entries against `dirSegments` and file-shaped entries
+   against `basename`, mutually exclusive by the same `entry.endsWith("/")` branch. `matchesFloorFolder`
+   and `matchesFloorFile` split that into two functions filtering `EXCLUSION_FLOOR` on exactly that
+   same predicate, and the new `isExcluded` body — `dirSegments.some(matchesFloorFolder) ||
+matchesFloorFile(basename)` — is a straight algebraic restatement, not a behaviour change. Reran the
+   3.4/3.5 negative control myself: emptied `EXCLUSION_FLOOR` in a scratch copy, all floor-touching
+   tests in `test/selection.test.ts` failed the same way the 3.3–3.5 review already recorded, restored,
+   confirmed `diff`-clean. `isExcluded` is still called from exactly one place —
+   `resolveSelection`'s return statement (`[...published].filter((p) => !isExcluded(p))`) — applied
+   last, unconditionally, over the already-matched set; nothing about `isEntryWithheldByFloor` or the
+   new warning path touches `published`, `resolveSelection`'s matching, or `isExcluded` itself.
+   `isEntryWithheldByFloor` is a pure read of the same predicates, called only from `reportWarnings` in
+   `src/index.ts`, which writes exclusively to `stderr`. No regression, and no path from the new
+   reporting code back into what publishes.
+
+3. **The floor-withheld warning line — agree it's in scope, and confirmed it changes no selection
+   behaviour.** It's reporting the outcome of a decision `resolveSelection` already made (the floor
+   removed something from `published`), not a new decision. `reportWarnings` never touches
+   `process.exitCode` on this branch either — traced directly, confirmed by the CLI test's `stdout`/exit
+   assertions passing with two warning lines present. One gap, not a scope objection: `notes:` entries
+   never exercise the `kind === "note"` branch of `isEntryWithheldByFloor` — see nit below.
+
+4. **3.7's honesty — verified, not taken on report.** Ran both negative controls independently, not
+   just reading the worker's account:
+   - Neutered `reportWarnings` (early `return`) — the new 3.6 CLI test failed exactly as reported
+     (`expected [ '' ] to include '[WARNING]...'`), the other three CLI tests stayed green. Restored,
+     `diff`-clean.
+   - Made `listVaultNotes` read file content and drop any note containing `"audience: private"` — the
+     "publishes a selected note carrying `audience: private`…" test failed
+     (`Handbook/Selected.md` missing from `walked`), the sibling `audience: public` test stayed green
+     since that mutation doesn't touch it. Restored, `diff`-clean.
+     Both fixtures positively assert their own frontmatter before asserting selection outcome
+     (`expect(content).toContain("audience: public")`, `expect(withAudience).toContain("audience:
+private")`, `expect(withoutAudience).not.toContain("audience:")`) — read all three fixture files
+     directly; the frontmatter is real YAML, not asserted-but-absent. The test runs the real path
+     (`listVaultNotes` → `resolveSelection`), not a hand-written path list. This is a genuine negative
+     control in both directions, not a check that happens to also pass.
+
+5. **Warnings never fail a publish — confirmed, stdout stays clean.** Re-ran the CLI test directly
+   against `test/fixtures/warnings-vault/publish.config.yaml` (`folders: [Handbook, Journal]`,
+   `notes: [Handbook/Missing.md]`): exit 0, `stdout` empty, exactly two stderr lines — the unmatched
+   note and the excluded `Journal/` folder. `Handbook` itself (matched, not floor-withheld) earns no
+   line, confirming the `unmatchedSet`/`isEntryWithheldByFloor` gating is mutually exclusive per entry,
+   not additive. 3.2's stdout-empty assertions still hold on every existing CLI test.
+
+6. **Scope — clean.** No touch to section 4 (no `pipeline`/`render`/`rehype`/`remark` files exist yet).
+   `reportWarnings` lives in `src/index.ts` exactly as the brief specified so that 6.1 extends it rather
+   than replacing a rival implementation — it is not a second, competing warning reporter. `src/config.ts`
+   untouched; `unmatched`/`isExcluded`'s pre-existing behaviour untouched.
+
+**Nits**
+
+- `src/index.ts:53-58` — the `kind === "note"` branch of `isEntryWithheldByFloor` (a config `notes:`
+  entry naming a directly floor-excluded file, e.g. `notes: ["CLAUDE.md"]`) is never exercised by any
+  test. `test/fixtures/warnings-vault/publish.config.yaml`'s one `notes:` entry
+  (`Handbook/Missing.md`) is unmatched, not floor-withheld, so only the `folder` branch gets covered
+  (via `Journal/`). I traced the code and it's correct — `isEntryWithheldByFloor(entry, "note")` is
+  `isExcluded(entry)` unchanged, already proven by the 3.4 tests — so I'm not blocking on it, but a
+  worker's own architect-flagged addition landing with one of its two branches untested is exactly the
+  section's standing "never examined that territory" pattern in miniature. Worth a one-line addition
+  (a floor-excluded `notes:` entry in `warnings-vault`'s config, or a direct unit test on
+  `isEntryWithheldByFloor`) before this block closes, or noted to `## NEXT` if the Architect judges it
+  non-blocking.
+
+**Verdict: Approve with nits.** No blockers — the floor refactor is a verified no-op, the new warning
+line is pure reporting with a traced non-path back into `published`, both 3.7 negative controls
+reproduce independently in both directions, stdout stays clean, exit stays 0, and scope held to 3.6/3.7
+exactly. The one nit (untested `note`-kind branch of `isEntryWithheldByFloor`) doesn't touch
+confidentiality — worst case it's a warning line that fails to print, not a selection defect — so it's
+a nit, not a blocker; worker or architect's call whether to close it now or park it.
+
+→ @architect
+
+→ @reviewer
+
+**[worker]** Follow-up to reviewer nit, block **3.6–3.7**. Closed the coverage gap: `isEntryWithheldByFloor`'s `note` branch was untested (only `Journal/` via `folders:` exercised the `folder` branch).
+
+Added a `CLAUDE.md` file to `test/fixtures/warnings-vault/` (invented content) and a `notes:` entry naming it in that fixture's `publish.config.yaml`, alongside the existing `folders:`/`notes:` entries — nothing else in the fixture changed. Updated the existing 3.6 test to also assert the `"CLAUDE.md" is excluded and will not publish` line and adjusted the exact-line-count assertion from 2 to 3. Added one new test that: reads the fixture `CLAUDE.md` directly and asserts positively it contains the content the test claims, runs the real CLI against the same config, and asserts the `notes:`-entry warning line appears — the case the reviewer named.
+
+**Negative control**, same shape as the rest of the block: short-circuited the `notes` loop in `reportWarnings` (`if (false && ...)`), ran `test/index.test.ts` directly — both the existing and the new test failed, the existing one on the line count (2 vs 3, missing the `CLAUDE.md` line) and the new one on `stderr` not containing it — while the other three CLI tests stayed green. Restored `src/index.ts`, `diff`-confirmed byte-identical to pre-mutation.
+
+Nothing else in the block changed — `src/selection.ts`, `src/config.ts` untouched by this follow-up.
+
+**Gates:** `BUILD_EXIT:0` `TEST_EXIT:0` `FORMAT_EXIT:0` `LINT_EXIT:0` `VALIDATE_EXIT:0`. 34 tests total (up from 33: one new).
+
+→ @reviewer
+
+**[reviewer]** Re-audit, block **3.6–3.7** — nit closed.
+
+**Source-change claim verified, not taken.** Diffed the current `src/index.ts` and `src/selection.ts`
+byte-for-byte against the copies I pulled _during_ my own negative-control runs (i.e. the exact state I
+approved) — both identical. `git diff` against `a72bf81` still shows the same source hunks I already
+reviewed; nothing new landed in either file under cover of this follow-up. The change is confined to
+`test/index.test.ts` and the new `test/fixtures/warnings-vault/CLAUDE.md` +
+`notes: [CLAUDE.md]` config entry, as reported.
+
+**New coverage — exercises the real gap, through the real path.** The added test first `readFile`s
+`test/fixtures/warnings-vault/CLAUDE.md` and asserts its content, so the fixture's existence is proven,
+not assumed, then runs the actual CLI (`spawnSync` on `src/index.ts`) against the updated
+`warnings-vault/publish.config.yaml` (now `notes: [Handbook/Missing.md, CLAUDE.md]`) and asserts the
+new warning line is present, with the first test's line count moved from 2 to 3 to keep it exhaustive.
+This exercises `isEntryWithheldByFloor(entry, "note")` for the first time, through `reportWarnings` in
+`src/index.ts`, not a unit call — closing the gap as asked rather than adding an isolated unit test that
+would leave the CLI wiring unverified.
+
+**Reproduced the worker's negative control myself.** Replaced the `notes` loop body's iterable with `[]`
+in a scratch edit (`for (const entry of []) {`), leaving the `folders` loop untouched, and ran
+`test/index.test.ts` directly: both new tests failed — the line-count/line-presence assertions in the
+first test, and the `stderr` containment assertion in the second — while the original three CLI tests
+and the `Journal/`-folder warning stayed correctly represented in the first test's other two
+`toContain`s (i.e. the failure was specific to the note branch, not a wholesale break). Restored,
+`diff`-confirmed byte-identical.
+
+**Fixture hygiene, specific to this fix.** `git check-ignore -v test/fixtures/warnings-vault/CLAUDE.md`
+→ no match, exit 1: tracked, not ignored (the repo's `vault/`/`.vault/` `.gitignore` rule doesn't touch
+a bare filename). `git status --untracked-files=all` lists it `??`, ready for the Architect's commit.
+Content is `# Invented Root File` plus two invented sentences — diffed against the repo's own root
+`CLAUDE.md`: completely different, not a copy or excerpt. Checked whether anything in tooling would
+treat it as a real instructions file: it sits under `test/fixtures/`, `.prettierignore` has a
+pre-existing bare `CLAUDE.md` line (untouched by this diff, confirmed by `git diff a72bf81 --
+.prettierignore` being empty) which formats it out of the format gate the same way it already treats
+the repo's own root file, but `prettier --check` on it directly (bypassing ignore) shows it's
+well-formed Markdown regardless; no other tool in the repo reads `CLAUDE.md` as configuration or as an
+agent's context outside the real root file's own path.
+
+**Gates, re-run:** `BUILD_EXIT:0 TEST_EXIT:0 (34 tests) FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0
+GATES_EXIT:0`.
+
+**Verdict: Approve.** No blockers, no nits outstanding. Source state is exactly what I already
+reviewed; the new coverage genuinely exercises the previously-untested branch through the real CLI
+path with a fixture whose existence and content are asserted rather than assumed, and I reproduced its
+failure independently.
 
 → @architect
