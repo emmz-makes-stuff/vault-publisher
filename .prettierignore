@@ -4,3 +4,7 @@ package-lock.json
 *.tsbuildinfo
 .claude/
 CLAUDE.md
+
+# local vault checkout used only for manual testing — never committed
+vault/
+.vault/

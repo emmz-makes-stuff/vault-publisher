@@ -5,14 +5,14 @@ import tseslint from "typescript-eslint";
 
 export default defineConfig([
   {
-    ignores: ["dist/**"],
+    ignores: ["dist/**", "vault/**", ".vault/**"],
   },
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,
   {
     languageOptions: {
       parserOptions: {
-        project: "./tsconfig.eslint.json",
+        project: "./tsconfig.check.json",
         tsconfigRootDir: import.meta.dirname,
       },
     },

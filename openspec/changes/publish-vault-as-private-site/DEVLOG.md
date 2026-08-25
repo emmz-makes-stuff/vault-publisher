@@ -200,6 +200,152 @@ and `docs/` now fully and genuinely in scope — no exclusions left standing in 
 
 → @reviewer
 
+**[supervisor]** Section 1 review — scope `git diff c756850..HEAD` (one commit, `b6a2655`, blocks
+1.1–1.7 plus the two architect-directed follow-ups).
+
+**Verdict: Request changes.**
+
+Re-ran the gate set: `BUILD_EXIT:0` `TEST_EXIT:0` (3 passed) `FORMAT_EXIT:0` `LINT_EXIT:0`
+`VALIDATE_EXIT:0` — `make gates` → `GATES_EXIT:0`, and `git status --porcelain` is empty after
+`make build`. Every box in §1 is ticked and every gate is genuinely green. The two blockers below are
+both about what the gate set _does not reach_, which is the one thing that matters most in this
+section: §1 is not a feature, it is the instrument every later section is measured with, so a hole
+here is not a section-1 defect — it is a permanent blind spot.
+
+**Blockers**
+
+1. **No gate type-checks anything outside `src/`.** `tsconfig.json:20` sets `"include": ["src"]`, so
+   `make build` (`tsc --build`) compiles the source tree only. `vitest run` transpiles via esbuild and
+   never type-checks. `npx eslint .` reports lint rules, not compile errors — type-aware linting is
+   not type-checking, and the distinction is invisible in any single block's diff. Demonstrated on a
+   clean copy of `HEAD`: a file `test/typehole.test.ts` containing
+
+   ```ts
+   function greet(name: string): string {
+     return `hello ${name}`;
+   }
+   expect(greet(42)).toBe("hello 42");
+   ```
+
+   gives `TSC_EXIT:0`, a **passing** vitest run, and an eslint report that flags only an unused
+   variable elsewhere in the same file. The same hole covers `vitest.config.ts` and
+   `eslint.config.js`. This is the `.prettierignore` pattern the block already caught once — a gate
+   reporting green over territory it never examined — surviving in a second place. It lands hardest
+   from block 3.4 onward: the tests asserting that an excluded path stays withheld are the executable
+   form of the confidentiality guarantee, and a test that has drifted out of type-agreement with the
+   code it exercises (a renamed field, a signature that gained a parameter, an `undefined` flowing
+   where a vault root was expected) will keep passing and keep reporting the guarantee held.
+
+2. **The lint gate walks the local vault checkout that block 1.7 sanctioned.**
+   `.gitignore:8-10` establishes `vault/` and `.vault/` as the place a Product Owner checks a vault out
+   for manual testing; `eslint.config.js:7` ignores only `dist/**`, and ESLint flat config's defaults
+   ignore only `node_modules` and `.git` — it does not read `.gitignore`. Verified on the copy: with an
+   Obsidian vault present at `vault/`, `npx eslint .` fails on
+   `vault/.obsidian/plugins/<plugin>/main.js` (every Obsidian community plugin ships a bundled
+   `main.js`) with a parsing error that **prints the vault path in the gate output** — output that gets
+   quoted into this DEVLOG, which the standing constraint says may become public. The format gate is
+   safe here only by luck of a Prettier 3 default (it honours `.gitignore`); the lint gate has no such
+   protection. Blocks 1.5 and 1.7 are individually correct; their sum is not.
+
+**Suggested remediation shape** (one fix block, no new `N.M`, nothing to tick)
+
+1. Bring the non-`src` trees under a type-check. `tsconfig.eslint.json` already describes exactly the
+   right set (`src`, `test`, root `*.ts`/`*.js`) and already sets `noEmit`, so the smallest fix that
+   changes no gate command and needs no Makefile edit is
+   `"build": "tsc --build && tsc -p tsconfig.eslint.json"` — verified on the copy: exit 0 on the tree
+   as it stands, exit 2 on the `greet(42)` case above. A solution-style `tsconfig.json` with project
+   references is the tidier long-form alternative; either is fine, provided `make build` goes red on a
+   type error in `test/`. If it goes this way, the file is no longer eslint-only and
+   `tsconfig.check.json` would name it honestly.
+2. Add `vault/**` and `.vault/**` to the `ignores` entry in `eslint.config.js`, and to
+   `.prettierignore` as well — belt and braces, since Prettier's `.gitignore` behaviour is a default
+   rather than a guarantee and a vault checked out under any other name reopens the same door.
+3. Demonstrate the negative case for the new type-check the way 1.4 and 1.5 demonstrated theirs — a
+   deliberate type error in `test/` making `make build` non-zero, then reverted, quoted in the DEVLOG.
+   That demonstration is the part that proves the gate covers what it claims to.
+
+**Checks that came back clean** — recorded so they are not re-litigated:
+
+- _ESM/NodeNext is real, not just type-clean._ Built and **ran** a throwaway `src/` module importing
+  all seven runtime dependencies plus a relative `./helper.js` specifier: `tsc --build` exit 0,
+  `node dist/smoke.js` exit 0, GFM table serialised, frontmatter consumed, `yaml` parsed, top-level
+  await accepted. Also verified vitest resolves a NodeNext-style `../src/mod.js` specifier to the
+  `.ts` source — the classic friction point for §3/§4 tests — with no config workaround. Section 3 can
+  be built on this as it stands.
+- _Dependency constraint holds._ `dependencies` is exactly the seven from `design.md § 2`, no eighth;
+  `package-lock.json` root `dependencies`/`devDependencies` key sets and version specs match
+  `package.json` exactly, `lockfileVersion` 3, `engines` mirrored into the lock. Seven dev
+  dependencies, each earning its place (no bundler, no CLI framework, no test-runner plugins) — that
+  is proportionate for this stack.
+- _Publishability of the reformat._ Compared every file the `prettier --write` pass touched against
+  `c756850` after normalising whitespace and emphasis markers: the three ADRs, `proposal.md` and all
+  five spec files are byte-identical once `*em*`→`_em_` and re-wrapping are removed. `design.md`'s
+  only changes are the same emphasis normalisation plus the §6 gate table being column-aligned — no
+  requirement, scenario or decision text altered. `tasks.md`'s only changes are the §1 tick boxes.
+  Scanning every added line for hostnames turns up `workers.dev` and nothing else; no real note title,
+  client name, or published hostname anywhere in the section.
+- _Format gate coverage._ With the final `.prettierignore` (`.claude/`, `CLAUDE.md`, and generated
+  output only), `npx prettier --list-different .` exits 0 with `openspec/` and `docs/` genuinely
+  examined — the mid-block hole is properly closed, not relocated.
+- _Scaffolding._ `src/index.ts` and `test/scaffold.test.ts` are both load-bearing enough to keep.
+  The `TS18003` placeholder is three lines and a comment and constrains nothing about the source
+  layout. The seven-name dependency assertion is better read as a tripwire on a binding design
+  constraint than as a test that will need rewriting: the day someone proposes an eighth dependency,
+  that failing test _is_ the Architect gate. It should outlive the scaffold, not be deleted with it.
+
+**Architectural notes for `## NEXT`** (not part of the fix block):
+
+- `package.json` declares no `bin`, `main` or `exports`. ADR-0003's composite Action has to invoke a
+  CLI entry point, so §5/§6 will need one — the natural move is for `src/index.ts` to _become_ that
+  entry rather than for the placeholder to linger beside it.
+- `tsconfig.eslint.json`'s `include` is a closed list. A future top-level source directory outside
+  `src`/`test` fails loudly with a "not found in any of the provided project(s)" parse error rather
+  than being silently unlinted — the right failure mode, but the Architect should expect to update
+  that `include` when adding one.
+- `design.md § 6` records the validate gate as `openspec validate --all --strict --no-interactive`
+  while the Makefile loops per active change. Pre-existing, Architect-owned, behaviourally sound (the
+  loop additionally fails on zero changes); worth reconciling the design table with the Makefile at
+  some point so the two do not drift further.
+
+→ @architect
+
+**[worker]** Remediation block for §1 supervisor findings (blockers 1 and 2, `c756850..b6a2655`).
+
+Blocker 1 — no gate type-checked outside `src/`:
+
+- `package.json`'s `build` script is now `tsc --build && tsc -p tsconfig.check.json` — the second
+  invocation is `noEmit`, covers `src`, `test`, and root `*.ts`/`*.js` (the file the supervisor named
+  as already describing the right set), so `make build` now fails on a type error anywhere eslint's
+  type-aware scope reaches, not just `src/`.
+- `tsconfig.eslint.json` → `tsconfig.check.json` (it now serves both the build and lint gates, so the
+  eslint-only name was wrong). Updated the one reference in `eslint.config.js`
+  (`parserOptions.project`). Left the file's `include`/`compilerOptions` unchanged — the supervisor
+  confirmed the set was already correct.
+- **Negative-case evidence**: added a throwaway `test/typehole.test.ts` calling
+  `greet(42)` against a `function greet(name: string): string`. `make build` →
+  `BUILD_EXIT:2` (`error TS2345: Argument of type 'number' is not assignable to parameter of type
+'string'`, reported against `test/typehole.test.ts`). Deleted the file; `make build` back to
+  `BUILD_EXIT:0`.
+
+Blocker 2 — lint gate walking a local vault checkout:
+
+- `eslint.config.js`'s `ignores` now includes `vault/**` and `.vault/**` alongside `dist/**`.
+- `.prettierignore` gained the same two entries (belt-and-braces per the supervisor's suggested
+  shape, since Prettier's `.gitignore` honouring is a default, not a guarantee).
+- **Negative-case evidence**: created `vault/.obsidian/plugins/example/main.js` (invented plugin
+  name, not from the real vault) containing deliberately invalid/unformatted JS — an unused `var`
+  and an unclosed brace, the shape that would previously break eslint's parser and fail prettier.
+  With the vault present: `make lint` → `LINT_EXIT:0`, `make format` → `FORMAT_EXIT:0`. Deleted
+  `vault/` afterward; `git status --porcelain` shows no trace of it.
+
+Full gate run after both fixes, vault checkout absent (steady state):
+`BUILD_EXIT:0` `TEST_EXIT:0` `FORMAT_EXIT:0` `LINT_EXIT:0` `VALIDATE_EXIT:0` — `make gates` →
+`GATES_EXIT:0`.
+
+No task numbers ticked (remediation block, per CLAUDE.md §3c) — every §1 box was already `[x]`.
+
+→ @reviewer
+
 ## NEXT
 
 - Section 1 block 1.1–1.7 implemented and self-tested green; awaiting reviewer.
@@ -208,3 +354,66 @@ and `docs/` now fully and genuinely in scope — no exclusions left standing in 
   hands the Product Owner a copy-pasteable runbook; ticks wait on their confirmation. Product Owner
   has chosen to take this on **after section 1 closes**, keeping design.md's Migration Plan ordering
   — the guarantee is proven before any content-rendering code exists.
+
+**[reviewer]** Remediation block for §1 supervisor findings — audit (`c756850..HEAD`, uncommitted
+working tree against `b6a2655`).
+
+Independently re-verified both blockers rather than trusting the worker's report.
+
+**Blocker 1 (no gate type-checked outside `src/`).** Confirmed `tsconfig.check.json`'s `include`
+(`["src", "test", "*.ts", "*.js"]`) is a closed list, but checked what it needs to reach today:
+`eslint.config.js` and `vitest.config.ts` are the _only_ root `*.ts`/`*.js` files in the repo, so the
+closed list genuinely covers every non-`src` TypeScript/JS file that exists — nothing is silently
+excluded by the glob today. Planted a type error in each file in turn (not just `test/`, which the
+worker's own evidence already covered):
+
+- `vitest.config.ts` — added a bad assignment (`string` ← `number`): `npm run build` → `EXIT:2`,
+  `TS2322` reported against `vitest.config.ts:8`. Reverted → `EXIT:0`.
+- `eslint.config.js` — added a bad `as`-style cast: `npm run build` → `EXIT:2`, `TS2352` reported
+  against `eslint.config.js:21`. Reverted → `EXIT:0`.
+
+Both confirm the fix is real, not just closed-for-the-demonstrated-case. Also confirmed the
+two-project build doesn't leave anything behind: `tsconfig.check.json` has `noEmit: true` and
+`composite: false`, and after `make build` only the pre-existing, git-ignored `tsconfig.tsbuildinfo`
+(from the `--build` project) exists — no second `.tsbuildinfo`, and `git status --porcelain` is empty
+after a build, holding task 1.7's requirement.
+
+**Blocker 2 (lint gate walking the local vault checkout).** Reproduced the supervisor's negative case
+fresh: planted `vault/.obsidian/plugins/example/main.js` with deliberately broken/unformatted JS
+(unused `var`, unclosed brace) — `make lint` → `LINT_EXIT:0`, `make format` → `FORMAT_EXIT:0`, vault
+path never reaches gate output. Deleted `vault/` after; `git status --short` shows no trace.
+
+On the two-ignore-lists-in-step concern: `eslint.config.js`'s `ignores` and `.prettierignore` are
+genuinely independent tools (flat-config `ignores` vs. Prettier's file-list), so there's no single
+config file that could serve both without one tool reading the other's format — this isn't an
+oversight, it's the ceiling of "two separate CLIs, two separate ignore mechanisms." Duplication is
+acceptable as long as both stay in step; recommend a `## NEXT` note that any future third gate over
+the filesystem (a spellchecker, a link checker) must remember to add the same two entries, since nothing
+enforces that automatically. Confirmed no legitimate source path could ever live under `vault/` today:
+`src/` and `test/` are the only code trees, and neither `design.md` nor any spec references a `vault/`
+subpath as anything other than the manual-checkout convention documented in `.gitignore:7-9`.
+
+**The rename.** `tsconfig.eslint.json` is deleted (`git status` shows `D`, not present anywhere on
+disk) and `tsconfig.check.json` is untracked-new — no window where both exist. The only live code
+reference (`eslint.config.js`'s `parserOptions.project`) was updated. Grepped the whole repo outside
+`node_modules`/`.git`: the only remaining occurrences of `tsconfig.eslint.json` are inside
+`DEVLOG.md`, in **earlier, already-attributed posts** narrating history (the original 1.5 implementation
+note, the original reviewer's judgement call, the supervisor's finding) — correct, since the DEVLOG is
+append-only and rewriting past posts to match the current filename would falsify the record. No
+dangling reference in any config, script, or fresh prose.
+
+**Publishability.** No real note title, client name, or hostname anywhere in the diff or this block's
+new DEVLOG text; the only domain-shaped string is `workers.dev`, which is the generic Cloudflare
+default-route domain already covered by the change's standing constraint check, not a real hostname.
+The worker's throwaway `vault/.obsidian/plugins/example/main.js` (invented plugin name) was confirmed
+deleted above with no trace in `git status`.
+
+**Gates**, re-run independently: `BUILD_EXIT:0` `TEST_EXIT:0` (3 passed) `FORMAT_EXIT:0` `LINT_EXIT:0`
+`VALIDATE_EXIT:0` — `make gates` → `GATES_EXIT:0`. `git status --porcelain` empty after `make build`.
+
+**Verdict: Approve.**
+
+Both supervisor blockers are closed, verified independently rather than by re-reading the worker's
+claims, and neither hole was fixed only for the narrow demonstrated case. No nits.
+
+→ @architect
