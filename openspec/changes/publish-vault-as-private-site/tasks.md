@@ -19,7 +19,7 @@ These come first deliberately: the guarantee must be in place and proven before 
 - [x] 2.5 Deploy a placeholder page and verify an unauthenticated request is refused, an allow-listed address receives a code and gains access, and a non-allow-listed address is refused and receives no email
 - [x] 2.6 Verify that a static asset (an image) placed alongside the placeholder is equally refused when requested directly by its address while unauthenticated
 - [x] 2.7 Record the application's session duration, and verify the two-step removal the spec now describes: sign in as an address, remove it from the policy, and confirm the live session persists; then revoke the existing session and confirm access is withdrawn. Restore the policy to exactly the intended addresses afterwards
-- [ ] 2.8 Verify credential reuse and expiry: a credential that has already been used is refused, and a credential presented after its stated expiry is refused, with a new one obtainable in both cases
+- [x] 2.8 Verify credential reuse: a credential that has already been used is refused, and a new one can be obtained. (Expiry is verified in 8.6 — it needs a wait longer than the credential's lifetime and does not gate the content pipeline)
 - [ ] 2.9 Write the removal procedure down where the owner will find it when removing a reader — both steps, and the consequence of doing only the first. Removal is the operation most likely to be performed under time pressure and believed complete when it is not
 
 ## 3. Configuration and selection
@@ -80,3 +80,4 @@ These come first deliberately: the guarantee must be in place and proven before 
 - [ ] 8.3 Re-verify every bypass hostname serves nothing now that real content exists — the `workers.dev` address and any Preview URL — since the deploys in section 7 ran between this check and 2.2
 - [ ] 8.4 Have each reader complete a login end to end and confirm they reach the site
 - [ ] 8.5 Review the publish log's `[WARNING]` lines with the Product Owner and confirm each degraded link is expected
+- [ ] 8.6 Verify credential expiry against the live site: request a credential, leave it unused past its stated lifetime, and confirm it is refused and a new one can be obtained. Deferred from 2.8 because it requires an uninterrupted wait; the stated lifetime is currently quoted from vendor documentation rather than observed, and expiry is the half of the credential guarantee that nothing has yet exercised
