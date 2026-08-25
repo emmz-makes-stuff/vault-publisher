@@ -894,6 +894,30 @@ hear.
 
 **2.8 remains open** — credential reuse and expiry.
 
+**[architect]** **2.8 narrowed and ticked; expiry deferred to a new 8.6.**
+
+**Reuse verified.** A credential that had already been used was presented again **in a different
+browser** and refused. The different browser is what makes it evidence: retrying in the original one
+could have been refused by client-side state rather than by Access, so the check would have passed
+while testing the browser instead of the guarantee.
+
+**Expiry deferred at the Product Owner's request** — it needs an uninterrupted wait longer than the
+credential's lifetime, and there is no value in spending that now. Parked as **task 8.6** rather than
+as a note in this DEVLOG, which is what was asked for, and the difference is deliberate: a note is
+something someone has to remember to re-read, while a task appears in `make validate`'s scope, blocks
+the change from being marked done, and sits alongside the other end-to-end human checks in section 8.
+**A commitment that only a person's memory enforces is the kind this change has spent all day finding
+the failures of.**
+
+It is placed in section 8 rather than left blocking section 2 because expiry is a property of the
+access provider, not of the content pipeline: nothing in sections 3–7 can affect it, so holding the
+code work behind it would buy nothing. It must still be observed before the change ships — the stated
+lifetime is quoted from vendor documentation, and **expiry is the half of the credential guarantee
+that nothing has yet exercised**.
+
+With that, section 2 has one task outstanding: **2.9**, the removal runbook, drafted at
+`docs/runbooks/removing-a-reader.md` and awaiting the Product Owner's review.
+
 ## NEXT
 
 **Section 1 is closed** — supervisor `Approve` on `c756850..1b20150`, after one remediation block.
