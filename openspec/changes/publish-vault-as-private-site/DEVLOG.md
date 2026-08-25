@@ -823,6 +823,48 @@ After 8.1 the only safe evidence is the negative check plus 7.8's automated post
 7.8 is verified by pointing it at an address that _does_ serve, which is how the positive control
 survives as a repeatable test without ever exposing the site.
 
+**[architect]** **B2 resolved as a specification defect, not an implementation one** — and it is the
+most consequential finding of this section, because it is the one where the system quietly did
+something other than what the spec promised.
+
+The application's session duration is **24 hours**. Current Cloudflare documentation confirms the
+mechanism: the application token is valid for that duration, and identity is only re-checked against
+the policies **when the token expires**. So removing an address from the policy stops that person
+starting a _new_ session immediately, but a session already in progress continues for up to a day.
+
+The spec said, flatly, that a removed reader "can no longer obtain access". That is defensible as a
+lawyer's reading — a live session is access already obtained — but it is not what an owner removing
+someone under pressure would understand it to mean, and the gap between those two readings is a day
+of continued access to client-confidential material. **The spec was wrong, so the spec was fixed
+rather than the wording defended.** The removal scenario now states what removal actually does, and a
+second scenario states explicitly that an existing session persists and must be revoked to withdraw
+access immediately.
+
+Remedy confirmed in the docs, two controls: **Applications → Configure → Revoke existing tokens**
+(all sessions for the application), and **Team & Resources → Users → Action → Revoke** (per user,
+across applications). Because the address has also been removed from the policy, the caveat that a
+revoked user may start a new session does not apply here — the two steps compose correctly.
+
+Product Owner's decision: **keep the 24-hour session and make removal a documented two-step
+operation.** The alternative — shortening the session so removal takes effect on its own — was
+rejected on the evidence this section produced: every re-authentication is another one-time-PIN round
+trip through the email path that failed silently for an hour today, and two of the three readers are
+non-technical. Trading a rare, deliberate operation against frequent friction on the common path is
+the wrong trade.
+
+Three tasks added, none ticked:
+
+- **2.7** — record the session duration and prove the two-step removal end to end: sign in, remove
+  from the policy, confirm the session persists, revoke, confirm access is withdrawn.
+- **2.8** — B1: prove credential reuse and expiry are refused. Currently the expiry is quoted from
+  documentation rather than observed, and the only reuse evidence came from a malfunctioning state.
+- **2.9** — write the removal procedure down where the owner will find it. **Removal is the operation
+  most likely to be carried out in a hurry and believed complete when it is not**, and a procedure
+  that exists only in a DEVLOG post will not be to hand at that moment.
+
+Section 2 is therefore **not closed**; it now has three unticked tasks and needs a second supervisor
+pass once they are verified.
+
 ## NEXT
 
 **Section 1 is closed** — supervisor `Approve` on `c756850..1b20150`, after one remediation block.
