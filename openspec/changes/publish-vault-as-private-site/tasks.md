@@ -18,7 +18,7 @@ These come first deliberately: the guarantee must be in place and proven before 
 - [x] 2.4 Add the one-time PIN login method and an Access policy of `Include → Emails → the reader addresses`; verify the policy lists exactly the intended addresses
 - [x] 2.5 Deploy a placeholder page and verify an unauthenticated request is refused, an allow-listed address receives a code and gains access, and a non-allow-listed address is refused and receives no email
 - [x] 2.6 Verify that a static asset (an image) placed alongside the placeholder is equally refused when requested directly by its address while unauthenticated
-- [ ] 2.7 Record the application's session duration, and verify the two-step removal the spec now describes: sign in as an address, remove it from the policy, and confirm the live session persists; then revoke the existing session and confirm access is withdrawn. Restore the policy to exactly the intended addresses afterwards
+- [x] 2.7 Record the application's session duration, and verify the two-step removal the spec now describes: sign in as an address, remove it from the policy, and confirm the live session persists; then revoke the existing session and confirm access is withdrawn. Restore the policy to exactly the intended addresses afterwards
 - [ ] 2.8 Verify credential reuse and expiry: a credential that has already been used is refused, and a credential presented after its stated expiry is refused, with a new one obtainable in both cases
 - [ ] 2.9 Write the removal procedure down where the owner will find it when removing a reader — both steps, and the consequence of doing only the first. Removal is the operation most likely to be performed under time pressure and believed complete when it is not
 
