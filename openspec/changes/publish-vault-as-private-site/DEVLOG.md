@@ -803,6 +803,26 @@ preference, not a confidentiality breach. But it is a decision to take deliberat
 repository is published, not to discover afterwards, since rewriting authorship across a project's
 whole history is far more disruptive than setting it now.
 
+**[architect]** **B3 closed.** The Product Owner ran the positive control on both bypass hostnames
+while the placeholder was still the only content: each was toggled on, confirmed to **serve the
+placeholder**, toggled off, and confirmed to return the 404. Both the production `workers.dev`
+address and the preview address were done this way.
+
+This is now the strongest evidence in the section, and the difference from what 2.2 originally rested
+on is the whole point of the finding: a 404 alone is consistent with a mistyped hostname, a route
+that never existed, or a route correctly disabled. Having watched the _same_ address serve and then
+stop serving, the refusal is evidence about that address rather than about the request. The preview
+half in particular was previously resting on a dashboard toggle plus a 404 from a made-up version
+prefix, which 404s whether or not the wildcard is live — so it had not been tested at all.
+
+Worth stating as a rule for 8.2–8.3, which re-run these checks against real content: **that
+re-verification cannot use this method.** Toggling a bypass hostname on once the real set is
+deployed exposes confidential material, deliberately, for as long as the toggle is on. The positive
+control was available exactly once, in this window, which is why it was worth spending it here.
+After 8.1 the only safe evidence is the negative check plus 7.8's automated post-deploy check — and
+7.8 is verified by pointing it at an address that _does_ serve, which is how the positive control
+survives as a repeatable test without ever exposing the site.
+
 ## NEXT
 
 **Section 1 is closed** — supervisor `Approve` on `c756850..1b20150`, after one remediation block.
