@@ -1,6 +1,6 @@
 ## Context
 
-See `proposal.md` — Why. This is a greenfield project with no existing code; every technology choice was open when design began. Requirements were gathered in a discovery session that deliberately assumed nothing about the *how*, and the technology decisions below were made against them in a separate architecture session on 2026-08-25.
+See `proposal.md` — Why. This is a greenfield project with no existing code; every technology choice was open when design began. Requirements were gathered in a discovery session that deliberately assumed nothing about the _how_, and the technology decisions below were made against them in a separate architecture session on 2026-08-25.
 
 Three constraints shape everything that follows:
 
@@ -40,7 +40,7 @@ Access gates the whole hostname at the edge, so pages and assets are covered by 
 
 **No authentication code is written for this project**: no Worker script for auth, no session handling, no token signing, no nonce storage, no transactional email provider.
 
-The emailed credential is a **six-digit single-use code with a 10-minute expiry, not a clickable link**. This is a knowing deviation from the Product Owner's stated preference for magic links, accepted because the *reason* behind that preference — that readers should not have to manage a password — is satisfied identically. The `reader-access` spec was amended from "single-use link" to "single-use credential" so the specification describes what ships rather than drifting from it.
+The emailed credential is a **six-digit single-use code with a 10-minute expiry, not a clickable link**. This is a knowing deviation from the Product Owner's stated preference for magic links, accepted because the _reason_ behind that preference — that readers should not have to manage a password — is satisfied identically. The `reader-access` spec was amended from "single-use link" to "single-use credential" so the specification describes what ships rather than drifting from it.
 
 Cloudflare sends the login email only if the address is on the policy, while the login page reports "a code has been emailed to you" either way, so the login page does not disclose who the readers are.
 
@@ -62,7 +62,7 @@ HTML is generated as a syntax tree serialised by `rehype-stringify`, never by st
 
 Node 24 LTS, pinned in `.nvmrc` and `engines`. npm as package manager. Configuration file is `publish.config.yaml` in the vault root.
 
-**Alternatives rejected.** Quartz — its selection model is deny-list (publish everything, minus ignores and a frontmatter flag), the inverse of the requirement; it ships search, graph view, backlinks and dark mode that are all out of scope, so much of the work would be removal; and inverting the one behaviour that must never be wrong, inside another project's codebase, means re-auditing that inversion at every upgrade. General SSGs (Astro, Eleventy, Hugo) — none understands Obsidian, so the wikilink and callout work is ours regardless; what they add is a templating and component layer for a site with no interactivity. .NET 10 with Markdig — a departure from the standing back-end default, taken because there is no Obsidian-flavoured extension ecosystem in .NET (so callouts *and* wikilinks would both be hand-written) and because `wrangler` is Node, meaning two runtimes and two toolchains in a project that needs one; the default would stand if this were a service rather than a build-time text pipeline plus a file upload. Third-party remark callout plugins — rejected on dependency-surface grounds rather than capability: small single-maintainer packages that would process every page of a confidential site, against a transform of roughly fifty lines. Reversible at low cost.
+**Alternatives rejected.** Quartz — its selection model is deny-list (publish everything, minus ignores and a frontmatter flag), the inverse of the requirement; it ships search, graph view, backlinks and dark mode that are all out of scope, so much of the work would be removal; and inverting the one behaviour that must never be wrong, inside another project's codebase, means re-auditing that inversion at every upgrade. General SSGs (Astro, Eleventy, Hugo) — none understands Obsidian, so the wikilink and callout work is ours regardless; what they add is a templating and component layer for a site with no interactivity. .NET 10 with Markdig — a departure from the standing back-end default, taken because there is no Obsidian-flavoured extension ecosystem in .NET (so callouts _and_ wikilinks would both be hand-written) and because `wrangler` is Node, meaning two runtimes and two toolchains in a project that needs one; the default would stand if this were a service rather than a build-time text pipeline plus a file upload. Third-party remark callout plugins — rejected on dependency-surface grounds rather than capability: small single-maintainer packages that would process every page of a confidential site, against a transform of roughly fifty lines. Reversible at low cost.
 
 ### 3. Delivery and hosting — composite GitHub Action, Cloudflare Worker with static assets
 
@@ -104,12 +104,12 @@ The behaviour that must never be wrong gets explicit unit coverage rather than b
 
 Single stack, so targets are unprefixed. Every command runs non-interactively and exits non-zero on failure.
 
-| Gate | Command |
-|---|---|
-| build | `npm run build` |
-| test | `npm test` |
-| format | `npx prettier --check .` |
-| lint | `npx eslint .` |
+| Gate     | Command                                             |
+| -------- | --------------------------------------------------- |
+| build    | `npm run build`                                     |
+| test     | `npm test`                                          |
+| format   | `npx prettier --check .`                            |
+| lint     | `npx eslint .`                                      |
 | validate | `openspec validate --all --strict --no-interactive` |
 
 Underlying `package.json` scripts:
@@ -131,7 +131,7 @@ Underlying `package.json` scripts:
 
 **Wikilink resolution diverges from Obsidian's own name resolution** → Obsidian resolves links by note name rather than path, with its own shortest-unique-path behaviour. Getting this wrong risks a link that should resolve degrading to text (visible, harmless) or, worse, resolving to the wrong note. Mitigated by owning the resolver, testing it directly, and treating ambiguity as a warning rather than a silent guess.
 
-**Note titles leak through degraded links** → Accepted by the Product Owner in discovery. A wikilink to an unpublished note renders as plain text, so the *title* of a private note can appear in a published sentence. The alternative — stripping the text — mangles the sentence. Recorded here so it stays a decision rather than becoming a surprise.
+**Note titles leak through degraded links** → Accepted by the Product Owner in discovery. A wikilink to an unpublished note renders as plain text, so the _title_ of a private note can appear in a published sentence. The alternative — stripping the text — mangles the sentence. Recorded here so it stays a decision rather than becoming a surprise.
 
 **Warning output names notes, and note titles are sensitive** → Warnings surface only in the vault repository's private Actions log. This is a reason the build runs there and not here.
 

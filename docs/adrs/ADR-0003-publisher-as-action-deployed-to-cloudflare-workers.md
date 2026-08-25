@@ -34,7 +34,7 @@ vault repo (private)                    emmz-makes-stuff/vault-publisher (may be
 **Hosting — a Cloudflare Worker with static assets, on a custom domain.**
 
 - `wrangler deploy` with `assets.directory` pointing at the build output. No Worker script is required for an assets-only site.
-- Cloudflare Pages was the obvious choice and was rejected: Cloudflare's own documentation now advises *"Start new projects with Workers"*, stating that Workers supports most Pages use cases with a broader feature set.
+- Cloudflare Pages was the obvious choice and was rejected: Cloudflare's own documentation now advises _"Start new projects with Workers"_, stating that Workers supports most Pages use cases with a broader feature set.
 - Deploy is a direct upload from the vault's workflow. **The rendered site is never committed to any repository.**
 
 **Required deployment condition — the `workers.dev` route must be disabled.**

@@ -1,12 +1,12 @@
 ## 1. Project scaffolding and toolchain
 
-- [ ] 1.1 Initialise the npm package with `type: module`, `engines.node` pinned to Node 24, and a `.nvmrc` holding the same version; verify `node --version` inside the repo matches the pin
-- [ ] 1.2 Add TypeScript with a `tsconfig.json` targeting Node 24 ESM and verify `npm run build` (`tsc --build`) exits 0 on an empty source tree
-- [ ] 1.3 Add vitest and verify `npm test` (`vitest run`) exits 0 and returns to the shell without watching
-- [ ] 1.4 Add prettier with a config and verify `npx prettier --check .` exits 0 on a formatted tree and non-zero on a deliberately misformatted file
-- [ ] 1.5 Add eslint flat config with `typescript-eslint` and verify `npx eslint .` exits 0 clean and non-zero on a deliberate violation
-- [ ] 1.6 Add the runtime dependencies — `unified`, `remark-parse`, `remark-gfm`, `remark-frontmatter`, `remark-rehype`, `rehype-stringify`, `yaml` — and verify `npm ci` succeeds from a clean checkout
-- [ ] 1.7 Add a `.gitignore` covering `node_modules/`, build output, and any local vault checkout, and verify `git status` is clean after a build
+- [x] 1.1 Initialise the npm package with `type: module`, `engines.node` pinned to Node 24, and a `.nvmrc` holding the same version; verify `node --version` inside the repo matches the pin
+- [x] 1.2 Add TypeScript with a `tsconfig.json` targeting Node 24 ESM and verify `npm run build` (`tsc --build`) exits 0 on an empty source tree
+- [x] 1.3 Add vitest and verify `npm test` (`vitest run`) exits 0 and returns to the shell without watching
+- [x] 1.4 Add prettier with a config and verify `npx prettier --check .` exits 0 on a formatted tree and non-zero on a deliberately misformatted file
+- [x] 1.5 Add eslint flat config with `typescript-eslint` and verify `npx eslint .` exits 0 clean and non-zero on a deliberate violation
+- [x] 1.6 Add the runtime dependencies — `unified`, `remark-parse`, `remark-gfm`, `remark-frontmatter`, `remark-rehype`, `rehype-stringify`, `yaml` — and verify `npm ci` succeeds from a clean checkout
+- [x] 1.7 Add a `.gitignore` covering `node_modules/`, build output, and any local vault checkout, and verify `git status` is clean after a build
 
 ## 2. Access control, before any content exists
 
