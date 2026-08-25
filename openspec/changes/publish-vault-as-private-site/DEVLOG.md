@@ -519,6 +519,47 @@ allow-list `noreply@notify.cloudflare.com` — design.md already anticipates thi
 link-scanning risk; this is the same mitigation for a different cause. A listed address that cannot
 receive is worse than an absent one, because it looks configured.
 
+**[architect]** Verification results for 2.1, 2.3, 2.5, 2.6 — **ticked**. Evidence, from the Product
+Owner running each check against the live deployment:
+
+- **2.1** — custom domain attached on the account's own zone and serving the Worker; confirmed both
+  by request and in the Worker's Domains tab.
+- **2.3** — Access application created on the hostname with an empty path, so every path is covered.
+  A request to a nested path while unauthenticated returned **302 to the login page**, which is the
+  interception the task asks for — not merely a 404 that would prove nothing.
+- **2.5** — all three cases proven. Unauthenticated request refused; an allow-listed address received
+  a code and gained access; an address **not** on the policy received no email while the page still
+  reported one as sent. That last part is the designed non-disclosure, not a fault.
+- **2.6** — a static asset requested directly by its address while unauthenticated returned **302**,
+  refused exactly as a page is. Worth having proven rather than assumed: an asset served
+  unauthenticated would leak images out of confidential notes.
+
+**On 2.2 — the check was initially reported on weak evidence, and this is worth recording as a
+pattern rather than an anecdote.** The first result was "404 on the `workers.dev` address", which
+reads like a pass but is also exactly what a **mistyped** hostname returns. Since a typo'd address
+and a disabled route are indistinguishable by status code, a 404 alone cannot establish the
+project's highest-consequence property. What actually settled it:
+
+- the response was `content-type: text/plain`, 17 bytes, from Cloudflare's edge (`server:
+cloudflare`, `cf-ray` present) — **not** the placeholder HTML a live route would have served; and
+- the dashboard independently confirmed the exact address, so the 404 was known to have come from
+  the right place.
+
+The lesson generalises to the rest of this section and to 8.2–8.3: **a refusal is only evidence if
+you know it came from the address you meant to test.** Confirm the address independently of the
+response. The same trap caught an identifier-leak check in this very session — a `grep` over
+`openspec/` and `docs/` reported clean while running in the wrong directory, so it had searched
+nothing. Green over unexamined territory, for the fourth time in this change.
+
+**Also on 2.2 — the Preview URL was found already disabled**, alongside the production
+`workers.dev` route. That is the second bypass hostname added to this task by the specification
+amendment earlier in this section, and it was covered without needing a return trip.
+
+**Carry to 7.3, load-bearing:** both of those are **dashboard state**. Cloudflare's documentation is
+explicit that a `wrangler deploy` without `workers_dev: false` in the configuration re-enables the
+route. The amended 7.3 requires the flag and re-verifies afterwards; this is the specific mechanism
+by which a verified-green 2.2 turns red silently.
+
 ## NEXT
 
 **Section 1 is closed** — supervisor `Approve` on `c756850..1b20150`, after one remediation block.

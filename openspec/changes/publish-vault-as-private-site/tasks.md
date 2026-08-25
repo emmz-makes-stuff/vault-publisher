@@ -12,12 +12,12 @@
 
 These come first deliberately: the guarantee must be in place and proven before confidential content is ever deployed. See design.md — Migration Plan.
 
-- [ ] 2.1 Create the Cloudflare Worker and attach the custom domain (the concrete hostname is a deployment parameter, held in the vault repository rather than here); verify the hostname resolves and serves the Worker
+- [x] 2.1 Create the Cloudflare Worker and attach the custom domain (the concrete hostname is a deployment parameter, held in the vault repository rather than here); verify the hostname resolves and serves the Worker
 - [ ] 2.2 Disable every bypass hostname for the Worker — the `workers.dev` route and, if explicitly enabled, Preview URLs — and verify by requesting each address directly that it does not serve content; this is the highest-consequence check in the project. Disabling in the dashboard is not durable on its own: `workers_dev: false` must also be set in the `wrangler` configuration (7.3), because a dashboard-only toggle is re-enabled by the next `wrangler deploy`. Preview URLs follow the `workers_dev` setting unless they were explicitly configured, in which case they are disabled separately
-- [ ] 2.3 Create the Cloudflare Access application on that custom domain, scoped to the apex so every path is covered rather than a subpath, and verify a request to a nested path is intercepted
+- [x] 2.3 Create the Cloudflare Access application on that custom domain, scoped to the apex so every path is covered rather than a subpath, and verify a request to a nested path is intercepted
 - [ ] 2.4 Add the one-time PIN login method and an Access policy of `Include → Emails → the reader addresses`; verify the policy lists exactly the intended addresses
-- [ ] 2.5 Deploy a placeholder page and verify an unauthenticated request is refused, an allow-listed address receives a code and gains access, and a non-allow-listed address is refused and receives no email
-- [ ] 2.6 Verify that a static asset (an image) placed alongside the placeholder is equally refused when requested directly by its address while unauthenticated
+- [x] 2.5 Deploy a placeholder page and verify an unauthenticated request is refused, an allow-listed address receives a code and gains access, and a non-allow-listed address is refused and receives no email
+- [x] 2.6 Verify that a static asset (an image) placed alongside the placeholder is equally refused when requested directly by its address while unauthenticated
 
 ## 3. Configuration and selection
 
