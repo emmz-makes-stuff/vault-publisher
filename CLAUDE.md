@@ -62,6 +62,25 @@ a stack that the existing targets don't cover, *you* update the Makefile and say
 worker that needs a target changed stops and reports it; it does not edit the Makefile, and it does not
 route around it by calling the raw toolchain.
 
+### Skills — two Cloudflare skills, one per half of the deployment
+
+This project has two Cloudflare surfaces and a skill for each. Both are retrieval-first — they go to
+current Cloudflare docs and API schemas rather than to recalled product knowledge, which is what you
+want for binding shapes and policy field names.
+
+- **`cloudflare`** — the delivery half: the Worker, static assets, `wrangler.jsonc`, routes,
+  `wrangler deploy`.
+- **`cloudflare-one`** — the auth half: the Cloudflare Access application, its email allow-list
+  policy, the one-time-PIN login, and identity config. Reach for this on any Access task, including
+  the human-in-the-loop verifications in §4 — creating the Access application and its policy,
+  confirming the `workers.dev` route serves nothing, walking a reader through a login end to end.
+
+**Not applicable, deliberately:** `cloudflare-one-migrations` (it plans ports from Zscaler/Palo
+Alto/legacy VPN estates; there is no source stack here) and `cloudflare-email-service` (Email
+Sending/Routing). Access mails the one-time code itself and `design.md` explicitly rejects owning
+email deliverability — a `send_email` binding in this Worker means someone has rebuilt a component
+the design ruled out.
+
 ### Boundaries — enforced by hooks, not by trust
 
 Three things belong to you alone: **the commits, the ticked boxes, and the decision to invoke an
