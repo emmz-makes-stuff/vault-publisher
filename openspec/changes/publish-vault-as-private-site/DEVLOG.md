@@ -346,6 +346,118 @@ No task numbers ticked (remediation block, per CLAUDE.md §3c) — every §1 box
 
 → @reviewer
 
+## 2. Access control, before any content exists
+
+**[architect]** Base: 39cd19d — this section delivers the confidentiality guarantee itself, proven
+against a placeholder page before any vault content exists. Every task in it is human-in-the-loop
+Cloudflare configuration that no automated gate can settle, so per CLAUDE.md §4 this section is
+handed to the Product Owner as a runbook and **nothing is ticked without their confirmation**.
+
+**[architect]** Retrieval note: the steps below were taken from current Cloudflare documentation via
+the `cloudflare` and `cloudflare-one` skills on 2026-08-25, not from recalled product knowledge.
+Dashboard navigation and policy field names change; re-retrieve rather than trusting this post if it
+is being read long after that date.
+
+### ❗ Two findings from the docs that affect this section's specification
+
+**Finding 1 — task 2.2 as written is not sufficient, and the gap is the project's stated
+highest-consequence failure mode.** Task 2.2 says to disable the `workers.dev` route and verify it
+serves nothing. Cloudflare's documentation carries this caution:
+
+> If you disable your `workers.dev` route in the Cloudflare dashboard but do not update your
+> Worker's Wrangler file with `workers_dev = false`, the `workers.dev` route will be re-enabled the
+> next time you deploy your Worker with Wrangler.
+
+The dashboard toggle is therefore not durable. Section 2 disables the route; section 7 adds the
+`wrangler` configuration (7.3) and the deploying workflow (7.4). If `workers_dev = false` is not in
+that configuration, **the first `wrangler deploy` silently re-enables a hostname serving the entire
+confidential site unauthenticated** — and it is Cloudflare's domain, so it cannot carry an Access
+policy. Task 8.3 would eventually catch it, but the window between 7.4 and 8.3 is a live exposure.
+design.md calls this "the single highest-consequence failure mode in the project"; the task
+breakdown currently addresses only half of it.
+
+**Finding 2 — preview URLs are a second bypass hostname, and no task covers them.** The same
+documentation notes that Preview URLs default to matching the `workers_dev` setting _unless
+explicitly configured_, and that if they were explicitly enabled they must be disabled separately.
+A preview URL is a `workers.dev` address and equally cannot carry an Access policy. Neither
+`tasks.md` nor `design.md` mentions preview URLs anywhere. The `reader-access` spec requirement
+"Published content has no unauthenticated route" plainly covers them; the tasks implementing it do
+not.
+
+Both are recorded here for the Product Owner's decision (see the handover below). The runbook that
+follows covers both regardless, so following it is safe whichever way the specification question is
+settled.
+
+### Runbook for 2.1–2.6 — the Product Owner executes; the Architect ticks nothing until confirmed
+
+Terminology: `<SITE_HOST>` is the published hostname, a deployment parameter deliberately not
+recorded in this repository. `<WORKER_NAME>` is the Worker's name. `<READER_EMAILS>` is the reader
+allow-list.
+
+**2.1 — Create the Worker and attach the custom domain.**
+Dashboard → **Workers & Pages** → **Create** → create a Worker named `<WORKER_NAME>` (the default
+"Hello World" template is fine; real content comes later). Then **Settings** → **Domains & Routes**
+→ **Add** → **Custom domain** → `<SITE_HOST>`. The domain must be an active zone on this Cloudflare
+account.
+_Verify:_ `curl -sI https://<SITE_HOST>` returns 200 and is served by the Worker. DNS may take a
+minute.
+
+**2.2 — Disable the `workers.dev` route. This is the highest-consequence step in the project.**
+Same page: **Settings** → **Domains & Routes** → on the `workers.dev` entry select **Disable**, and
+confirm. While there, check **Settings** → whether **Preview URLs** are explicitly enabled; if they
+are, disable them too (Finding 2).
+_Verify:_ `curl -sI https://<WORKER_NAME>.<YOUR_SUBDOMAIN>.workers.dev` — it must **not** serve the
+site. Test it in a browser too, and note the exact address you tested; 8.3 re-runs this check once
+real content exists.
+_Carry forward to 7.3:_ the `wrangler.jsonc` written in section 7 **must** contain
+`"workers_dev": false`, or this step is undone by the first deploy (Finding 1).
+
+**2.3 — Create the Access application, scoped to the apex.**
+Dashboard → **Zero Trust** → **Access controls** → **Applications** → **Create new application** →
+**Self-hosted and private** → **Add public hostname**. In the **Domain** dropdown select
+`<SITE_HOST>` and **leave the path empty** — an empty path covers every path on the hostname, which
+is what the task means by "scoped to the apex". Do not enter a subpath.
+_Verify:_ after 2.5 is in place, request a nested path such as
+`https://<SITE_HOST>/some/nested/page` unauthenticated and confirm it is intercepted by the Access
+login page rather than served.
+
+**2.4 — One-time PIN login method, and the email allow-list policy.**
+OTP is no longer added automatically for new Zero Trust organizations, so add it explicitly:
+**Zero Trust** → **Settings** → **Authentication** → **Login methods** → add **One-time PIN**.
+Then on the application, under **Access policies**, create a policy:
+
+| Action | Rule type | Selector | Value             |
+| ------ | --------- | -------- | ----------------- |
+| Allow  | Include   | Emails   | `<READER_EMAILS>` |
+
+Use the **Emails** selector with the addresses listed individually — not **Emails ending in**, which
+would admit an entire domain. Access applications are deny-by-default, so this policy is the only
+thing granting entry.
+_Verify:_ re-open the policy and read back the address list; it must contain exactly the intended
+addresses and nothing else. This is task 2.4's actual acceptance criterion.
+
+**2.5 — Deploy a placeholder and prove the three cases.** Any trivial `index.html` will do — it
+must contain **no vault content**.
+
+1. _Unauthenticated:_ open `https://<SITE_HOST>` in a private window → the Access login page, not
+   the placeholder.
+2. _Allow-listed:_ enter an allow-listed address → a six-digit code arrives (expires after 10
+   minutes) → entering it grants access.
+3. _Not allow-listed:_ enter a non-allow-listed address → **no email is sent**, and the login page
+   still says "A code has been emailed to you". That wording is deliberate — it stops the login page
+   disclosing who the readers are. Confirm at the _inbox_, not the page, that nothing arrived, then
+   confirm the code path refuses.
+
+_If a reader sees "This One-Time PIN has already been used"_ their mail scanner consumed the code
+first; **Request new code** and consider allow-listing `noreply@notify.cloudflare.com` in mail
+filtering. design.md anticipates this.
+
+**2.6 — Prove a static asset is equally refused.** Put an image next to the placeholder, deploy, and
+request it directly by its address unauthenticated — `curl -sI https://<SITE_HOST>/<image>` — it must
+be refused exactly as a page is. Access gates the whole hostname at the edge, so this should pass by
+construction; the point of the task is to have proven it rather than assumed it, since an asset
+served unauthenticated would leak images from confidential notes.
+
 ## NEXT
 
 **Section 1 is closed** — supervisor `Approve` on `c756850..1b20150`, after one remediation block.
