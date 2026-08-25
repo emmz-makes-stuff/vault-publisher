@@ -37,14 +37,21 @@ function reportWarnings(
   unmatched: readonly string[],
   configName: string,
 ): void {
-  for (const entry of unmatched) {
-    process.stderr.write(`[WARNING] ${configName}: no path in the vault matches "${entry}"\n`);
-  }
-
-  const unmatchedSet = new Set(unmatched);
+  // The floor check runs before the unmatched guard: an excluded entry is
+  // reported as excluded whether or not it currently exists in the vault.
+  // An absent excluded folder (e.g. `folders: ["Private"]` with no
+  // `Private/` on disk) would otherwise fall into `unmatched` and read as
+  // "create it and this will work" — which it never will, since the floor
+  // withholds it unconditionally.
+  const floorWithheldFolders = new Set(
+    config.folders.filter((entry) => isEntryWithheldByFloor(entry, "folder")),
+  );
+  const floorWithheldNotes = new Set(
+    config.notes.filter((entry) => isEntryWithheldByFloor(entry, "note")),
+  );
 
   for (const entry of config.folders) {
-    if (!unmatchedSet.has(entry) && isEntryWithheldByFloor(entry, "folder")) {
+    if (floorWithheldFolders.has(entry)) {
       process.stderr.write(
         `[WARNING] ${configName}: "${entry}/" is excluded and will not publish\n`,
       );
@@ -52,11 +59,18 @@ function reportWarnings(
   }
 
   for (const entry of config.notes) {
-    if (!unmatchedSet.has(entry) && isEntryWithheldByFloor(entry, "note")) {
+    if (floorWithheldNotes.has(entry)) {
       process.stderr.write(
         `[WARNING] ${configName}: "${entry}" is excluded and will not publish\n`,
       );
     }
+  }
+
+  for (const entry of unmatched) {
+    if (floorWithheldFolders.has(entry) || floorWithheldNotes.has(entry)) {
+      continue;
+    }
+    process.stderr.write(`[WARNING] ${configName}: no path in the vault matches "${entry}"\n`);
   }
 }
 

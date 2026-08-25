@@ -1,4 +1,4 @@
-import { readdir } from "node:fs/promises";
+import { readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import type { PublishConfig } from "./config.js";
 
@@ -14,6 +14,21 @@ export const EXCLUSION_FLOOR: readonly string[] = [
   "Journal/",
   "Private/",
 ];
+
+// `matchesFloorFolder`/`matchesFloorFile` below only ever compare a single
+// path segment or a basename. A multi-segment entry (`"Clients/Internal/"`)
+// would read as protective while excluding nothing — fail at load time
+// rather than silently no-op.
+for (const floorEntry of EXCLUSION_FLOOR) {
+  const segment = floorEntry.endsWith("/") ? floorEntry.slice(0, -1) : floorEntry;
+  if (segment.includes("/")) {
+    throw new Error(
+      `EXCLUSION_FLOOR entry "${floorEntry}" has more than one path segment; ` +
+        "the floor only matches a single segment or basename, so a multi-segment " +
+        "entry would silently exclude nothing.",
+    );
+  }
+}
 
 export interface SelectionResult {
   readonly published: readonly string[];
@@ -111,18 +126,86 @@ export function isEntryWithheldByFloor(entry: string, kind: "folder" | "note"): 
 }
 
 /**
+ * Whether a walked candidate resolves to where the walk found it, expressed
+ * as a pair of paths relative to their own roots — not an absolute-path
+ * prefix check, which would misfire the moment the vault root itself sits
+ * under a symlinked ancestor (macOS puts `/tmp` -> `/private/tmp`, which is
+ * exactly the situation a scratch test fixture under `os.tmpdir()` runs in):
+ * both `vaultRoot`/`absolutePath` and their resolved counterparts shift
+ * together in that case, so the relative paths still agree and the note is
+ * correctly kept. Any *other* divergence means a symlink redirected
+ * somewhere along the way — inside the vault (an alias for an excluded
+ * folder, invisible to the exclusion floor by name) or entirely outside it
+ * — and the candidate must be dropped either way. Pure — no filesystem
+ * access — so it is directly testable with plain path strings.
+ */
+export function isWithinVaultBoundary(
+  vaultRoot: string,
+  resolvedVaultRoot: string,
+  absolutePath: string,
+  resolvedPath: string,
+): boolean {
+  const naiveRelative = path.relative(vaultRoot, absolutePath);
+  const resolvedRelative = path.relative(resolvedVaultRoot, resolvedPath);
+  return naiveRelative === resolvedRelative;
+}
+
+/**
+ * Reads each directory in the vault one level at a time and decides per
+ * entry what to descend into — never `readdir(..., { recursive: true })`,
+ * whose traversal of a symlinked directory is undocumented and, as
+ * verified directly, differs between the sync and the promise-based APIs on
+ * the same Node version. With the recursion written out here, the decision
+ * is code this module owns, not a library behaviour this module happens to
+ * currently benefit from.
+ *
+ * A symlinked directory is never descended — its real children would
+ * surface under the alias's name, which the exclusion floor cannot see. A
+ * symlinked *file* is not excluded here; it is collected as a candidate
+ * like any other and left to `isWithinVaultBoundary` in `listVaultNotes`
+ * below to resolve and judge — its own realpath can never equal its naive
+ * path, so that check alone is sufficient for it.
+ */
+export async function collectCandidatePaths(dir: string, results: string[]): Promise<void> {
+  const entries = await readdir(dir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const absolutePath = path.join(dir, entry.name);
+
+    if (entry.isSymbolicLink()) {
+      const target = await stat(absolutePath).catch(() => null);
+      if (target?.isFile() && entry.name.endsWith(".md")) {
+        results.push(absolutePath);
+      }
+      continue;
+    }
+
+    if (entry.isDirectory()) {
+      await collectCandidatePaths(absolutePath, results);
+    } else if (entry.isFile() && entry.name.endsWith(".md")) {
+      results.push(absolutePath);
+    }
+  }
+}
+
+/**
  * Walks the vault for `.md` files and returns vault-relative POSIX paths,
  * sorted. Deliberately thin: all selection logic lives in `resolveSelection`
  * above, which this just feeds.
  */
 export async function listVaultNotes(vaultRoot: string): Promise<readonly string[]> {
-  const entries = await readdir(vaultRoot, { withFileTypes: true, recursive: true });
+  const resolvedRoot = await realpath(vaultRoot);
+  const candidates: string[] = [];
+  await collectCandidatePaths(vaultRoot, candidates);
 
-  const notes = entries
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
-    .map((entry) =>
-      path.relative(vaultRoot, path.join(entry.parentPath, entry.name)).split(path.sep).join("/"),
-    );
+  const notes: string[] = [];
+  for (const absolutePath of candidates) {
+    const resolvedPath = await realpath(absolutePath);
+    if (!isWithinVaultBoundary(vaultRoot, resolvedRoot, absolutePath, resolvedPath)) {
+      continue;
+    }
+    notes.push(path.relative(vaultRoot, absolutePath).split(path.sep).join("/"));
+  }
 
   return notes.sort();
 }

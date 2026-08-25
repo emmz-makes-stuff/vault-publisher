@@ -1,8 +1,16 @@
-import { readFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { PublishConfig } from "../src/config.js";
-import { EXCLUSION_FLOOR, listVaultNotes, resolveSelection } from "../src/selection.js";
+import {
+  collectCandidatePaths,
+  EXCLUSION_FLOOR,
+  isWithinVaultBoundary,
+  listVaultNotes,
+  resolveSelection,
+} from "../src/selection.js";
 
 const fixtureVault = fileURLToPath(new URL("./fixtures/selection-vault", import.meta.url));
 const audienceFixtureVault = fileURLToPath(new URL("./fixtures/audience-vault", import.meta.url));
@@ -128,6 +136,208 @@ describe("EXCLUSION_FLOOR", () => {
       "Journal/",
       "Private/",
     ]);
+  });
+
+  it("contains only single-segment entries", () => {
+    for (const entry of EXCLUSION_FLOOR) {
+      const segment = entry.endsWith("/") ? entry.slice(0, -1) : entry;
+      expect(segment).not.toContain("/");
+    }
+  });
+
+  // Data-driven from the constant itself: a new entry gets this coverage
+  // automatically, rather than needing someone to remember to add a case.
+  // The old version of this suite asserted only the list's literal
+  // contents — it caught that the list changed, not that the list worked.
+  describe.each(EXCLUSION_FLOOR)("entry %s", (entry) => {
+    const isFolder = entry.endsWith("/");
+    const segment = isFolder ? entry.slice(0, -1) : entry;
+
+    it("withholds it at the vault root, while an unrelated sibling still publishes", () => {
+      const target = isFolder ? `${segment}/Note.md` : segment;
+      const paths = [target, "Sibling/Note.md"];
+      const cfg = config(
+        isFolder ? { folders: [segment, "Sibling"] } : { notes: [segment], folders: ["Sibling"] },
+      );
+
+      expect(paths).toContain(target);
+
+      const { published } = resolveSelection(cfg, paths);
+
+      expect(published).not.toContain(target);
+      expect(published).toContain("Sibling/Note.md");
+    });
+
+    it("withholds it nested inside a selected folder, while the folder's other notes still publish", () => {
+      const target = isFolder ? `Handbook/${segment}/Note.md` : `Handbook/${segment}`;
+      const paths = [target, "Handbook/Sibling.md"];
+      const cfg = config({ folders: ["Handbook"] });
+
+      expect(paths).toContain(target);
+
+      const { published } = resolveSelection(cfg, paths);
+
+      expect(published).not.toContain(target);
+      expect(published).toContain("Handbook/Sibling.md");
+    });
+  });
+});
+
+describe("isWithinVaultBoundary — B1 pure boundary predicate", () => {
+  it("allows a path with no symlink anywhere along it", () => {
+    const result = isWithinVaultBoundary(
+      "/vault",
+      "/vault",
+      "/vault/Handbook/Index.md",
+      "/vault/Handbook/Index.md",
+    );
+
+    expect(result).toBe(true);
+  });
+
+  it("allows a note when the vault root itself sits under a symlinked ancestor", () => {
+    // Exactly the fixtures' own situation on macOS: os.tmpdir() resolves
+    // through /tmp -> /private/tmp. A naive absolute-prefix containment
+    // check would misfire here and wrongly exclude everything; comparing
+    // relative-to-root paths on both sides is what keeps this case safe.
+    const result = isWithinVaultBoundary(
+      "/tmp/scratch/vault",
+      "/private/tmp/scratch/vault",
+      "/tmp/scratch/vault/Handbook/Index.md",
+      "/private/tmp/scratch/vault/Handbook/Index.md",
+    );
+
+    expect(result).toBe(true);
+  });
+
+  it("drops a path that resolves inside the vault but under a different name (an alias for an excluded folder)", () => {
+    const result = isWithinVaultBoundary(
+      "/vault",
+      "/vault",
+      "/vault/Handbook/AliasToPrivate/Secret.md",
+      "/vault/Private/Secret.md",
+    );
+
+    expect(result).toBe(false);
+  });
+
+  it("drops a path that resolves entirely outside the vault", () => {
+    const result = isWithinVaultBoundary(
+      "/vault",
+      "/vault",
+      "/vault/Handbook/Escape/Leaked.md",
+      "/outside/Leaked.md",
+    );
+
+    expect(result).toBe(false);
+  });
+});
+
+describe("listVaultNotes — B1 the vault boundary against a symlink escape", () => {
+  let scratchRoot: string;
+  let vaultDir: string;
+  let outsideDir: string;
+
+  beforeAll(async () => {
+    // Real symlinks, created here rather than committed: git does not carry
+    // one reliably across platforms, and a fixture directory this sensitive
+    // should not hold one at rest.
+    scratchRoot = await mkdtemp(path.join(tmpdir(), "vault-publisher-symlink-"));
+    vaultDir = path.join(scratchRoot, "vault");
+    outsideDir = path.join(scratchRoot, "outside");
+
+    await mkdir(path.join(vaultDir, "Handbook"), { recursive: true });
+    await mkdir(path.join(vaultDir, "Private"), { recursive: true });
+    await mkdir(outsideDir, { recursive: true });
+
+    await writeFile(path.join(vaultDir, "Handbook", "Index.md"), "# Invented handbook page\n");
+    await writeFile(path.join(vaultDir, "Private", "Secret.md"), "# Invented private note\n");
+    await writeFile(path.join(outsideDir, "Leaked.md"), "# Invented note outside the vault\n");
+
+    // A directory symlink aliasing the excluded `Private/` folder under a
+    // name the floor does not know — the floor matches by segment name, so
+    // this evades it unless the walk itself refuses to descend the alias.
+    await symlink(
+      path.join(vaultDir, "Private"),
+      path.join(vaultDir, "Handbook", "AliasToPrivate"),
+    );
+    // A directory symlink pointing entirely outside the vault.
+    await symlink(outsideDir, path.join(vaultDir, "Handbook", "Escape"));
+    // A file symlink aliasing an excluded file directly — governed
+    // entirely by `isWithinVaultBoundary`, not by the directory-descent
+    // guard, since it is never a directory to refuse to descend.
+    await symlink(
+      path.join(vaultDir, "Private", "Secret.md"),
+      path.join(vaultDir, "Handbook", "DirectAlias.md"),
+    );
+    // A file symlink pointing directly to a file outside the vault.
+    await symlink(
+      path.join(outsideDir, "Leaked.md"),
+      path.join(vaultDir, "Handbook", "DirectEscape.md"),
+    );
+  });
+
+  afterAll(async () => {
+    await rm(scratchRoot, { recursive: true, force: true });
+  });
+
+  it("the fixture really does contain the four symlinks the tests below rely on", async () => {
+    const alias = await lstat(path.join(vaultDir, "Handbook", "AliasToPrivate"));
+    const escape = await lstat(path.join(vaultDir, "Handbook", "Escape"));
+    const directAlias = await lstat(path.join(vaultDir, "Handbook", "DirectAlias.md"));
+    const directEscape = await lstat(path.join(vaultDir, "Handbook", "DirectEscape.md"));
+
+    expect(alias.isSymbolicLink()).toBe(true);
+    expect(escape.isSymbolicLink()).toBe(true);
+    expect(directAlias.isSymbolicLink()).toBe(true);
+    expect(directEscape.isSymbolicLink()).toBe(true);
+  });
+
+  it("does not publish a note reached through a symlinked directory alias of an excluded folder", async () => {
+    const walked = await listVaultNotes(vaultDir);
+
+    expect(walked).not.toContain("Handbook/AliasToPrivate/Secret.md");
+  });
+
+  it("does not publish a note reached through a symlinked directory pointing outside the vault", async () => {
+    const walked = await listVaultNotes(vaultDir);
+
+    expect(walked).not.toContain("Handbook/Escape/Leaked.md");
+  });
+
+  it("does not publish a note that is itself a symlink aliasing an excluded file", async () => {
+    const walked = await listVaultNotes(vaultDir);
+
+    expect(walked).not.toContain("Handbook/DirectAlias.md");
+  });
+
+  it("does not publish a note that is itself a symlink pointing outside the vault", async () => {
+    const walked = await listVaultNotes(vaultDir);
+
+    expect(walked).not.toContain("Handbook/DirectEscape.md");
+  });
+
+  it("still publishes the vault's real, non-aliased notes", async () => {
+    const walked = await listVaultNotes(vaultDir);
+
+    expect(walked).toContain("Handbook/Index.md");
+    expect(walked).toContain("Private/Secret.md");
+  });
+
+  it("collectCandidatePaths never returns a path reached through a symlinked directory", async () => {
+    const candidates: string[] = [];
+    await collectCandidatePaths(vaultDir, candidates);
+    const relativeCandidates = candidates
+      .map((absolutePath) => path.relative(vaultDir, absolutePath))
+      .sort();
+
+    // The walk itself, before the boundary check ever runs on its output —
+    // this is the descent-skip's own contract: a symlinked directory is
+    // never opened, so nothing reached only through one can appear here.
+    expect(relativeCandidates).not.toContain(path.join("Handbook", "AliasToPrivate", "Secret.md"));
+    expect(relativeCandidates).not.toContain(path.join("Handbook", "Escape", "Leaked.md"));
+    expect(relativeCandidates).toContain(path.join("Handbook", "Index.md"));
+    expect(relativeCandidates).toContain(path.join("Private", "Secret.md"));
   });
 });
 
