@@ -1129,11 +1129,18 @@ non-blocking findings are actioned or carried, as follows.
 **Sections 1 and 2 are closed** (supervisor `Approve` on each, one remediation round apiece).
 16/58 tasks. Next is **section 3 — configuration and selection**.
 
-**Do before section 8 opens:** confirm no current reader is left in a revoked state from 2.7's
-experiment. Revocation persists on the user; if it caught one of the three readers rather than the
-address substituted out at 2.4, that reader silently cannot authenticate, and it surfaces at 8.4 as
-no email, no log row and "expired" — indistinguishable from the failure that cost section 2 an hour.
-**Zero Trust → Team & Resources → Users.**
+**Revocation check — done, clear.** The supervisor's open item was whether 2.7's revoke had caught a
+current reader, since revocation persists on the user and would surface at 8.4 as no email, no log
+row and "expired". The Product Owner checked: the reader whose address replaced the substituted one
+holds an active session, so it was not caught. The other two readers have never authenticated, and a
+user record only exists once someone has, so there is no state on them to be wrong. The revocation
+belongs to the address removed at 2.4, which is where it should be.
+
+**One consequence to keep in view:** that address remains revoked. If it is ever restored to the
+allow-list it will still fail to authenticate, with no email and no log row, until the revocation is
+lifted as well. The runbook covers this symptom — it instructs checking the Users screen first when a
+reader reports no code arriving — which is the case for it having been written before it was needed
+rather than after.
 
 **Section 3 is where confidentiality stops being Cloudflare's job.** The exclusion floor decides
 which notes can _never_ publish, whatever the configuration says. It is the first code in this change
