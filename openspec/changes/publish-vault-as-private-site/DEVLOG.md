@@ -348,72 +348,46 @@ No task numbers ticked (remediation block, per CLAUDE.md §3c) — every §1 box
 
 ## NEXT
 
-- Section 1 block 1.1–1.7 implemented and self-tested green; awaiting reviewer.
-- Section 2 is entirely human-in-the-loop Cloudflare work (Worker, `workers.dev` route disabled,
-  Access application + one-time PIN + email allow-list). Per CLAUDE.md §4 the Architect stops and
-  hands the Product Owner a copy-pasteable runbook; ticks wait on their confirmation. Product Owner
-  has chosen to take this on **after section 1 closes**, keeping design.md's Migration Plan ordering
-  — the guarantee is proven before any content-rendering code exists.
+**Section 1 is closed** — supervisor `Approve` on `c756850..1b20150`, after one remediation block.
+Blocks landed: `b6a2655` (1.1–1.7), `1b20150` (remediation, no ticks).
 
-**[reviewer]** Remediation block for §1 supervisor findings — audit (`c756850..HEAD`, uncommitted
-working tree against `b6a2655`).
+**Section 2 is next, and it is the Product Owner's to execute.** Every task in it is
+human-in-the-loop Cloudflare configuration that no automated gate can settle — the Worker and its
+custom domain, disabling the `workers.dev` route, the Access application, the one-time PIN login
+method and the email allow-list policy. Per CLAUDE.md §4 the Architect hands over a precise,
+copy-pasteable runbook and **waits for confirmation before ticking any of 2.1–2.6**. Nothing in
+section 2 gets ticked on the Architect's judgement. Design ordering is deliberate: the guarantee is
+proven before any content-rendering code exists, so section 3 does not start until section 2 closes.
 
-Independently re-verified both blockers rather than trusting the worker's report.
+**Carried architectural notes** (from the reviewer and supervisor, for whoever opens section 3+):
 
-**Blocker 1 (no gate type-checked outside `src/`).** Confirmed `tsconfig.check.json`'s `include`
-(`["src", "test", "*.ts", "*.js"]`) is a closed list, but checked what it needs to reach today:
-`eslint.config.js` and `vitest.config.ts` are the _only_ root `*.ts`/`*.js` files in the repo, so the
-closed list genuinely covers every non-`src` TypeScript/JS file that exists — nothing is silently
-excluded by the glob today. Planted a type error in each file in turn (not just `test/`, which the
-worker's own evidence already covered):
+- **`eslint.config.js`'s `ignores` and `tsconfig.check.json`'s `include` must move together.** Adding
+  a path to `ignores` does not merely un-lint it — it removes the only backstop that catches the path
+  going untype-checked. Correct for `vault/**`; quietly wrong for any directory that is ours. The
+  backstop is loud rather than silent: a file outside the `include` list passes `make build`
+  untype-checked but fails `make lint` with `not found in any of the provided project(s)`, so the
+  gate _set_ still stops it.
+- **`test/**` is now bound by `strict`, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`.**
+  A fixture written `{ notes: undefined }` fails the build, and indexing a fixture array needs
+  narrowing. Brief the worker on this or it reads as the scaffold fighting them.
+- **vitest globals are off and `types` is `["node"]`** — tests import from `"vitest"` explicitly.
+- **Any future filesystem-walking gate needs the same two vault entries** (`vault/**`, `.vault/**`).
+  Nothing enforces that the eslint and prettier ignore lists stay in step; they are different tools
+  with different mechanisms, so the duplication is unavoidable rather than a design flaw.
+- **`package.json` still has no `bin`/`main`/`exports`.** ADR-0003's composite Action needs a CLI
+  entry, so `src/index.ts` should _become_ that entry in §6 rather than the placeholder lingering.
+- `src` is type-checked twice per build — immaterial now, worth remembering if builds get slow.
+- **`design.md § 6` wants a sentence when it is next edited**: "the build gate also type-checks the
+  tests" is not deducible from that table, and the validate row no longer matches the Makefile's
+  per-change loop.
 
-- `vitest.config.ts` — added a bad assignment (`string` ← `number`): `npm run build` → `EXIT:2`,
-  `TS2322` reported against `vitest.config.ts:8`. Reverted → `EXIT:0`.
-- `eslint.config.js` — added a bad `as`-style cast: `npm run build` → `EXIT:2`, `TS2352` reported
-  against `eslint.config.js:21`. Reverted → `EXIT:0`.
-
-Both confirm the fix is real, not just closed-for-the-demonstrated-case. Also confirmed the
-two-project build doesn't leave anything behind: `tsconfig.check.json` has `noEmit: true` and
-`composite: false`, and after `make build` only the pre-existing, git-ignored `tsconfig.tsbuildinfo`
-(from the `--build` project) exists — no second `.tsbuildinfo`, and `git status --porcelain` is empty
-after a build, holding task 1.7's requirement.
-
-**Blocker 2 (lint gate walking the local vault checkout).** Reproduced the supervisor's negative case
-fresh: planted `vault/.obsidian/plugins/example/main.js` with deliberately broken/unformatted JS
-(unused `var`, unclosed brace) — `make lint` → `LINT_EXIT:0`, `make format` → `FORMAT_EXIT:0`, vault
-path never reaches gate output. Deleted `vault/` after; `git status --short` shows no trace.
-
-On the two-ignore-lists-in-step concern: `eslint.config.js`'s `ignores` and `.prettierignore` are
-genuinely independent tools (flat-config `ignores` vs. Prettier's file-list), so there's no single
-config file that could serve both without one tool reading the other's format — this isn't an
-oversight, it's the ceiling of "two separate CLIs, two separate ignore mechanisms." Duplication is
-acceptable as long as both stay in step; recommend a `## NEXT` note that any future third gate over
-the filesystem (a spellchecker, a link checker) must remember to add the same two entries, since nothing
-enforces that automatically. Confirmed no legitimate source path could ever live under `vault/` today:
-`src/` and `test/` are the only code trees, and neither `design.md` nor any spec references a `vault/`
-subpath as anything other than the manual-checkout convention documented in `.gitignore:7-9`.
-
-**The rename.** `tsconfig.eslint.json` is deleted (`git status` shows `D`, not present anywhere on
-disk) and `tsconfig.check.json` is untracked-new — no window where both exist. The only live code
-reference (`eslint.config.js`'s `parserOptions.project`) was updated. Grepped the whole repo outside
-`node_modules`/`.git`: the only remaining occurrences of `tsconfig.eslint.json` are inside
-`DEVLOG.md`, in **earlier, already-attributed posts** narrating history (the original 1.5 implementation
-note, the original reviewer's judgement call, the supervisor's finding) — correct, since the DEVLOG is
-append-only and rewriting past posts to match the current filename would falsify the record. No
-dangling reference in any config, script, or fresh prose.
-
-**Publishability.** No real note title, client name, or hostname anywhere in the diff or this block's
-new DEVLOG text; the only domain-shaped string is `workers.dev`, which is the generic Cloudflare
-default-route domain already covered by the change's standing constraint check, not a real hostname.
-The worker's throwaway `vault/.obsidian/plugins/example/main.js` (invented plugin name) was confirmed
-deleted above with no trace in `git status`.
-
-**Gates**, re-run independently: `BUILD_EXIT:0` `TEST_EXIT:0` (3 passed) `FORMAT_EXIT:0` `LINT_EXIT:0`
-`VALIDATE_EXIT:0` — `make gates` → `GATES_EXIT:0`. `git status --porcelain` empty after `make build`.
-
-**Verdict: Approve.**
-
-Both supervisor blockers are closed, verified independently rather than by re-reading the worker's
-claims, and neither hole was fixed only for the narrow demonstrated case. No nits.
-
-→ @architect
+**Standing process rule — the DEVLOG stays in the format gate, and the Architect's pre-commit gate
+run is the one of record.** Every agent runs its gates and _then_ writes its DEVLOG post, so any
+agent's `FORMAT_EXIT:0` is provisional by construction and the last writer always leaves the tree
+red. This bit once already: a `FORMAT_EXIT:0` was reported accurately and was stale by the time it
+was read. Pulling the DEVLOG out of the gate would recreate, for a third time in one section, the
+exact failure this section fixed twice — a gate green over territory it never examined. So: agents
+write posts prettier-clean from the start (`printWidth: 100`, `_em_`, `-` bullets), and the Architect
+re-runs the gates after the final post and before the commit. If that needs `--write`, run it on
+`DEVLOG.md` alone and read the diff — a formatter pass over an append-only record is the one edit
+that could stop being cosmetic without anyone noticing.
