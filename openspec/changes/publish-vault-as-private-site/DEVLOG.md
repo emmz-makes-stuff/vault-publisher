@@ -582,6 +582,227 @@ Section 2 delivered what it was ordered first to deliver: the guarantee is prove
 placeholder, by request, on every path type — **before** any vault content exists. Sections 3 onward
 now build the content pipeline behind a gate already known to hold.
 
+**[supervisor]** Section review of `39cd19d..HEAD` (6 commits, 3 files, no code). **Request changes.**
+
+Scope note on method: this section has no diff to read for drift, so the audit went requirement by
+requirement through `specs/reader-access/spec.md` and asked, of each scenario, _what recorded
+observation would be false if this scenario did not hold_. Four of the fourteen scenarios have no
+such observation. Two of those are in a gap no task in any section closes.
+
+Taking the section's own recurring lesson seriously, the checks below were run with the working
+directory echoed, the tracked-file count printed (45), and the scanned byte count printed, so a clean
+result is known to have come from the territory intended.
+
+**What the section did establish, and establish well.** 2.3's nested-path 302, 2.6's asset 302 and
+2.5's three cases are real evidence for the whole of "No unauthenticated access to published
+content" — the first three scenarios of it outright, and they close a hazard 2.4's readback did not:
+a second Access policy granting broadly (a leftover Bypass or an allow-everyone rule) would have
+been visible as a served placeholder in 2.5 case 1. Deny-by-default is therefore observed, not just
+asserted. The "Adding a reader" scenario of the allow-list requirement is also proven, incidentally
+but genuinely, by the mid-section policy edits: an address added to the policy authenticated with no
+commit to either repository and no republish. And the 2.2 escalation from "404" to "404 that is
+`text/plain`, 17 bytes, from `server: cloudflare`, at an address confirmed independently in the
+dashboard" is the right standard; the findings below hold the rest of the section to it.
+
+---
+
+### Blockers
+
+**B1 — `reader-access` scenario "Credential is reused or has expired" is not established, and no
+task in sections 2, 7 or 8 exercises it.** The requirement says the credential SHALL expire and that
+a used or expired credential SHALL NOT grant access. The only observations in this section are
+incidental and come from a malfunctioning state: the silent-first-login post records `"expired"` in
+response to any code typed _when no code had been issued at all_, which is evidence about a failure
+mode, not about credential lifetime. The 10-minute expiry is quoted from documentation. The
+mail-scanner "This One-Time PIN has already been used" wording is anticipated in the runbook and in
+`design.md`, but never observed. Every other property in this section was proven by request rather
+than by reading Cloudflare's docs, and this one should be held to the same bar — it is a two-minute
+check while a placeholder is the only thing deployed.
+
+**B2 — `reader-access` scenario "Removing a reader" is not established, and the hazard it names is
+untouched.** 2.5 case 3 tested an address that was _never_ on the policy. That is the
+"Address not on the allow-list" scenario, not the removal one, and the two differ in exactly the way
+that matters: a removed reader may hold a live Access session. Nothing in the section records the
+Access application's **session duration**, and no task in 2, 7 or 8 mentions revocation or session
+lifetime. This section did in fact remove an address (2.4, the substitution) and did not check what
+that address can now do. The spec's wording ("can no longer obtain access") arguably concerns new
+authentications only, but "arguably" is not the standard this section set for itself, and an
+unbounded session duration would make removal effectively inoperative for the length of that
+session.
+
+**B3 — 2.2 and the amended 8.3 have no positive control, and the window to obtain one closes at
+section 7.** The section's own lesson is that a 404 is only evidence if you know it came from the
+address you meant to test. The dashboard cross-check establishes the address; it does not establish
+that _that address would have served the site had the route been live_. The runbook's own correction
+post states a new Worker comes up with `workers.dev` enabled — so the placeholder was, for a window,
+reachable there, and a `curl` in that window would have made the subsequent 404 conclusive rather
+than merely consistent. That control was not taken. It is weaker still for the Preview URL: the
+preview wildcard was "found already disabled" and was then tested with a version prefix, and a
+non-existent version prefix returns 404 whether previews are enabled or not — so the preview half of
+2.2 rests on the dashboard toggle alone, which is precisely what the amended task said was
+insufficient. This is recoverable **now and only now**: nothing but a placeholder is deployed, so
+re-enabling `workers.dev` briefly, observing the placeholder served, and disabling it again is a
+safe, decisive control. After 8.1 it is a deliberate exposure of confidential content and can never
+be run again.
+
+**B4 — the 7.3 amendment closes the 7.3 window and leaves the 7.4 one open, which is the window that
+matters.** Finding 1 correctly identified that a `wrangler deploy` without `workers_dev: false`
+re-enables the route. The amendment requires the flag before the first deploy and a re-request after
+it. But 7.4 introduces a _second_ deploy path — the vault repository's `publish.yml`, running
+`wrangler` unattended on every push to `main` — and 7.4 carries no bypass-hostname re-check. The
+next check after it is 8.3. The amended 7.3 therefore narrows the exposure window by one task and
+does not close it, and after 8.3 the workflow keeps deploying with no check at all. Compounding it,
+7.3 does not say **which repository's** `wrangler` configuration must carry the flag. ADR-0003 puts
+the deploy in the vault repository; 7.3 verifies a configuration used to upload "a fixture site".
+If those are two different files, the flag is verified on one and the deploy runs with the other,
+and the amendment closes nothing.
+
+**B5 — Preview URLs were folded into the verification tasks but not into the durability
+requirement.** 2.2 and 8.3 both name previews; **7.3 names only `workers_dev: false`**. That is the
+exact asymmetry Finding 1 established to be dangerous — a hostname proven disabled by dashboard state
+with no configuration flag holding it there. `preview_urls` follows `workers_dev` _unless explicitly
+configured_, so a configuration that sets `preview_urls: true` (or a future `wrangler` default
+change) re-opens it, and 7.3 as written would still pass. This is the concrete cost of folding
+previews into the existing tasks rather than giving them their own: the verification half was
+inherited automatically, the configuration half was not.
+
+### Suggested remediation shape
+
+One block, no new `N.M` numbers, nothing ticked. It is part evidence-gathering by the Product Owner
+and part task amendment:
+
+1. **Two live checks while the placeholder is still the only content** (B1, B2, B3), recorded in this
+   thread with the same evidence standard 2.2 ended up using:
+   - request a code, use it, then present the same code again → refused; request a fresh code →
+     works. Record the application's configured **session duration** while in the policy screen.
+   - remove an address from the policy, then attempt a login from it in a clean browser session →
+     refused. Restore it after.
+   - re-enable `workers.dev`, `curl` it and observe the **placeholder HTML** served, disable it,
+     `curl` again and observe the 17-byte `text/plain` 404. Do the same for Preview URLs if that is
+     possible without a deploy; if it is not, say so and record that the preview evidence is
+     dashboard state plus one 404, so 8.3 knows what it is re-verifying.
+2. **Amend 7.3** to name the repository whose `wrangler` configuration is being verified, and to
+   require that the configuration does not set `preview_urls: true` alongside `workers_dev: false`.
+3. **Amend 7.4** to carry its own bypass-hostname re-check after the first workflow-driven deploy,
+   rather than deferring to 8.3.
+4. **Add a task under 7.4** making the check durable: the vault repository's `publish.yml` requests
+   the `workers.dev` address after `wrangler deploy` and fails the job unless it gets the refusal.
+   Rationale under "Durability" below. This is the item that also closes B4 permanently rather than
+   for one more section.
+
+### Durability — the answer to "nothing here can detect it changing"
+
+Everything section 2 proved is dashboard state on a third party, and this repository cannot see it.
+That is acceptable for the properties whose control is a file (`workers_dev: false` in 7.3 makes the
+route durable by configuration, which is the right shape) and **not** acceptable for the rest, which
+currently degrade to a memory of a check run once in August. ADR-0001 rules out custom auth code and
+`design.md` Decision 4 rules out a datastore, so a monitoring service is correctly out of scope — but
+a monitor is not what is needed. The publish workflow already runs on every push to `main` and
+already holds the deployment parameters; one `curl` and one exit code in it converts the project's
+highest-consequence property from something verified twice into something that cannot silently stop
+being true. It belongs in section 7 with 7.4, not in section 2, and not in section 8 where it would
+run once.
+
+### Notes for `## NEXT` (not blockers)
+
+- **8.4 confirms readers "reach the site", which is weaker than the scenario it serves.** The
+  "Authenticated reader" scenario says a reader may read _every_ published page with no per-reader
+  restriction. Empty-path scoping makes that true by construction and 2.3 is good supporting
+  evidence, but 8.4 is the only place a real reader is observed, and reaching the front page is not
+  the same observation. Worth having each reader open one nested page.
+- **The silent-first-login post is the most valuable thing in this section** and its diagnostic
+  reasoning — an empty Access log does _not_ mean nothing reached authentication — should survive
+  into the archive rather than being read only by whoever runs 8.4.
+- Treat the dashboard navigation in the runbook as expired by section 7 rather than merely
+  perishable; it changed twice inside one section.
+
+### Publishability — verified independently, clean
+
+Method, stated so it can be checked: `git log --format='%an <%ae>%n%s%n%b'` for the range concatenated
+with the full `git diff 39cd19d..HEAD` (32,880 bytes) and scanned for address-shaped and
+hostname-shaped tokens; then a second, wider pass over **all 45 tracked files** via `git ls-files -z`
+so the result does not depend on the working directory. Both passes ran with `pwd` echoed.
+
+- Email-shaped tokens across the whole diff and every tracked file: `noreply@anthropic.com`,
+  `noreply@notify.cloudflare.com`. **None of the three reader addresses appears anywhere**, in
+  content or in commit messages.
+- No concrete hostname: no `*.workers.dev`, no `*.cloudflareaccess.com`, no team domain, no site
+  host. Every occurrence is a `<PLACEHOLDER>`.
+- No Worker name. `emmz-makes-stuff` occurs 7 times and is the publisher's own org, as the Product
+  Owner found.
+- No build artifacts: no `.html`, no images, no `wrangler` file tracked; working tree clean.
+- One thing the Product Owner should be aware of rather than fix: the Product Owner's personal address `[redacted — see architect note below]` is the author
+  and committer identity on every commit in this range, and on the two before it. It is the owner's
+  own address, not a reader's, and it is not vault content — but it is in the git history and would
+  become public with the repository. That is a decision for §"Whether the publisher repository is
+  actually made public", not a finding against this section.
+
+---
+
+Verdict: **Request changes** — B1–B5. The section's execution was careful and its two mid-section
+findings were genuinely good architectural catches; what it did not do is hold the four scenarios
+outside its own task list to the standard it invented for 2.2, and the amendments it made to protect
+`workers_dev` did not extend to the deploy that will actually run repeatedly (7.4) or to the second
+hostname it added (previews, in 7.3). Three of the five are cheap live checks that are safe today and
+impossible after 8.1.
+
+**[architect]** Remediation for the supervisor's section-2 findings. Product Owner's calls: run the
+B3 positive control now, and add the durability check as a new task.
+
+**Spec amendments made (mine):**
+
+- **7.3** — now also requires that `preview_urls` is not enabled, not merely `workers_dev: false`.
+  B5 was right that this was the same asymmetry Finding 1 proved dangerous: previews follow
+  `workers_dev` _only unless explicitly configured_, so a config enabling them satisfies the flag
+  and re-opens the second hostname. It also now says the flags apply to **every** wrangler config
+  that deploys this Worker, closing B4's "which repository's config?" gap.
+- **7.4** — records that the workflow's deploy is a second, unattended path running on every push,
+  and points at 7.8 rather than relying on 7.3's one-time check.
+- **7.8 (new)** — the vault's publish workflow requests the bypass addresses after every
+  `wrangler deploy` and **fails the job** unless both refuse. It must be verified by pointing the
+  check at an address that _does_ serve and confirming the job fails: a check that cannot fail
+  proves nothing, which is the same standard B3 correctly applied to 2.2.
+
+I included the 7.3/7.4 clarifications alongside the new task the Product Owner selected, rather than
+treating them as separate scope, because 7.8 cannot do its job without them — it needs to know which
+configuration it is guarding and whether previews are in scope.
+
+**Why 7.8 matters beyond this change.** Everything section 2 proved is dashboard state on a
+third-party service. Nothing in this repository can observe it changing; `make gates` stays green if
+the route is re-enabled next month. ADR-0001 and Decision 4 correctly refuse a monitor and a
+datastore — but a monitor is not what this needs. The workflow already runs on every push and
+already holds the deployment parameters, so the check costs one request and converts a one-time
+verification into a standing gate. **This is the only part of `reader-access` that keeps holding
+after the change ships.**
+
+**Still open — three live checks handed to the Product Owner (B1, B2, B3).** These need real
+requests against the live deployment and cannot be settled here. B3 is time-critical: it is safe
+only while the placeholder is the sole content, and becomes a deliberate exposure of confidential
+material once 8.1 deploys the real set.
+
+**[architect]** Redaction note, and a real question for the Product Owner.
+
+The supervisor's publishability finding above named the Product Owner's personal email address in
+full, in the course of reporting that no reader address appears anywhere in the repository. It has
+been **redacted in place** — the DEVLOG's append-only rule exists to preserve the record of how a
+decision was reached, not to preserve an identifier that the standing constraint says must not be
+here. Everything else in that post stands unaltered.
+
+Worth naming the pattern, because it is now the fifth instance in this change of a check reporting
+clean over something it had not examined — and the first where the _check itself_ introduced what it
+was looking for. The others: a `.prettierignore` hiding files from the format gate; no gate
+type-checking outside `src/`; a 404 indistinguishable from a mistyped hostname; a `grep` reporting
+clean from the wrong directory.
+
+**The substantive point the supervisor raised is real and is not a section-2 finding.** That address
+is the git author and committer identity on every commit in this repository. If the repository is
+made public — the standing open question in `design.md` — the address goes public with it, and no
+amount of care about file contents changes that, because it lives in commit metadata rather than in
+any file. It is the Product Owner's own address rather than a client's or a reader's, so this is a
+preference, not a confidentiality breach. But it is a decision to take deliberately before the
+repository is published, not to discover afterwards, since rewriting authorship across a project's
+whole history is far more disruptive than setting it now.
+
 ## NEXT
 
 **Section 1 is closed** — supervisor `Approve` on `c756850..1b20150`, after one remediation block.
