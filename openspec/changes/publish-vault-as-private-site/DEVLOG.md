@@ -922,48 +922,260 @@ With that, section 2 has one task outstanding: **2.9**, the removal runbook, dra
 now complete, including the three added during remediation. Handing back to the supervisor for the
 second review pass over the full section range.
 
+**[supervisor]** Second pass over `39cd19d..HEAD` (12 commits, 5 files, still no product code).
+**Approve.** Nothing remaining is a blocker; the items below are `## NEXT`, and two of them are
+marked _before section 8_ rather than _eventually_.
+
+Method, since the standing lesson now has five instances and one of them was mine: every command
+below echoed `pwd` and printed the count of what it scanned (46 tracked files; 72,409 bytes of
+commit metadata plus messages plus diff). Where a finding is about something _absent_, the check was
+run over the whole tracked set via `git ls-files -z`, not over a directory I assumed I was in. This
+post names no address.
+
+### The five blockers
+
+**B3 — closed, and closed better than asked.** The positive control was run on both hostnames: each
+toggled on, observed serving the placeholder, toggled off, observed 404. That converts the refusal
+into evidence about the address rather than about the request. The architect's addendum is the part
+worth keeping — that 8.2–8.3 **cannot** re-run this method once real content exists, and that 7.8's
+negative control (point the check at an address that does serve) is how the positive control
+survives as a repeatable test without ever exposing the site. That is the correct disposition.
+
+**B4/B5 — closed as specification.** 7.3 now forbids enabling `preview_urls`, names that the flags
+bind **every** wrangler configuration deploying this Worker, and re-checks both addresses after the
+first deploy; 7.4 names itself as the second unattended path; 7.8 makes the check standing and
+requires that it be proven capable of failing. One residual, N1 below, in 7.8's wording.
+
+**B1 — reuse closed, expiry deferred; the placement is sound but the stated reason is not.** The
+different-browser retry is the right control and for the right reason — the original browser could
+have refused from client-side state, passing the check while testing the browser. On the deferral,
+see N3.
+
+**B2 — closed, and it is the best work in this section.** A spec that promised more than the system
+delivered was corrected rather than defended, and the correction was proven by an experiment whose
+design was better than the constructed test would have been: a page the browser had **never
+fetched** rules out cache as the source of the pass, which is the failure mode that would have made
+the obvious version of this check worthless. An address removed from the allow-list was demonstrably
+still being served content, and stopped only on revoke. That is a real gap between the written
+guarantee and the live one, found and closed.
+
+### Is the amended `reader-access` spec honest?
+
+Mostly yes, and it is now more honest than it was. Assessed scenario by scenario, asking of each what
+recorded observation would be false if it did not hold:
+
+- **"Removing a reader who is currently signed in"** — describes exactly what was observed, including
+  the remedy. The `persists until it expires` clause generalises a few observed minutes to a
+  configured 24 hours, but the 24 hours was read off the application and the mechanism is documented,
+  so the generalisation is declared rather than smuggled. Honest.
+- **"Removing a reader"** — the rewritten `cannot start a new session` half is observed. The
+  `can no longer authenticate` half is **not**: no fresh login attempt from the removed address is
+  recorded anywhere in this section. It is well-supported by 2.5 case 3 and by deny-by-default, but
+  those concern an address that was _never_ listed, and this section has already documented
+  **policy propagation lag in the other direction** — an added address that could not authenticate
+  for minutes after the edit. The symmetric lag on removal is plausible, unobserved, and would look
+  exactly like a successful removal. The runbook's confirmation step happens to catch it, which is
+  why this is a note and not a finding. See N4.
+- **"Login page does not disclose who the readers are"** — the spec says _the response is the same in
+  both cases_. What was observed is that the visible message is the same. Timing and any subsequent
+  error path were not compared. Over-claim, small, inherent to the wording rather than to the
+  verification.
+- **"Credential is reused or has expired"** — reuse observed; expiry not (8.6). The clause
+  `the person may request a new one` is asserted in 2.8's task text but not narrated in the post; it
+  is amply evidenced elsewhere in the section, so this is a narration gap, not an evidence gap.
+- Everything under **"No unauthenticated access"** and **"Published content has no unauthenticated
+  route"** is now at or above the evidence bar the section set for itself.
+
+No requirement in the spec now claims materially more than the record supports, with expiry as the
+one declared, tracked exception.
+
+### `## NEXT` — nothing here blocks section 3
+
+**N1 — 7.8's preview check needs to name _which_ preview address, before 7.8 is implemented.**
+Preview URLs are per-version, so a workflow that requests a fixed preview address will 404 forever
+regardless of whether previews are enabled — green over territory it never examined, in the one task
+written to prevent that. 7.8's negative control proves the _mechanism_ can fail; it does not prove
+the _address chosen_ is the live one. `wrangler deploy` prints the version's preview address; the
+check should use that, not a literal. One clause in 7.3/7.8, cheap now, invisible later.
+
+**N2 — the revoke performed in 2.7 is a persistent user state, and nothing records undoing it or
+whose it was.** Cloudflare's per-user revoke is a flag on the user, not an event; the architect's own
+note that _"the caveat that a revoked user may start a new session does not apply here"_ is the
+documentation confirming it. 2.7's task text requires restoring the policy afterwards and is ticked,
+but no post narrates the restore, and **nothing in this section or the runbook mentions un-revoking
+the user.** The record does not distinguish the benign reading (the experiment used the address
+already substituted out at 2.4, so there is nothing to undo) from the expensive one (it used one of
+the three current readers, who is now silently unable to authenticate). If it is the latter, it
+surfaces at **8.4** as no email, no log row, and "expired" for anything typed — the identical
+presentation to the failure that cost this section an hour. Checking the Users list for a revoked
+flag takes under a minute and should happen **before section 8 opens**, not at 8.4. Correctly, no
+address needs to be written down to do it.
+
+**N3 — expiry at 8.6: right mechanism, wrong stated reason, and it inverts this section's own
+ordering principle.** Making it a task rather than a note is plainly correct — a task blocks the
+change and appears in tooling; a note relies on memory, which is the failure class this change keeps
+finding. Two caveats. First, the justification (_"needs an uninterrupted wait"_) is, by the vendor
+figure quoted in this very section, about ten minutes; it could have run in the background of any
+other 2.x check and can run in the background of any section 3–7 one. Second and more substantive:
+every other `reader-access` property was deliberately proven **before** confidential content
+existed — that ordering is the whole argument of `design.md`'s Migration Plan and of section 2's
+position in the change. Expiry at 8.6 will be first observed against a live site carrying the real
+selected set. The residual risk is genuinely small, so this does not warrant reordering the change;
+it warrants 8.6 carrying a line saying it **may be discharged early** and inviting whoever is idle
+during 3–7 to spend the ten minutes. Also worth one clause: 8.6 should distinguish "refused as
+expired" from "refused because already used", or a mis-set-up test passes for the wrong reason.
+
+**N4 — the removal runbook is good and has four holes that matter to someone in a hurry.** Reviewed
+as an operational document. What it gets right is unusual: it leads with the counter-intuitive
+failure rather than the procedure, it frames the session as 24 hours _from last authentication
+rather than from removal_, and its confirmation step names the cache trap. Fixes, in descending
+order of how likely they are to bite:
+
+- **Say that the order of the two steps matters, and why.** Revoke feels like the decisive action and
+  is what an angry operator will reach for first. Revoking before removing leaves a window in which
+  the person — still on the allow-list — authenticates again and takes a fresh 24-hour session,
+  silently undoing step two. The doc numbers the steps and never says they are ordered.
+- **Add how to undo step two.** The doc creates a persistent revoked state and never mentions
+  reversing it, so a removal later reversed (a mistake, a reader returning) leaves someone
+  re-added to the policy and still unable to log in — presenting as the section's worst-diagnosed
+  failure. This is N2 as a standing hazard rather than a one-off.
+- **Give the confirmation step a fallback.** As written it requires a browser holding a live session
+  for the removed address, which the person doing the removal usually does not have — the removed
+  reader does. Name what you check when you cannot borrow it (the user showing revoked, with no
+  active session) and say plainly that this is weaker evidence.
+- **Name the one case for the application-level revoke.** Per-user is the right default and the
+  reasoning is sound, but _"Revoke per user, not per application"_ reads as a prohibition, and there
+  is a case it forecloses: when you do not know **whose** session to end — a forwarded link, an
+  address you cannot identify, a suspected compromise. With three readers the bigger hammer costs
+  three logins, which against unknown scope is cheap. Keep the default; name the exception.
+
+Two smaller ones: the doc is pure dashboard navigation with no date stamp, in a project that recorded
+**two** dashboard UI changes inside one week and told its own readers to treat navigation as
+perishable — add _"paths verified DD-MM-YYYY; navigation changes, the two steps do not"_. And its
+closing pointer to _"the change's DEVLOG under section 2"_ breaks on archive, when the DEVLOG moves
+under `openspec/changes/archive/`; either give the archive path or restate the trade in the runbook,
+since the runbook is the artifact that outlives the change.
+
+**N5 — carried, still open: 8.4 confirms readers "reach the site", which is weaker than the scenario
+it serves.** No per-reader restriction means _every_ published page; empty-path scoping makes that
+true by construction and 2.3 supports it, but 8.4 is the only place a real reader is observed. One
+nested page each.
+
+**N6 — cosmetic, worth one clause somewhere before 8.3.** The Access login page lives on a third
+hostname (`<team>.cloudflareaccess.com`). It serves no published content and is not a bypass, but
+8.3's phrase is now _"every bypass hostname"_, and someone reading it cold in section 8 should not
+have to work out whether that one is in scope.
+
+### Publishability — re-verified over the enlarged range, clean
+
+46 tracked files (up one: `docs/runbooks/removing-a-reader.md`); 72,409 bytes of commit metadata,
+commit messages and diff scanned; a second pass over the whole tracked set so the result does not
+depend on the working directory.
+
+- No reader address, site hostname, Worker name, `workers.dev` address, team domain or client name
+  appears anywhere — in file contents, in the new runbook, or in any commit message. The only
+  address-shaped tokens in tracked content are `noreply@anthropic.com` and
+  `noreply@notify.cloudflare.com`.
+- **The redaction of the previous supervisor post is confirmed effective**, and confirmed by the
+  right check: no matching token in any tracked file, _and_ none introduced on any added line of the
+  DEVLOG anywhere in the range — so the committed history of this section is clean, not merely the
+  current worktree. The remaining occurrence is commit author metadata, which is the open question
+  the architect correctly separated out. Recording the correction plainly: that post reported the
+  reader addresses absent while writing a real address into the file doing the reporting. It is the
+  same shape as the other four instances and it was mine.
+- The runbook carries no host, address, or URL. One sentence in it states the reader count and
+  characterises them; harmless, but it is a fact about real people in a repository that may become
+  public, and it reads identically without the count.
+
+Verdict: **Approve.** The section now proves what it claims, its spec says what the system does
+rather than what was hoped, and the one property it has not observed is tracked as a task rather than
+as a memory. N2 is the item I would act on first and it costs a minute.
+
+**[architect]** Supervisor **Approve** — **section 2 is closed** after two remediation rounds. Its
+non-blocking findings are actioned or carried, as follows.
+
+**Actioned now:**
+
+- **The runbook** gained the four things a hurried reader would have needed: that the two steps are
+  **ordered** (revoking first leaves a window to re-authenticate and take a fresh 24-hour session,
+  silently undoing the revoke); that revocation is a **persistent state** with a way to reverse it,
+  and that a lingering revocation presents exactly like a mail-delivery failure; a confirmation path
+  for the normal case where you **do not** hold the removed person's browser; and the exception to
+  per-user revocation — when you do not know _whose_ session to end, the application-level control is
+  correct. It also now carries a date stamp on its click paths and an archive-proof pointer.
+- **7.8** must use the preview address the deploy actually produced rather than a fixed literal.
+  Preview addresses are per-version, so a hardcoded one 404s forever whether or not previews are
+  live — green over exactly the territory the task exists to examine. That would have been the sixth
+  instance, inside the task written to prevent the other five.
+- **8.6** may now be discharged early. The supervisor was right that the stated reason did not
+  survive arithmetic — the wait is about ten minutes — and, more importantly, that deferring it
+  inverts this section's own ordering principle: every other `reader-access` property was proven
+  before confidential content existed, and expiry would otherwise be first observed against the real
+  published set.
+
+**Carried to `## NEXT`, honestly rather than quietly:**
+
+- The rewritten removal scenario's **`can no longer authenticate` half is not observed.** It is
+  well-supported by 2.5 case 3 — but that concerns an address that was _never_ listed, and this
+  section documented policy propagation lag in the _other_ direction. The symmetric lag on removal is
+  plausible, unobserved, and would look identical to success. The runbook's confirmation step happens
+  to catch it. **A spec that claims more than was observed is the defect this section already fixed
+  once**, so it is recorded rather than left to read as verified.
+- The non-disclosure scenario says "the response is the same in both cases"; only the **visible
+  message** was compared. Timing was not.
+
 ## NEXT
 
-**Section 1 is closed** — supervisor `Approve` on `c756850..1b20150`, after one remediation block.
-Blocks landed: `b6a2655` (1.1–1.7), `1b20150` (remediation, no ticks).
+**Sections 1 and 2 are closed** (supervisor `Approve` on each, one remediation round apiece).
+16/58 tasks. Next is **section 3 — configuration and selection**.
 
-**Section 2 is next, and it is the Product Owner's to execute.** Every task in it is
-human-in-the-loop Cloudflare configuration that no automated gate can settle — the Worker and its
-custom domain, disabling the `workers.dev` route, the Access application, the one-time PIN login
-method and the email allow-list policy. Per CLAUDE.md §4 the Architect hands over a precise,
-copy-pasteable runbook and **waits for confirmation before ticking any of 2.1–2.6**. Nothing in
-section 2 gets ticked on the Architect's judgement. Design ordering is deliberate: the guarantee is
-proven before any content-rendering code exists, so section 3 does not start until section 2 closes.
+**Do before section 8 opens:** confirm no current reader is left in a revoked state from 2.7's
+experiment. Revocation persists on the user; if it caught one of the three readers rather than the
+address substituted out at 2.4, that reader silently cannot authenticate, and it surfaces at 8.4 as
+no email, no log row and "expired" — indistinguishable from the failure that cost section 2 an hour.
+**Zero Trust → Team & Resources → Users.**
 
-**Carried architectural notes** (from the reviewer and supervisor, for whoever opens section 3+):
+**Section 3 is where confidentiality stops being Cloudflare's job.** The exclusion floor decides
+which notes can _never_ publish, whatever the configuration says. It is the first code in this change
+where a bug is a disclosure rather than a defect, and 3.4–3.5 are its tests.
 
-- **`eslint.config.js`'s `ignores` and `tsconfig.check.json`'s `include` must move together.** Adding
-  a path to `ignores` does not merely un-lint it — it removes the only backstop that catches the path
-  going untype-checked. Correct for `vault/**`; quietly wrong for any directory that is ours. The
-  backstop is loud rather than silent: a file outside the `include` list passes `make build`
-  untype-checked but fails `make lint` with `not found in any of the provided project(s)`, so the
-  gate _set_ still stops it.
-- **`test/**` is now bound by `strict`, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`.**
-  A fixture written `{ notes: undefined }` fails the build, and indexing a fixture array needs
-  narrowing. Brief the worker on this or it reads as the scaffold fighting them.
-- **vitest globals are off and `types` is `["node"]`** — tests import from `"vitest"` explicitly.
-- **Any future filesystem-walking gate needs the same two vault entries** (`vault/**`, `.vault/**`).
-  Nothing enforces that the eslint and prettier ignore lists stay in step; they are different tools
-  with different mechanisms, so the duplication is unavoidable rather than a design flaw.
-- **`package.json` still has no `bin`/`main`/`exports`.** ADR-0003's composite Action needs a CLI
-  entry, so `src/index.ts` should _become_ that entry in §6 rather than the placeholder lingering.
-- `src` is type-checked twice per build — immaterial now, worth remembering if builds get slow.
-- **`design.md § 6` wants a sentence when it is next edited**: "the build gate also type-checks the
-  tests" is not deducible from that table, and the validate row no longer matches the Makefile's
-  per-change loop.
+**Brief the worker with this, because it is the lesson of the whole change so far.** Five times in
+two sections a check reported green over territory it had never examined:
 
-**Standing process rule — the DEVLOG stays in the format gate, and the Architect's pre-commit gate
-run is the one of record.** Every agent runs its gates and _then_ writes its DEVLOG post, so any
-agent's `FORMAT_EXIT:0` is provisional by construction and the last writer always leaves the tree
-red. This bit once already: a `FORMAT_EXIT:0` was reported accurately and was stale by the time it
-was read. Pulling the DEVLOG out of the gate would recreate, for a third time in one section, the
-exact failure this section fixed twice — a gate green over territory it never examined. So: agents
-write posts prettier-clean from the start (`printWidth: 100`, `_em_`, `-` bullets), and the Architect
-re-runs the gates after the final post and before the commit. If that needs `--write`, run it on
-`DEVLOG.md` alone and read the diff — a formatter pass over an append-only record is the one edit
-that could stop being cosmetic without anyone noticing.
+1. `.prettierignore` excluded `openspec/` and `docs/`, and prettier applies its ignore file even to
+   explicitly named paths — so `--check` on those paths passed having read nothing. 11 files were
+   unformatted behind it.
+2. No gate type-checked anything outside `src/`; a type error in `test/` passed every gate.
+3. A 404 from a `workers.dev` address is indistinguishable from a mistyped hostname — the check that
+   the project's highest-consequence property rested on.
+4. A `grep` for leaked identifiers reported clean while running in the wrong directory.
+5. A publishability check named, in full, the address it was reporting as absent.
+
+For section 3 the equivalent is an exclusion test that passes because the fixture never contained the
+excluded path, the selection logic never ran, or the assertion could not fail. **Every exclusion test
+must be shown to fail when the floor is removed** — the negative control that 1.4, 1.5 and B3 all
+used, and that 7.8 is written to require. A test that cannot fail proves nothing, and here what it
+would falsely prove is that confidential notes are unpublishable.
+
+**Carried architectural notes:**
+
+- `eslint.config.js`'s `ignores` and `tsconfig.check.json`'s `include` must move together — adding a
+  path to `ignores` removes the only backstop catching it going untype-checked.
+- `test/**` is bound by `strict`, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`; a
+  fixture written `{ notes: undefined }` fails the build. Brief the worker or it reads as the
+  scaffold fighting them.
+- vitest globals are off; tests import from `"vitest"` explicitly.
+- `package.json` still has no `bin`/`main`/`exports`; ADR-0003's Action needs a CLI entry, so
+  `src/index.ts` should become it in §6 rather than the placeholder lingering.
+- `design.md § 6` needs a sentence when next edited: "the build gate also type-checks the tests" is
+  not deducible from that table, and its validate row no longer matches the Makefile's per-change
+  loop.
+- **Unobserved claims in `reader-access`**, from the supervisor's second pass: removal's "can no
+  longer authenticate" half, and the non-disclosure scenario's timing.
+- **The DEVLOG stays in the format gate**; an agent's `FORMAT_EXIT` is provisional by construction,
+  since every agent runs its gates before writing its post. The Architect's pre-commit run is the
+  gate of record.
+- **Committer identity**: the Product Owner's personal address is the git author on every commit and
+  would go public with the repository. A decision to take deliberately before publishing, not to
+  discover after — rewriting authorship across a whole history is far more disruptive than setting it
+  now.

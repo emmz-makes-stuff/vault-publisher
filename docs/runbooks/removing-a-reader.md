@@ -10,6 +10,9 @@ remembered.
 
 ## The two steps
 
+**Do them in this order.** Revoking first leaves a window in which they can log in again and take a
+fresh session — silently undoing the revoke. Remove first, and there is nothing to log back in to.
+
 **1. Remove them from the allow-list.** This stops them authenticating again.
 
 Cloudflare dashboard → **Zero Trust** → **Access controls** → **Policies** → the site's policy →
@@ -26,8 +29,13 @@ removed.
 
 ## Confirming it worked
 
-Do not rely on the policy screen looking right. Confirm in a browser that holds a live session for
-that address:
+Do not rely on the policy screen looking right.
+
+**If you have a browser holding that person's live session**, confirm there. Usually you will not —
+the session belongs to them, not to you. In that case confirm what you _can_ observe: that the
+address can no longer authenticate. Enter it at the login page and check that no code arrives.
+
+Where you do have such a browser:
 
 - Request a page that browser has **not** visited before. A page it has already loaded may render
   from cache and look like access when access is gone — which reads as a pass while proving nothing.
@@ -51,4 +59,11 @@ The session is deliberately long. Every re-authentication is another one-time-PI
 email, and that path can fail quietly — a code filed as spam, or consumed by a mail scanner before
 the reader gets to it. Two of the three readers are non-technical, so friction on the common path
 costs more than a second step on a rare, deliberate one. The trade was made knowingly; see the
-change's DEVLOG under section 2.
+change's DEVLOG under section 2 — in `openspec/changes/publish-vault-as-private-site/` while that
+change is active, and under `openspec/changes/archive/` once it has shipped.
+
+---
+
+_Dashboard navigation last verified 2026-08-25. Cloudflare's console changed twice during the week
+this was written, so treat the click paths as perishable and the properties being checked as the
+durable part: remove from the allow-list, end the existing session, confirm both._
