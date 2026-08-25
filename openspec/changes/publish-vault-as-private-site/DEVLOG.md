@@ -560,6 +560,28 @@ explicit that a `wrangler deploy` without `workers_dev: false` in the configurat
 route. The amended 7.3 requires the flag and re-verifies afterwards; this is the specific mechanism
 by which a verified-green 2.2 turns red silently.
 
+**[architect]** 2.2 and 2.4 verified and **ticked** — section 2 is fully implemented.
+
+- **2.2** — the preview wildcard was requested directly with a version prefix and returned the same
+  404 as the production `workers.dev` address. Both bypass hostnames are therefore confirmed by
+  request, not merely by their dashboard toggles, which is what the amended task asks for.
+- **2.4** — the one-time PIN provider is the account's only login method, and the policy was edited
+  down to exactly the three intended reader addresses and read back to confirm it. One address was
+  deliberately changed during verification: the originally-listed address was silently filing the
+  login codes rather than delivering them, and was replaced with one proven to receive.
+
+That substitution is the one thing here that is a decision rather than a check. **An allow-listed
+address that cannot receive its code is a worse failure than an absent one, because it looks
+configured** — the policy reads correct, the login page reports a code as sent, and the reader is
+simply stuck. Removing the address does not fix the underlying mail behaviour; it only removes it
+from the path. If it is ever restored, or if a reader's provider behaves the same way, the symptom
+will be identical to the one that consumed an hour of this section: no code, no log row, and
+"expired" for anything typed.
+
+Section 2 delivered what it was ordered first to deliver: the guarantee is proven — against a
+placeholder, by request, on every path type — **before** any vault content exists. Sections 3 onward
+now build the content pipeline behind a gate already known to hold.
+
 ## NEXT
 
 **Section 1 is closed** — supervisor `Approve` on `c756850..1b20150`, after one remediation block.
