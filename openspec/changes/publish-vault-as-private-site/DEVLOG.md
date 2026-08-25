@@ -1148,6 +1148,217 @@ degradation test must be shown to fail when the protection is removed.** That is
 1.4, 1.5 and B3 all used, and that 7.8 is written to require. A test that cannot fail proves nothing —
 and here what it would falsely prove is that confidential notes cannot be published.
 
+**[architect]** Brief — block **3.1–3.2**: the config schema, the loader, and fail-closed on a bad
+config. Scope is those two tasks only; selection resolution and the exclusion floor are the next
+block and must not be started here.
+
+**Spec** (`specs/note-selection/spec.md`): _Selection is declared in configuration_ — only notes
+named, directly or by containing folder, publish; and _Selection failures do not publish more than
+intended_ — "**WHEN** the configuration cannot be read or parsed **THEN** the publish fails and no
+content is published". `design.md § 2` binds the file to `publish.config.yaml` in the vault root and
+the parser to `yaml` (already a dependency); no new dependency is in scope for this block.
+
+**The schema — binding, decided here so the block does not have to invent it:**
+
+```yaml
+folders:
+  - Handbook
+  - Meetings/2026
+notes:
+  - Index.md
+  - Reference/Glossary.md
+```
+
+- Top level is a mapping. Both keys are optional; absent means the empty list. A config selecting
+  nothing is **valid** and publishes nothing — that is the safe direction.
+- Any other top-level key is an error naming the offending key. Each value must be a sequence of
+  strings; a scalar where a sequence belongs, or a non-string member, is an error.
+- Entries are vault-relative POSIX paths. Reject: the empty string, a leading `/`, any `.` or `..`
+  segment, and a backslash. A single trailing `/` on a `folders` entry is accepted and stripped —
+  `Journal/` must reach the exclusion floor as an excluded folder, not die in the parser.
+- `notes` entries end in `.md`; `folders` entries do not.
+- Duplicates within a list are accepted and deduplicated.
+
+**Fail-closed is the whole point of 3.2.** `loadConfig` either returns a fully validated config or
+throws; it never returns a partial one, and it never falls back to a default on a parse error. The
+error message names the file and the offending key or entry, and nothing else about vault contents.
+
+**3.2 needs something to exit non-zero.** Make `src/index.ts` a minimal real entry — take the config
+path from `argv`, load it, and on failure write the message to stderr and exit non-zero having
+written nothing. Keep it minimal: §6.3 replaces it with the `util.parseArgs` CLI, and anything more
+here is scaffolding that block will have to delete. Node 24 strips types, so a test can spawn the
+source directly; confirm the exact invocation that works and record it in your post.
+
+**Tests** — 3.1: a valid config, an unknown key, a wrong-typed value. 3.2: a malformed file and an
+unreadable one, each asserting a **non-zero exit from a real child process** and that no output was
+written.
+
+**The standing section-3 requirement applies to every fail-closed test here.** Show each one failing
+when the protection is removed — delete the validation, or make the loader swallow the parse error,
+and record in your DEVLOG post what you removed and the failure you observed. Five times across
+sections 1 and 2 a check reported green over territory it never examined (list in `## NEXT`); a test
+that cannot fail proves nothing, and what it would falsely prove here is that a broken config cannot
+publish the wrong thing.
+
+**Scaffold notes so this does not read as the toolchain fighting you:** `test/**` is type-checked
+under `strict`, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes` by
+`tsc -p tsconfig.check.json` inside `make build` — a fixture written `{ notes: undefined }` fails the
+build; write `{}` or omit the key. vitest globals are off, so import `describe`/`it`/`expect` from
+`"vitest"`. `verbatimModuleSyntax` is on: `import type` for type-only imports.
+
+**Done-gates:** `make build` → `BUILD_EXIT:0`, `make test` → `TEST_EXIT:0`, `make format` →
+`FORMAT_EXIT:0`, `make lint` → `LINT_EXIT:0`, `make validate` → `VALIDATE_EXIT:0`. Read the exit
+line, not the output. Do not commit, do not tick boxes, do not touch the Makefile — post to the
+DEVLOG and hand off `→ @reviewer`.
+
+**[worker]** Implemented 3.1–3.2.
+
+`src/config.ts` — `PublishConfig { folders, notes }`, `ConfigError`, and `loadConfig(path)`. Fully
+validates the schema from the brief: unknown top-level key named in the error, each value must be a
+string sequence, entries are vault-relative POSIX paths (reject empty, leading `/`, `.`/`..`
+segments, backslash), a single trailing `/` on a `folders` entry is stripped, `notes` entries must
+end `.md` and `folders` entries must not, duplicates are deduplicated. `readFile` failure and YAML
+parse failure both throw `ConfigError` before any validation runs — `loadConfig` never returns a
+partial config. An absent/empty file parses to `{ folders: [], notes: [] }` (selects nothing), which
+is the safe reading of "both keys optional" extended to the whole file being absent.
+
+`src/index.ts` is now a real minimal entry: `argv[2]` is the config path, `loadConfig` is awaited,
+and any failure writes the error message to stderr and sets a non-zero `process.exitCode` — nothing
+is written to stdout either way. **Invocation that works, confirmed by spawning a real child
+process:** `node src/index.ts <config-path>`. Node 24's native type-stripping does not remap a `.js`
+import specifier to a sibling `.ts` file (confirmed by reproduction — `ERR_MODULE_NOT_FOUND` on
+`config.js`), so a multi-file `NodeNext`-resolution project can't spawn its TS source unmodified.
+Fixed by importing `./config.ts` directly (the literal extension) and adding
+`"rewriteRelativeImportExtensions": true` to `tsconfig.json` (TS 5.7+, we're on 5.9.3) — `tsc`
+rewrites it to `./config.js` in `dist/`, `node` resolves the `.ts` sibling when running source
+directly. Both `node src/index.ts …` and `node dist/index.js` (after `make build`) now work, and the
+CLI test spawns the former.
+
+**Negative controls — each fail-closed test shown to fail when the protection it tests was
+removed**, then restored and re-verified green:
+
+- Removed the unknown-key loop in `validateConfig` → "rejects an unknown top-level key, naming it"
+  failed (`loadConfig` resolved with `{ folders: ['Handbook'], notes: [] }` instead of rejecting);
+  every other test still passed.
+- Removed the `Array.isArray` guard in `validateList` → "rejects a scalar where a sequence is
+  required" failed (`value.map is not a function`, not the intended `ConfigError`).
+- Made the YAML-parse `catch` swallow the error and fall back to `parsed = {}` → both
+  "fails closed on malformed YAML" (unit) and the CLI's "exits non-zero … on malformed config" (real
+  child process) failed — the process now exited 0.
+- Made the `readFile` `catch` swallow the error and fall back to `raw = ""` → both
+  "fails closed when the config file cannot be read" (unit) and the CLI's "exits non-zero … when the
+  config is unreadable" (real child process) failed the same way.
+
+"Unreadable" is simulated by pointing the config path at a directory (`EISDIR`) rather than `chmod`,
+so the test doesn't depend on filesystem permission semantics or the sandbox's file ownership.
+
+Also touched: `.prettierignore` gained one narrow entry —
+`test/fixtures/config/malformed.yaml` — because that fixture is deliberately invalid YAML and
+prettier's own YAML parser errors on it (not a silent-pass ignore like the section-3 standing
+warning; this one file cannot be formatted by construction, and every other fixture in the directory
+is still checked).
+
+**Gates:** `BUILD_EXIT:0` `TEST_EXIT:0` `FORMAT_EXIT:0` `LINT_EXIT:0` `VALIDATE_EXIT:0`
+(`GATES_EXIT:0` for the combined run). 19 tests total (3 pre-existing scaffold + 13 config + 3 CLI).
+
+Not touched: selection resolution, the exclusion floor, unmatched-entry warnings, `audience:`
+frontmatter — all out of scope for this block.
+
+→ @reviewer
+
+**[reviewer]** Block **3.1–3.2** — **Approve.**
+
+Re-ran everything rather than taking the report on faith: `make build` `BUILD_EXIT:0`, `make test`
+`TEST_EXIT:0` (19 tests), `make format` `FORMAT_EXIT:0`, `make lint` `LINT_EXIT:0`, `make validate`
+`VALIDATE_EXIT:0`, `make gates` `GATES_EXIT:0`. `git diff --stat` matches the reported file set
+exactly; `Makefile` untouched.
+
+**On the five points asked for:**
+
+1. **`.prettierignore`.** The four added lines are a two-line comment, a blank, and the one path
+   `test/fixtures/config/malformed.yaml` — nothing else is newly excluded. Reproduced the necessity
+   directly: `npx prettier --check test/fixtures/config/malformed.yaml --ignore-path /dev/null` →
+   `SyntaxError: Flow sequence in block collection must be sufficiently indented…`, exit 2. This is
+   not the §1 pattern (an ignore hiding real, formattable content from `--check`) — it's a file that
+   is unparseable by construction, matching its purpose as the malformed-YAML fixture. Narrow and
+   justified.
+2. **`tsconfig.json` (`rewriteRelativeImportExtensions`).** Verified both invocations the brief's
+   done-gates depend on: `tsc --build` and `tsc -p tsconfig.check.json` (chained as `make build`,
+   confirmed `BUILD_EXIT:0` above) both hold with the flag on, and `dist/index.js` correctly imports
+   `./config.js` while `src/index.ts` imports the literal `./config.ts` for Node's native
+   type-stripping to resolve when run as source. This is a one-line, narrow, TS-idiomatic fix directly
+   in service of the brief's own instruction to "confirm the exact invocation that works" for spawning
+   source under test — not a toolchain change adopted for convenience. Noting as an architectural point
+   below rather than a blocker: CLAUDE.md's general spirit is that toolchain changes are flagged before
+   being made, and this one landed without a prior DEVLOG question. Given it's verified, minimal, and
+   doesn't touch the Makefile or any gate command, I'm not requesting it be undone — just flagging the
+   process point for the Architect's awareness.
+3. **Fail-closed.** Traced `loadConfig` end-to-end: both the `readFile` and `parseYaml` catches throw
+   `ConfigError` immediately, before `validateConfig` runs — there is no code path back to a partial or
+   defaulted `PublishConfig` on either error. `validateConfig` itself only returns early on
+   `null`/`undefined` (the documented "absent config selects nothing" case, not an error path) and
+   otherwise throws on the first violation found. `src/index.ts` writes nothing to stdout on any path;
+   on failure it writes only to stderr and sets `process.exitCode` (never a bare string exit, never
+   `process.exit()` mid-flight) — confirmed by the CLI test's `stdout` assertions and by reading the
+   file directly.
+4. **Negative controls.** Read each of the four claimed removals against the code and they hold up:
+   removing the `ALLOWED_KEYS` loop is the only thing standing between an unknown key and a config that
+   silently ignores it; removing the `Array.isArray` guard in `validateList` is the only thing
+   preventing `.map` from being called on a non-array (and would throw a `TypeError`, not
+   `ConfigError`, so the "fails closed... naming it" test would rightly fail on message content, not
+   just on not-throwing); the two swallow-the-catch mutations described are the exact code paths that
+   distinguish "fails closed" from "publishes something" for a malformed or unreadable file. All four
+   assertions target behaviour, not incidental output (`.toStrictEqual` on the parsed lists, regex on
+   the thrown message, `ConfigError` instance checks, real child-process exit codes with stdout
+   asserted empty) — none of the tests could pass for a reason other than the behaviour under test.
+   "Unreadable" via `EISDIR` on a directory path rather than `chmod` is a reasonable choice — it
+   exercises the same `readFile`-throws branch without depending on sandbox file-ownership semantics.
+5. **Scope.** No selection resolution or exclusion-floor logic anywhere in `src/` or `test/` — grepped
+   for `exclud`, `floor`, `Journal`, `Private`, `resolveSelection`, `selectNotes`; the only hits are
+   `Journal`/`Private` used as ordinary path strings in two fixtures (`trailing-slash.yaml`,
+   `dot-dot-path.yaml`) exercising _this_ block's own trailing-slash and `..`-segment rules, not the
+   exclusion floor. `PublishConfig` is exactly `{ folders, notes }` — no field that anticipates 3.3–3.5.
+   Nothing here is scaffolding §6.3's CLI would need to delete: `loadConfig` and the argv-driven
+   `main()` are both real, minimal, and forward-compatible with the eventual `util.parseArgs` CLI
+   (argv parsing is the only thing §6.3 replaces).
+
+**Nits**
+
+- `src/config.ts:47` casts `parsed as Record<string, unknown>` after the `typeof`/`Array.isArray`
+  narrowing above it. It's runtime-safe at that point (nothing upstream can reach it otherwise) and I
+  wouldn't block on it, but a `record: Partial<Record<"folders" | "notes", unknown>>` typed cast (or an
+  `Object.entries` walk) would read as slightly less of an escape hatch on a file this
+  confidentiality-critical. Worker's call whether it's worth the churn.
+
+**Architectural note for `## NEXT`**
+
+- Point 2 above: the worker changed `tsconfig.json` mid-block to make its own required test
+  invocation work, rather than raising it as a question first. The outcome is sound and verified, but
+  flagging the pattern — CLAUDE.md draws a clear line around the Makefile being Architect-only; the
+  same "stop and report, don't route around it" instinct is worth extending to compiler-level
+  toolchain flags on a change this security-sensitive, even when the fix ends up being exactly right.
+
+**[architect]** Block **3.1–3.2** closed — reviewer `Approve`, gates green on my own run
+(`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0`, `GATES_EXIT:0`), 3.1 and 3.2
+ticked, committed.
+
+**`FORMAT_EXIT:1` on my first run, on the DEVLOG alone** — the reviewer's post landed after its own
+format run, which is the "an agent's `FORMAT_EXIT` is provisional by construction" note in `## NEXT`
+happening for the second section running. There was no write half of the format gate, so fixing it
+meant reaching for the raw toolchain, which is what the Makefile exists to stop. I have added
+**`make format-fix`** (`prettier --write`, printing `FORMAT_FIX_EXIT:<n>`). It is **not** a gate and
+is not in `make gates` — `format` stays check-only so no gate ever produces an unreviewed edit.
+
+**On the `tsconfig.json` change.** The reviewer confirmed `rewriteRelativeImportExtensions: true`
+holds under both `tsc --build` and `tsc -p tsconfig.check.json`, and it stands. Its note that the
+worker made a toolchain change unilaterally rather than stopping is the right call and I am recording
+it here rather than reverting sound work: **a worker that needs the toolchain changed stops and
+reports it.** Brief the 3.3–3.5 worker with that explicitly.
+
+**Carry to §6.3:** `src/index.ts` is now a real entry taking a config path from `argv[2]`. It is
+deliberately minimal and the `parseArgs` CLI replaces it — the placeholder question in `## NEXT` is
+now settled in that direction.
+
 ## NEXT
 
 **Sections 1 and 2 are closed** (supervisor `Approve` on each, one remediation round apiece).

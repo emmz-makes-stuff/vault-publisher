@@ -1,3 +1,20 @@
-// Entry point placeholder — the generator pipeline lands in later blocks of
-// openspec/changes/publish-vault-as-private-site.
-export {};
+import { loadConfig } from "./config.ts";
+
+async function main(): Promise<void> {
+  const configPath = process.argv[2];
+  if (configPath === undefined) {
+    process.stderr.write("usage: vault-publisher <config-path>\n");
+    process.exitCode = 1;
+    return;
+  }
+
+  try {
+    await loadConfig(configPath);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${message}\n`);
+    process.exitCode = 1;
+  }
+}
+
+await main();

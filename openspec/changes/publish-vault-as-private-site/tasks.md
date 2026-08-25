@@ -24,8 +24,8 @@ These come first deliberately: the guarantee must be in place and proven before 
 
 ## 3. Configuration and selection
 
-- [ ] 3.1 Define the `publish.config.yaml` schema and implement the loader with explicit shape validation; verify unit tests cover a valid config, an unknown key, and a wrong-typed value
-- [ ] 3.2 Make a malformed or unreadable config fail the publish and publish nothing; verify a test asserts a non-zero exit and no output written
+- [x] 3.1 Define the `publish.config.yaml` schema and implement the loader with explicit shape validation; verify unit tests cover a valid config, an unknown key, and a wrong-typed value
+- [x] 3.2 Make a malformed or unreadable config fail the publish and publish nothing; verify a test asserts a non-zero exit and no output written
 - [ ] 3.3 Implement selection resolution — named folders publish recursively, named notes publish individually, everything else does not; verify unit tests cover folder selection, individual-note selection, and a note covered by neither
 - [ ] 3.4 Implement the exclusion floor as a fixed list in code covering `CLAUDE.md`, `.claude/`, `.obsidian/`, `Journal/`, `Private/`; verify tests assert each is withheld even when the config names it directly
 - [ ] 3.5 Verify by test that an excluded folder nested inside a selected folder is withheld while its siblings publish, and that an absent excluded path (`Private/`) does not error

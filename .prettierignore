@@ -8,3 +8,7 @@ CLAUDE.md
 # local vault checkout used only for manual testing — never committed
 vault/
 .vault/
+
+# deliberately invalid YAML fixture exercising the config loader's fail-closed
+# parse-error path — prettier cannot format what it cannot parse
+test/fixtures/config/malformed.yaml
