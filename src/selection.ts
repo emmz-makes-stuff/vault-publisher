@@ -65,6 +65,18 @@ function isWithinFolder(notePath: string, folder: string): boolean {
   return notePath === folder || notePath.startsWith(`${folder}/`);
 }
 
+function matchesFloorFolder(segment: string): boolean {
+  const lower = segment.toLowerCase();
+  return EXCLUSION_FLOOR.some(
+    (entry) => entry.endsWith("/") && entry.slice(0, -1).toLowerCase() === lower,
+  );
+}
+
+function matchesFloorFile(basename: string): boolean {
+  const lower = basename.toLowerCase();
+  return EXCLUSION_FLOOR.some((entry) => !entry.endsWith("/") && entry.toLowerCase() === lower);
+}
+
 /**
  * Case-insensitive: the vault lives on a case-insensitive macOS filesystem,
  * so a case-sensitive floor would let `journal/` through while the owner
@@ -77,18 +89,25 @@ function isExcluded(notePath: string): boolean {
   const basename = segments[segments.length - 1] ?? "";
   const dirSegments = segments.slice(0, -1);
 
-  for (const entry of EXCLUSION_FLOOR) {
-    if (entry.endsWith("/")) {
-      const folderName = entry.slice(0, -1).toLowerCase();
-      if (dirSegments.some((segment) => segment.toLowerCase() === folderName)) {
-        return true;
-      }
-    } else if (basename.toLowerCase() === entry.toLowerCase()) {
-      return true;
-    }
-  }
+  return dirSegments.some(matchesFloorFolder) || matchesFloorFile(basename);
+}
 
-  return false;
+/**
+ * Whether a *configuration entry itself* — not a note somewhere beneath it —
+ * names a path the exclusion floor withholds. Distinct from the filtering
+ * `resolveSelection` already does: a folder entry such as `Handbook` must
+ * not trip this just because it happens to contain a nested `Private/` (3.5
+ * — `Handbook`'s own notes still publish); it trips only when the entry's
+ * own name matches the floor, e.g. `Journal` or `CLAUDE.md` named directly.
+ * `unmatched` already covers an entry naming a path absent from the vault;
+ * this covers one naming a path that is present but withheld unconditionally
+ * — the case 3.6 gives its own warning line so it isn't silently dropped.
+ */
+export function isEntryWithheldByFloor(entry: string, kind: "folder" | "note"): boolean {
+  if (kind === "note") {
+    return isExcluded(entry);
+  }
+  return entry.split("/").some(matchesFloorFolder);
 }
 
 /**
