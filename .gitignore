@@ -3,3 +3,7 @@ dist/
 *.tsbuildinfo
 .claude/.dmons-tripwire/
 .DS_Store
+
+# local vault checkout used only for manual testing — never committed
+vault/
+.vault/

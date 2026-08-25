@@ -6,7 +6,7 @@
 
 ## Context
 
-The published site carries client-confidential material — a commissioned software audit, named individuals with assessed capabilities, infrastructure and security weaknesses. The `reader-access` spec states the governing constraint: no unauthenticated request reaches any page *or asset*. The project is only permissible while that holds.
+The published site carries client-confidential material — a commissioned software audit, named individuals with assessed capabilities, infrastructure and security weaknesses. The `reader-access` spec states the governing constraint: no unauthenticated request reaches any page _or asset_. The project is only permissible while that holds.
 
 The Product Owner's stated preference in discovery was an emailed magic link, for the reason that the readers' password management practices are unknown. Three readers today, more possible later. The allow-list must live outside the vault repository and be changeable without a commit, with no password store and no user database.
 
@@ -31,7 +31,7 @@ No authentication code is written for this project. There is no session handling
 
 **What this costs**
 
-- **The emailed credential is a six-digit code to paste, not a link to click.** This is a real deviation from the Product Owner's stated preference and was accepted knowingly. The *reason* behind that preference — that readers should not need to manage a password — is satisfied identically. The `reader-access` spec was amended from "single-use link" to "single-use credential delivered by email" so the specification describes what ships.
+- **The emailed credential is a six-digit code to paste, not a link to click.** This is a real deviation from the Product Owner's stated preference and was accepted knowingly. The _reason_ behind that preference — that readers should not need to manage a password — is satisfied identically. The `reader-access` spec was amended from "single-use link" to "single-use credential delivered by email" so the specification describes what ships.
 - Email link-scanning tools can consume the credential before the reader does, showing "This One-Time PIN has already been used". The remedy is requesting a fresh code, and allowlisting `noreply@notify.cloudflare.com` in any mail filtering.
 - Binds the project to Cloudflare as the access-control provider.
 

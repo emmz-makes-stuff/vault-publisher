@@ -1,6 +1,6 @@
 ## Why
 
-A private, client-confidential Obsidian vault holds work that two non-technical stakeholders need to read. Handing them a GitHub repository is not a viable channel, and parts of the vault are the owner's alone and must never leave it. Nothing today lets the owner share *some* of the vault, to *named* people, with any confidence that the rest stays private.
+A private, client-confidential Obsidian vault holds work that two non-technical stakeholders need to read. Handing them a GitHub repository is not a viable channel, and parts of the vault are the owner's alone and must never leave it. Nothing today lets the owner share _some_ of the vault, to _named_ people, with any confidence that the rest stays private.
 
 The material is sensitive — a commissioned software audit, assessments of named individuals, infrastructure and security weaknesses, and commercial context. The vault's own governing rule forbids exposing its contents to any external service without explicit approval. This project is that approval, and it holds only for as long as access control does.
 
