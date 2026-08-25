@@ -1124,6 +1124,30 @@ non-blocking findings are actioned or carried, as follows.
 - The non-disclosure scenario says "the response is the same in both cases"; only the **visible
   message** was compared. Timing was not.
 
+## 3. Configuration and selection
+
+**[architect]** Base: 642719f — this section delivers the code that decides what publishes: the
+`publish.config.yaml` schema and loader, selection resolution, and the exclusion floor. **This is the
+first code in the change where a bug is a disclosure rather than a defect.** Sections 1 and 2 built
+the toolchain and proved the gate; from here the guarantee is ours to hold.
+
+Carved into three blocks on the Product Owner's call, so that the security-critical middle block
+gets a review that is not also weighing config parsing or warning plumbing:
+
+- **3.1–3.2** — the config schema, the loader with explicit shape validation, and the fail-closed
+  behaviour on a malformed or unreadable config.
+- **3.3–3.5** — selection resolution and the exclusion floor. The block that must not be wrong.
+- **3.6–3.7** — unmatched configuration entries reported as warnings, and proof that `audience:`
+  frontmatter does not affect selection in either direction.
+
+**The standing brief for every block in this section.** Five times across sections 1 and 2 a check
+reported green over territory it had never examined — the full list is in `## NEXT`. The section-3
+equivalent is an exclusion test that passes because the fixture never contained the excluded path,
+because the selection code never ran, or because the assertion could not fail. **Every exclusion and
+degradation test must be shown to fail when the protection is removed.** That is the negative control
+1.4, 1.5 and B3 all used, and that 7.8 is written to require. A test that cannot fail proves nothing —
+and here what it would falsely prove is that confidential notes cannot be published.
+
 ## NEXT
 
 **Sections 1 and 2 are closed** (supervisor `Approve` on each, one remediation round apiece).
