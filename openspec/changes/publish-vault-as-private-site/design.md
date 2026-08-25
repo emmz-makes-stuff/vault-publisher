@@ -125,6 +125,11 @@ Underlying `package.json` scripts:
 
 **A bypass hostname serves the whole site unauthenticated** → The `workers.dev` route is disabled as an explicit, verified task, and `reader-access` carries a requirement ("Published content has no unauthenticated route") whose scenarios cover platform default hostnames, non-production deployments, and build output at rest. This is the single highest-consequence failure mode in the project.
 
+Two specifics, found in Cloudflare's documentation while preparing section 2 and folded into tasks 2.2, 7.3 and 8.3:
+
+- **The dashboard toggle is not durable.** Disabling `workers.dev` in the dashboard without also setting `workers_dev: false` in the `wrangler` configuration means the route is re-enabled by the next `wrangler deploy`. Section 2 disables it and section 7 introduces the deploy, so the configuration must carry the flag or the guarantee is quietly undone between them. The flag is the durable control; the toggle alone is not.
+- **Preview URLs are a second bypass hostname of the same kind.** They are `workers.dev` addresses and equally cannot carry an Access policy. They follow the `workers_dev` setting unless explicitly configured, in which case they must be disabled separately. They are covered by the same requirement and verified by the same tasks rather than treated as a separate concern.
+
 **Access is misconfigured — application scope too narrow, or policy too broad** → The Access application is created on the apex of the published hostname so that every path is covered rather than a subpath. Verification is a task: request a page unauthenticated and confirm it is refused, and request one as a non-allow-listed address and confirm refusal.
 
 **Email link-scanning consumes the one-time code before the reader does**, showing "This One-Time PIN has already been used" → Documented for readers; the remedy is requesting a fresh code, and allow-listing `noreply@notify.cloudflare.com` in any mail filtering. Inherent to emailed credentials; not specific to this design.
