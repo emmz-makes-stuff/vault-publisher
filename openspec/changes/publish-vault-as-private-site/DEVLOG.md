@@ -1359,6 +1359,104 @@ reports it.** Brief the 3.3–3.5 worker with that explicitly.
 deliberately minimal and the `parseArgs` CLI replaces it — the placeholder question in `## NEXT` is
 now settled in that direction.
 
+**[architect]** Brief — block **3.3–3.5**: selection resolution and the exclusion floor. **This is
+the block that must not be wrong.** Everything above it decides what a config _says_; this decides
+what leaves the vault. A defect here is a disclosure of client-confidential material, not a broken
+feature.
+
+Scope is 3.3, 3.4 and 3.5 only. Unmatched-entry warnings are 3.6 and `audience:` frontmatter is 3.7 —
+do not build either.
+
+**Spec** (`specs/note-selection/spec.md`), the three requirements this block answers: _Selection is
+declared in configuration_ (folder selects recursively; a named note selects only itself; anything
+covered by neither does not publish), _A fixed exclusion floor overrides configuration_ (its four
+scenarios: config names an excluded folder, config names an excluded file, an excluded folder nested
+inside a selected one, an excluded folder absent from the vault), and the floor's standing rule —
+"An excluded path SHALL NOT be published under any configuration."
+
+**Shape — binding, so the block does not have to invent it and 3.6 does not have to reshape it:**
+
+- New `src/selection.ts`. `loadConfig` from `src/config.ts` already gives you a fully validated
+  `PublishConfig` with `folders` and `notes` as deduplicated, vault-relative POSIX paths (folder
+  entries already have any trailing `/` stripped). Do not re-validate it.
+- `resolveSelection(config: PublishConfig, vaultPaths: readonly string[])` — **pure**, no filesystem,
+  returning `{ published, unmatched }`. This block populates and tests `published`. `unmatched` falls
+  out of the same walk, so populate it; **reporting** it — warnings, exit behaviour — is 3.6's job and
+  not yours.
+- `listVaultNotes(vaultRoot: string)` — walks the vault for `.md` files and returns vault-relative
+  POSIX paths, sorted. Keep it thin: the logic lives in the pure function, the walk just feeds it.
+- `EXCLUSION_FLOOR` — an exported, `readonly`, fixed-in-code list. `CLAUDE.md`, `.claude/`,
+  `.obsidian/`, `Journal/`, `Private/`. Not read from config, not overridable, not parameterised.
+
+**Floor semantics — decided, and deliberately broad:**
+
+- A folder entry excludes any path with that name as a **directory segment at any depth**; a file
+  entry excludes any file with that **basename at any depth**. `Handbook/Private/Notes.md` and
+  `Handbook/CLAUDE.md` are both withheld. The safe direction is the broad one.
+- Comparison is **case-insensitive**. The vault lives on a case-insensitive macOS filesystem, so a
+  case-sensitive floor would let `journal/` through while the owner believes `Journal/` is excluded.
+- The floor is applied **last and unconditionally**, to the selected set, whatever produced it.
+- A config naming an excluded path is **not an error**: the publish completes, that path simply does
+  not publish. That is the spec's first two floor scenarios, and it is why the floor must not be
+  implemented as config validation.
+- An excluded path absent from the vault is not an error either — and it stays excluded if it is
+  created later, which follows from the floor being a fixed list rather than anything derived from
+  what is on disk.
+
+**Tests — and the section's standing requirement applies to every one of them.** Cover 3.3's three
+cases (folder, individual note, note covered by neither), each floor path named directly by config
+(3.4), and 3.5's two: an excluded folder nested inside a selected folder where its siblings publish,
+and an absent `Private/`.
+
+**Prove the fixture actually contains what the test claims.** The named failure mode for this
+section is an exclusion test that passes because the excluded path was never in the fixture, because
+the selection code never ran, or because the assertion could not fail. So: assert positively that
+the excluded path **is present in the input** and that its siblings **did** publish, not only that
+the excluded one did not. Then **delete `EXCLUSION_FLOOR`'s contents and show every floor test
+failing**, and record in your post what you removed and what you observed. A floor test that survives
+an empty floor is proving nothing.
+
+**Exercise the floor over a real on-disk walk too, not only a synthetic path list.** At least one
+floor test should run `listVaultNotes` against a fixture vault directory containing a real
+`Private/` and a real `.obsidian/`, so the guarantee is proven over the code path that will actually
+run in production. A pure-function-only proof leaves the walk untested — that is precisely the
+"never examined that territory" pattern this section is written against.
+
+**Process, from the last block's review:** a worker that needs the toolchain changed — `tsconfig`,
+`eslint.config.js`, `.prettierignore`, `package.json` — **stops and reports it** rather than changing
+it. The previous block's `tsconfig` change was sound and stands, but it should have come to me first.
+Same for the `Makefile`, which is not yours to edit at all.
+
+**Scaffold notes:** `test/**` is type-checked under `strict`, `noUncheckedIndexedAccess` and
+`exactOptionalPropertyTypes` by `tsc -p tsconfig.check.json` inside `make build`. vitest globals are
+off — import from `"vitest"`. `verbatimModuleSyntax` is on — `import type` for type-only imports.
+`make format-fix` now exists as the write half of the format gate.
+
+**Done-gates:** `make build` → `BUILD_EXIT:0`, `make test` → `TEST_EXIT:0`, `make format` →
+`FORMAT_EXIT:0`, `make lint` → `LINT_EXIT:0`, `make validate` → `VALIDATE_EXIT:0`. Quote the exit
+lines. Do not commit, do not tick boxes. Post to the DEVLOG and hand off `→ @reviewer`.
+
+**[architect]** Block **3.3–3.5** closed — reviewer `Approve` after attempting to break the floor in
+a scratch copy rather than reading it, gates green on my own run
+(`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0`, `GATES_EXIT:0`), 30 tests, 3.3
+to 3.5 ticked, committed.
+
+**On the asymmetric case-sensitivity the reviewer flagged** — config-side folder matching is
+case-sensitive, the floor is case-insensitive. This stands, and it is not merely a UX question:
+**the two asymmetries fail in the same direction, which is toward withholding.** A case-sensitive
+selection that misses `handbook/` when the config says `Handbook/` under-publishes; a
+case-insensitive floor catches `journal/` when the floor says `Journal/`. Making selection
+case-insensitive to match would make it possible to publish a folder the config did not name, which
+is the one direction this change cannot afford. Recorded here so it reads as a decision rather than
+an inconsistency the next reader tidies away.
+
+**Carried to `## NEXT`:** `listVaultNotes`'s symlink safety is real but implicit — it rests on Node's
+recursive `readdir` not following directory symlinks, which the reviewer verified directly but which
+nothing in the repository asserts. A symlink out of the vault is a disclosure path, so this wants an
+explicit test rather than a verified-once claim; §6.4's end-to-end run against a fixture vault is
+where it belongs. Also carried: `.gitignore`'s `vault/` rule is unanchored and swallowed this block's
+first fixture directory silently.
+
 ## NEXT
 
 **Sections 1 and 2 are closed** (supervisor `Approve` on each, one remediation round apiece).
@@ -1421,3 +1519,204 @@ would falsely prove is that confidential notes are unpublishable.
   would go public with the repository. A decision to take deliberately before publishing, not to
   discover after — rewriting authorship across a whole history is far more disruptive than setting it
   now.
+
+**[worker]** Implemented 3.3–3.5.
+
+`src/selection.ts` — `EXCLUSION_FLOOR` (exported, `readonly`, exactly `CLAUDE.md`, `.claude/`,
+`.obsidian/`, `Journal/`, `Private/`), `resolveSelection(config, vaultPaths)` (pure, no filesystem,
+returns `{ published, unmatched }`), and `listVaultNotes(vaultRoot)` (thin `readdir(..., {
+withFileTypes: true, recursive: true })` walk, `.md` files only, sorted vault-relative POSIX paths).
+
+`resolveSelection`: a note publishes if it equals a `notes` entry or sits at/under a `folders` entry
+(prefix match on `folder + "/"`); anything matching neither is left out. The floor is applied last,
+unconditionally, over the matched set — never as config validation, so a config naming an excluded
+path is not an error, just ineffective. `isExcluded` checks the basename against file-shaped floor
+entries and every path segment against folder-shaped ones (both lower-cased), so a folder entry
+excludes at any depth and a config naming an excluded path, or the excluded path not yet existing,
+both behave per spec. `unmatched` is populated (config entries that matched nothing in `vaultPaths`)
+but not reported — that's 3.6.
+
+**Fixture vault note:** the on-disk fixture first went in as `test/fixtures/vault/…`, which the
+repo's own `.gitignore` (`vault/`, matching any directory named `vault` at any depth — the rule that
+keeps a real local vault checkout out of commits) silently swallowed; `git status` showed nothing
+for it after `mkdir`. Caught by checking untracked files before writing the report rather than
+trusting the mkdir succeeded. Renamed to `test/fixtures/selection-vault/` and confirmed with
+`git status --short --untracked-files=all` that every fixture file is now untracked-but-visible
+(i.e. would be picked up by the Architect's commit), not silently excluded.
+
+**Tests** (`test/selection.test.ts`, 11 cases) — 3.3: folder selects recursively, an individual note
+selects only itself (sibling asserted absent), a note covered by neither is asserted absent while
+also asserting positively it _was_ in the input vault paths, plus an unmatched-entry case. 3.4: each
+floor scenario — excluded folder named directly (with a second selected folder asserted to still
+publish), excluded file named directly (with a second selected note asserted to still publish), and
+case-insensitive matching (`Handbook/private/lowercase.md` against floor `Private/`). 3.5: an
+excluded folder nested inside a selected folder (`Handbook/Private/Notes.md` excluded, its selected
+siblings `Handbook/Index.md` and `Handbook/Onboarding.md` published), and an absent `Private/` —
+resolves cleanly before creation (with `"Private"` in `unmatched`), then still excludes
+`Private/NewSecret.md` after simulating its creation by adding it to `vaultPaths` under the same
+config. Every floor test asserts the excluded path's presence in the fixture input before asserting
+its absence from `published`, per the brief.
+
+One test also asserts `EXCLUSION_FLOOR`'s exact literal contents, so an accidental edit to the list
+itself fails loudly.
+
+**Real on-disk walk.** `test/fixtures/selection-vault/` is a real directory tree with `Private/`,
+`.claude/`, `.obsidian/`, a `Journal/` entry, a `CLAUDE.md`, and an excluded folder
+(`Handbook/Private/`) nested inside a selected one. One test runs `listVaultNotes` against it,
+asserts the walk itself actually found every floor-relevant path (proving the walk, not just the
+pure function, sees them), then feeds the result into `resolveSelection` and re-asserts the full
+floor over that real walk's output plus a genuine "note not covered by configuration"
+(`Unrelated/Note.md`) case.
+
+**Negative control — `EXCLUSION_FLOOR` emptied, then restored.** Backed up `src/selection.ts`,
+replaced the five-entry array with `export const EXCLUSION_FLOOR: readonly string[] = [];`, and ran
+`npx vitest run test/selection.test.ts` directly (not through `make test`, since the goal here was to
+observe the failure, not gate on it). **All 7 floor-touching tests failed**, cleanly and for the
+right reason — the two "withholds excluded folder/file directly" tests, "matches the floor
+case-insensitively", both 3.5 nested/absent-folder tests, the `EXCLUSION_FLOOR` literal-contents
+test, and the real-walk test (which failed on `published` still containing `CLAUDE.md` first, before
+even reaching the other floor paths). The 4 non-floor tests (3.3's three cases plus the unmatched
+one) stayed green, as expected — they don't exercise the floor. Restored `src/selection.ts` from the
+backup, `diff` confirmed byte-identical to pre-mutation, then re-ran the full gate set.
+
+**Gates:** `BUILD_EXIT:0` `TEST_EXIT:0` `FORMAT_EXIT:0` `LINT_EXIT:0` `VALIDATE_EXIT:0`
+(`GATES_EXIT:0` combined). 30 tests total (3 scaffold + 11 selection + 13 config + 3 CLI).
+
+No toolchain files touched (`tsconfig.json`, `eslint.config.js`, `.prettierignore`, `package.json`,
+`Makefile` all untouched — confirmed by `git status`). Not touched: unmatched-entry warning
+reporting (3.6), `audience:` frontmatter (3.7).
+
+→ @reviewer
+
+**[reviewer]** Block **3.3–3.5** — audit. **This is the block where a defect is a disclosure, not a
+defect, and I reviewed it accordingly** — I tried to break it rather than confirm it holds.
+
+Re-ran everything independently rather than trusting the report: `BUILD_EXIT:0`, `TEST_EXIT:0` (30
+tests, matching the reported count), `FORMAT_EXIT:0`, `LINT_EXIT:0`, `VALIDATE_EXIT:0`. `git diff
+--stat HEAD -- Makefile tasks.md CLAUDE.md .claude/ package.json tsconfig.json eslint.config.js
+.prettierignore` is empty — no toolchain file touched. `git status` shows exactly what was claimed:
+`DEVLOG.md` modified (145 lines, append-only), plus `src/selection.ts`, `test/selection.test.ts`, and
+`test/fixtures/selection-vault/**` untracked and ready to be picked up by the Architect's commit. `git
+diff` on `src/index.ts` and `src/config.ts` is empty — no `audience:` frontmatter handling, no
+unmatched-entry reporting anywhere in the diff (`grep -rn "audience\|unmatched" src/*.ts` outside
+`selection.ts` returns nothing). 3.6/3.7 boundary held.
+
+**On the five questions asked:**
+
+1. **Can anything reach `published` that the floor should have withheld? Tried, did not succeed.** In
+   a scratch copy (not the working tree — I did not touch `src/selection.ts` in place), I ran the
+   actual code against a set of adversarial cases beyond the worker's own tests, all against the
+   unmodified floor:
+   - **Prefix-folder over-selection**: a note under `HandbookArchive/` with `folders: ["Handbook"]`
+     selected — **not** published. `isWithinFolder` requires exact equality or a `folder + "/"`
+     prefix, not a bare string prefix, so `HandbookArchive/Old.md`.startsWith(`"Handbook/"`) is false.
+     Correct segment matching, not the classic bug.
+   - **Prefix-folder over-exclusion**: a selected folder literally named `JournalClub` — published
+     correctly, not swept in by the `Journal/` floor entry. `isExcluded` compares whole path segments
+     (`segment.toLowerCase() === folderName`), not a substring/prefix test, so `Journal` does not
+     match `JournalClub`.
+   - **Depth**: an excluded name (`Private`) four segments deep inside a selected folder — still
+     withheld. `isExcluded` walks every directory segment, not just the immediate parent.
+   - **Case**: an excluded segment as `PRIVATE` deep in a selected tree — still withheld (floor
+     comparison is case-insensitive on both sides, as specified).
+   - **Path-separator / non-normalization inputs** (a leading `/`, a Windows-style backslash path fed
+     as a single opaque segment): both come out **unpublished** — the failure mode is under-selection
+     (the malformed entry simply doesn't match anything), never over-publication. Fails safe.
+   - **Symlink escape**: built a fixture with a directory symlink inside the vault root pointing
+     outside it, containing a file that must never be reachable. `listVaultNotes` did **not** traverse
+     it — Node's `fs.readdir(..., { recursive: true })` does not follow directory symlinks, confirmed
+     by direct observation (the walk returned only the genuine in-tree file). Worth a note below since
+     this safety currently rests on an unstated Node behaviour rather than an explicit check.
+   - Config directly naming a floor path (3.4's own case) and the floor path not yet existing (3.5) —
+     re-confirmed by reading the code path, matches the worker's tests.
+
+   I could not get anything past the floor.
+
+2. **Is the floor applied last and unconditionally, not as config validation? Yes, confirmed by
+   reading, not just by the tests passing.** `resolveSelection` builds `published` purely from
+   `config.folders`/`config.notes` matched against `vaultPaths` — the floor is not consulted anywhere
+   in that walk. Only the return statement applies `isExcluded` as a `.filter` over the already-matched
+   set: `[...published].filter((notePath) => !isExcluded(notePath))`. `EXCLUSION_FLOOR` is not read by
+   `config.ts` at all (confirmed — `config.ts` has no reference to it, and validation there only
+   concerns shape/path syntax, never path _identity_). A config naming an excluded path is accepted
+   as valid config and simply produces nothing in `published` for it — exactly the "not an error"
+   requirement.
+
+3. **The negative control — verified independently, and it checks out exactly.** I emptied
+   `EXCLUSION_FLOOR` in a scratch copy (not this working tree) and ran `test/selection.test.ts`
+   directly: **7 failed, 4 passed**, matching the worker's report precisely. I read each failure rather
+   than just the count:
+   - Both "withholds excluded folder/file named directly" tests failed on `published` **containing**
+     the excluded path (`AssertionError: expected [...] to not include 'Journal/2026-01-01.md'` /
+     `'CLAUDE.md'`) — the right failure shape, not a crash or an unrelated assertion.
+   - "matches the floor case-insensitively" failed the same way on
+     `Handbook/private/lowercase.md`.
+   - Both 3.5 tests (nested excluded folder, excluded-folder-created-later) failed the same way on
+     `Handbook/Private/Notes.md` and `Private/NewSecret.md` respectively.
+   - The `EXCLUSION_FLOOR` literal-contents test failed on the array being `[]` instead of the five
+     entries — a real tripwire on the constant itself.
+   - The real-walk test failed on `published` containing `CLAUDE.md` — proving the on-disk code path
+     exercises the same floor, not a separate one.
+   - The 4 non-floor tests (3.3's three cases plus the unmatched-entry case) stayed green, as they
+     should — they don't touch the floor.
+     Every one of the 7 failures is the fixture's excluded path showing up where the test asserts it
+     should not — none could have passed by accident, and none failed for an unrelated reason. This is a
+     real negative control, not a check that happens to also pass.
+
+4. **The fixture — every file is tracked, none is silently swallowed.** `git status --short
+--untracked-files=all test/fixtures/selection-vault` lists all ten fixture files as `??`
+   (untracked, will be picked up by the Architect's commit), and `git check-ignore -v` on each of the
+   confidentiality-relevant ones (`CLAUDE.md`, `.claude/instructions.md`, `.obsidian/workspace.md`,
+   `Journal/2026-01-01.md`, `Private/Secret.md`, `Handbook/Private/Notes.md`) returns no match —
+   none is git-ignored. The rename from `vault/` to `selection-vault/` genuinely fixed the problem
+   rather than relocating it. Fixture content is all invented placeholder text ("Fixture note that
+   must never publish" etc.) — read every file; nothing resembles real vault content.
+
+   **On the `.gitignore` rule itself** (reporting, not fixing, per the brief): `.gitignore:8-9` is
+   `vault/` / `.vault/`, unanchored — it matches a directory named `vault` at **any** depth in the
+   tree, which is exactly what silently swallowed the original fixture path and is broader than the
+   stated purpose ("local vault checkout used only for manual testing"). A rule anchored to the repo
+   root (`/vault/`, `/.vault/`) would still keep a real local checkout out of commits while no longer
+   being a trap for any future `test/fixtures/**vault**` directory name. Worth the Architect's
+   attention before another block picks an unlucky fixture name.
+
+5. **Scope — clean.** No warning/reporting logic, no `audience:` handling, no touch to `src/index.ts`
+   or `src/config.ts`. `unmatched` is populated (as the brief required, for 3.6 to consume later) but
+   nothing in this diff reports or acts on it.
+
+**Nits**
+
+- `src/selection.ts:64-66` (`isWithinFolder`, config-side folder matching) is **case-sensitive**,
+  while `isExcluded` (the floor) is deliberately case-insensitive. This is asymmetric but does not
+  create a confidentiality risk — the failure mode is under-selection (a config folder entry that
+  doesn't match the on-disk casing simply selects nothing, landing in `unmatched`), never
+  over-publication. Worth a decision either way given the vault lives on a case-insensitive
+  filesystem (same reasoning the floor already used), but it's a correctness/usability question, not
+  a blocker.
+- `src/selection.ts:10-16` — `EXCLUSION_FLOOR` is typed `readonly string[]` but the array literal
+  itself is not `as const`. CLAUDE.md calls out `as const` specifically for fixed sets like this one;
+  the explicit `readonly` annotation achieves the immutability that matters here, so this is
+  cosmetic, not a gap.
+- The safety of `listVaultNotes` against a symlink escaping the vault root currently rests on Node's
+  `readdir(..., { recursive: true })` not following directory symlinks — true today (I verified it
+  directly) but unstated in the code and untested. A one-line comment noting the reliance, or a
+  regression test using a symlink fixture, would turn an implicit guarantee into an explicit one
+  before a future refactor (e.g. a manual walk using `readdir(withFileTypes)` per directory) changes
+  it silently.
+
+**Architectural notes for `## NEXT`** — neither blocks this block:
+
+- The `.gitignore` `vault/` scope, above — narrow it to the repo root when convenient.
+- Symlink handling in `listVaultNotes` — currently safe by an unstated Node behaviour; worth making
+  explicit (comment or test) rather than relying on it implicitly, given this is the walk that feeds
+  the confidentiality guarantee.
+
+**Verdict: Approve.** No blockers. I could not construct a path that reaches `published` past the
+floor — prefix-folder confusion in both directions, depth, case, non-normalized separators, and a
+symlink escape all fail safe. The floor is applied last and unconditionally over the matched set, not
+as config validation, confirmed by reading the code rather than trusting the tests. The negative
+control is genuine — I reproduced it independently and every one of the 7 failures is the right
+failure for the right reason. The fixture is fully tracked and the `.gitignore` issue that bit it once
+is genuinely fixed, not relocated. Scope stayed inside 3.3–3.5.
+
+→ @architect
