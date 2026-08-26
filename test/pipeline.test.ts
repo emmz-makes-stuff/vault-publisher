@@ -1,7 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { unified } from "unified";
+import rehypeStringify from "rehype-stringify";
 import { describe, expect, it } from "vitest";
-import { renderMarkdown } from "../src/pipeline.js";
+import { renderMarkdown, renderNoteToHast } from "../src/pipeline.js";
 import { WarningCollector } from "../src/warnings.js";
 import { buildNoteIndex, type WikilinkContext } from "../src/wikilinks.js";
 
@@ -450,5 +452,34 @@ describe("renderMarkdown frontmatter table", () => {
     const html = await renderMarkdown("Body.\n", noWikilinks(), { secret: "unlisted" });
 
     expect(html).not.toContain("<table");
+  });
+});
+
+describe("renderNoteToHast — the tree page.ts builds a page from", () => {
+  it("returns a hast tree, not a pre-stringified fragment", async () => {
+    const tree = await renderNoteToHast("Hello.\n", noWikilinks());
+
+    expect(tree.type).toBe("root");
+    expect(typeof tree).not.toBe("string");
+  });
+
+  it("stringifies to exactly what renderMarkdown returns for the same input", async () => {
+    const markdown = "See [[Wikilink Target]] and & an ampersand.\n";
+    const wikilinks = {
+      noteId: "Home.md",
+      noteIndex: buildNoteIndex([]),
+      collector: new WarningCollector(),
+    };
+
+    const tree = await renderNoteToHast(markdown, wikilinks);
+    const stringified = unified().use(rehypeStringify).stringify(tree);
+
+    const html = await renderMarkdown(markdown, {
+      noteId: "Home.md",
+      noteIndex: buildNoteIndex([]),
+      collector: new WarningCollector(),
+    });
+
+    expect(stringified).toBe(html);
   });
 });

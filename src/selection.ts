@@ -1,6 +1,6 @@
 import { readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import type { PublishConfig } from "./config.js";
+import type { PublishConfig } from "./config.ts";
 
 /**
  * Fixed, non-configurable exclusion floor. Config cannot name its way past

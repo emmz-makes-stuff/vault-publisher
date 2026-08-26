@@ -1,8 +1,8 @@
 import type { Root } from "mdast";
 import type { Plugin } from "unified";
-import type { TreeNode } from "./tree.js";
-import type { WarningCollector } from "./warnings.js";
-import { isWikilinkContext } from "./wikilinks.js";
+import type { TreeNode } from "./tree.ts";
+import type { WarningCollector } from "./warnings.ts";
+import { isWikilinkContext } from "./wikilinks.ts";
 
 /**
  * Drops every ` ```base ` fenced code block from the tree — Obsidian's

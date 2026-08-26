@@ -69,7 +69,7 @@ export function buildNavigationTree(
     current.notes.push({
       type: "note",
       notePath,
-      label: titleByNotePath.get(notePath) ?? labelFromFileName(fileName),
+      label: noteLabel(notePath, titleByNotePath),
       sortKey: fileName,
     });
   }
@@ -77,7 +77,18 @@ export function buildNavigationTree(
   return freezeFolder(root);
 }
 
-function labelFromFileName(fileName: string): string {
+/**
+ * The label for one note, wherever one is needed — an explorer entry or a
+ * page's own `<title>` (`page.ts`) — so both agree on the same title without
+ * either recomputing the fallback rule. Frontmatter `title` where present,
+ * the filename with `.md` stripped otherwise.
+ */
+export function noteLabel(notePath: string, titleByNotePath: ReadonlyMap<string, string>): string {
+  const existing = titleByNotePath.get(notePath);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const fileName = notePath.split("/").at(-1) ?? notePath;
   return fileName.endsWith(".md") ? fileName.slice(0, -".md".length) : fileName;
 }
 

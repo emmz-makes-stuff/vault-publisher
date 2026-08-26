@@ -1,8 +1,8 @@
 import type { Root } from "mdast";
 import type { Plugin } from "unified";
 import { parse as parseYaml } from "yaml";
-import type { TreeNode } from "./tree.js";
-import { WarningCollector } from "./warnings.js";
+import type { TreeNode } from "./tree.ts";
+import { WarningCollector } from "./warnings.ts";
 
 /**
  * Obsidian frontmatter: a `---` delimited YAML block at the very start of
