@@ -1,8 +1,9 @@
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const entryPoint = path.join(repoRoot, "src", "index.ts");
@@ -37,6 +38,24 @@ function runCli(configPath: string): { status: number | null; stdout: string; st
   });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
+
+function runCliWithOutput(
+  configPath: string,
+  outputDir: string,
+): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync(process.execPath, [entryPoint, configPath, outputDir], {
+    encoding: "utf8",
+  });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+const integrationVaultConfigPath = path.join(
+  repoRoot,
+  "test",
+  "fixtures",
+  "integration-vault",
+  "publish.config.yaml",
+);
 
 describe("CLI entry point", () => {
   it("exits non-zero and writes nothing to stdout on malformed config", () => {
@@ -115,5 +134,56 @@ describe("CLI entry point — B4 floored entry absent from the vault", () => {
       '[WARNING] publish.config.yaml: no path in the vault matches "Private"',
     );
     expect(lines).toHaveLength(1);
+  });
+});
+
+describe("CLI entry point — block B: published wired through to a written site", () => {
+  let outputDir: string;
+
+  beforeEach(async () => {
+    outputDir = await mkdtemp(path.join(tmpdir(), "vault-publisher-cli-"));
+  });
+
+  afterEach(async () => {
+    await rm(outputDir, { recursive: true, force: true });
+  });
+
+  it("skips site generation entirely when no output directory is given — existing two-argument callers see unchanged behaviour", () => {
+    const result = runCli(integrationVaultConfigPath);
+
+    expect(result.status).toBe(0);
+  });
+
+  it("writes the front page and a nested page when an output directory is given", async () => {
+    const result = runCliWithOutput(integrationVaultConfigPath, outputDir);
+
+    expect(result.status).toBe(0);
+
+    const frontPage = await readFile(path.join(outputDir, "index.html"), "utf8");
+    expect(frontPage).toContain("<title>Welcome</title>");
+    expect(frontPage).toContain('<a href="/Handbook/Onboarding.html">Onboarding</a>');
+
+    const onboarding = await readFile(path.join(outputDir, "Handbook", "Onboarding.html"), "utf8");
+    expect(onboarding).toContain("Welcome to the handbook.");
+  });
+
+  it("never writes a page for a note the exclusion floor withheld", async () => {
+    runCliWithOutput(integrationVaultConfigPath, outputDir);
+
+    await expect(
+      readFile(path.join(outputDir, "Private", "Confidential Client.html"), "utf8"),
+    ).rejects.toThrow();
+    await expect(
+      readFile(path.join(outputDir, "Handbook", "Private", "Confidential Notes.html"), "utf8"),
+    ).rejects.toThrow();
+  });
+
+  it("still reports warnings on stderr and exits 0 when writing a site", () => {
+    const result = runCliWithOutput(integrationVaultConfigPath, outputDir);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain(
+      '[WARNING] Index.md: wikilink to "Confidential Client" could not be resolved and was rendered as plain text',
+    );
   });
 });

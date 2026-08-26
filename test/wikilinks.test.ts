@@ -59,7 +59,27 @@ describe("hrefToOutputPath / outputPathForNote round trip", () => {
     expect(hrefToOutputPath(notePathToHref(notePath))).toBe(outputPathForNote(notePath));
   });
 
+  it("round-trips the vault-root Index.md through notePathToHref and back", () => {
+    const notePath = "Index.md";
+
+    expect(hrefToOutputPath(notePathToHref(notePath))).toBe(outputPathForNote(notePath));
+  });
+
   it("outputPathForNote yields a decoded, filesystem-safe path with no percent-encoding", () => {
     expect(outputPathForNote("Handbook/Some Note.md")).toBe("Handbook/Some Note.html");
+  });
+});
+
+describe("outputPathForNote — vault-root front page", () => {
+  it("maps the vault-root Index.md to index.html, not Index.html", () => {
+    expect(outputPathForNote("Index.md")).toBe("index.html");
+  });
+
+  it("leaves a subfolder's own Index.md untouched by the front-page rule", () => {
+    expect(outputPathForNote("Handbook/Index.md")).toBe("Handbook/Index.html");
+  });
+
+  it("routes [[Index]] at the vault root to /index.html", () => {
+    expect(notePathToHref("Index.md")).toBe("/index.html");
   });
 });

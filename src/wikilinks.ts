@@ -1,7 +1,7 @@
 import type { Root } from "mdast";
 import type { Plugin } from "unified";
-import type { TreeNode } from "./tree.js";
-import { WarningCollector } from "./warnings.js";
+import type { TreeNode } from "./tree.ts";
+import { WarningCollector } from "./warnings.ts";
 
 /**
  * Maps an Obsidian note name — the filename without its `.md` extension,
@@ -35,6 +35,15 @@ function noteNameKey(notePath: string): string {
 }
 
 /**
+ * The vault-relative path of the vault's own index note — the one
+ * `site-navigation` names as the front page. Compared case-sensitively:
+ * Obsidian note names are, and a `folders`/`notes` config entry naming
+ * anything else at root (`index.md`, lowercase) is a different note that
+ * happens to collide on a case-insensitive filesystem, not this one.
+ */
+const VAULT_ROOT_INDEX_NOTE = "Index.md";
+
+/**
  * The output file path a note path writes to, relative to the site root —
  * decoded, filesystem-safe, exactly what the output writer joins onto its
  * site root to place the rendered file on disk. `notePathToHref` below is
@@ -42,8 +51,29 @@ function noteNameKey(notePath: string): string {
  * be computed independently and drift apart: if they did, every wikilink
  * would 404 behind authentication with no test able to see it, since a
  * test asserting only the href's shape would still pass.
+ *
+ * The vault root's own `Index.md` is special-cased here, not in the writer
+ * or the CLI, so every caller — the writer landing the file, `[[Index]]`
+ * resolving through `notePathToHref`, the round-trip test — agrees on the
+ * same one answer: it becomes `index.html`, the site's front page, without
+ * a second write path or a second decision anywhere else. A subfolder's own
+ * `Index.md` (e.g. `Handbook/Index.md`) is untouched by this rule; only the
+ * vault-relative path `"Index.md"` itself matches.
+ *
+ * `hrefToOutputPath` stays a pure decode with no knowledge of this rule: it
+ * inverts the *encoding* `notePathToHref` applies to whatever
+ * `outputPathForNote` returns, and for `Index.md` that is already
+ * `index.html` — so `hrefToOutputPath(notePathToHref("Index.md"))` still
+ * equals `outputPathForNote("Index.md")` (`"index.html"`), even though
+ * neither function can recover the original note path `"Index.md"` from
+ * that href. That asymmetry is inherent to the rule (two note paths could
+ * never both collapse onto the same href otherwise) and is exactly what
+ * makes `/index.html` a single, unambiguous file to serve.
  */
 export function outputPathForNote(notePath: string): string {
+  if (notePath === VAULT_ROOT_INDEX_NOTE) {
+    return "index.html";
+  }
   const withoutExtension = notePath.endsWith(".md") ? notePath.slice(0, -".md".length) : notePath;
   return `${withoutExtension}.html`;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildNavigationTree, type NavigationEntry } from "../src/navigation.js";
+import { buildNavigationTree, noteLabel, type NavigationEntry } from "../src/navigation.js";
 
 function notes(entries: readonly NavigationEntry[]): readonly NavigationEntry[] {
   const folder = entries.find(
@@ -107,6 +107,33 @@ describe("buildNavigationTree — labelling and ordering", () => {
 
     const kinds = notes(tree).map((entry) => `${entry.sortKey}:${entry.type}`);
     expect(kinds).toStrictEqual(["Alpha:folder", "Beta.md:note"]);
+  });
+
+  // Block A's reviewer flagged this: a folder entry's sortKey is its bare
+  // label ("Notes"), while a note entry's carries the ".md" extension
+  // ("Notes.md") — so a folder and a note that share a stem tie-break by
+  // string-prefix order, not by "filename" read as a single flat namespace.
+  // Pinned here so a future change to either sortKey shows up as a failing
+  // test here first, not as an unexplained reorder in some later golden.
+  it("pins the folder/note stem-collision tie-break: the bare folder name sorts before the file with the same stem", () => {
+    const tree = buildNavigationTree(["Notes.md", "Notes/Sub.md"], new Map());
+
+    expect(tree.map((entry) => `${entry.sortKey}:${entry.type}`)).toStrictEqual([
+      "Notes:folder",
+      "Notes.md:note",
+    ]);
+  });
+});
+
+describe("noteLabel", () => {
+  it("returns the frontmatter title when present", () => {
+    expect(
+      noteLabel("Handbook/Onboarding.md", new Map([["Handbook/Onboarding.md", "Welcome"]])),
+    ).toBe("Welcome");
+  });
+
+  it("falls back to the filename with .md stripped when no title is present", () => {
+    expect(noteLabel("Handbook/Onboarding.md", new Map())).toBe("Onboarding");
   });
 });
 

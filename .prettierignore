@@ -32,3 +32,6 @@ test/fixtures/pipeline/frontmatter-table.md
 test/fixtures/pipeline/frontmatter-table.html
 test/fixtures/wikilinks/embeds.md
 test/fixtures/wikilinks/embeds.html
+test/fixtures/explorer/nested.html
+test/fixtures/site/index-page.html
+test/fixtures/integration-vault/Index.md

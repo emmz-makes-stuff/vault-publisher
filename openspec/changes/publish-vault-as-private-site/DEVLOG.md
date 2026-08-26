@@ -4403,10 +4403,407 @@ it ever becomes a golden-file source of flakiness.
 
 → @architect — gates confirmed green, ready to tick 5.1–5.2 and commit.
 
+**[architect]** Block A closed. Reviewer `Approve`, gates `BUILD_EXIT:0` `TEST_EXIT:0` (127)
+`FORMAT_EXIT:0` (after `make format-fix` — the DEVLOG again, five for five) `LINT_EXIT:0`
+`VALIDATE_EXIT:0`. `5.1` and `5.2` ticked, committed as `8131eb0`.
+
+**[architect]** Brief — block B (5.3–5.5): the explorer, the page, the writer and the front page.
+This is the section's centre of gravity. It is where the hrefs block A defined finally have to agree
+with files on disk.
+
+**Tasks.**
+
+- `5.3` Render the explorer with `<details>`/`<summary>`, emitting the current page's ancestor
+  folders already open. A golden-file test on a nested page must show its ancestors open and
+  unrelated folders closed.
+- `5.4` Render the page layout as a hast tree serialised by `rehype-stringify`, never string
+  concatenation. A test must assert that a note title containing HTML metacharacters is escaped.
+- `5.5` Render the vault root `Index.md` as the site front page under the same rules as any other
+  page. A golden-file test must include a degraded link in the index.
+
+**Spec — `site-navigation`** (`specs/site-navigation/spec.md`): _The site presents an explorer
+mirroring the vault structure_ (positioned to the left of the page content, folders collapsible) and
+_The vault's index note is the front page_ (both scenarios: reader arrives at the site root; links
+from the index to unpublished notes degrade as they would anywhere else).
+
+**Binding decisions — read these before you write anything.**
+
+- **One serialisation, at the end.** `renderMarkdown` (`src/pipeline.ts`) currently returns an HTML
+  _string_. The page layout must be a hast tree serialised once by `rehype-stringify`, so **do not
+  interpolate that string into a page**, and do not reach for `rehype-raw` to re-parse it. Restructure
+  the pipeline to expose the note's **hast tree** (`renderNoteToHast`, or whatever reads best), have
+  the page assembler place that tree inside the layout, and serialise the whole page once.
+  `renderMarkdown` may stay, defined in terms of the new function, so §4's tests keep working. Escaping
+  is structural or it is remembered, and this site's entire content is confidential.
+- **Output paths come from `outputPathForNote`** (`src/wikilinks.ts`, added by block A). The writer
+  MUST use it. If it computes paths any other way, hrefs and files drift and every link 404s behind
+  authentication with every test still green — that is exactly the failure block A's round trip
+  exists to prevent, and it only pays off if you actually call the function.
+- **The front page is the same page, at `index.html`.** Prefer special-casing the vault-root
+  `Index.md` **inside the shared path function**, so `notePathToHref("Index.md")` and the file the
+  writer lands both become `/index.html` — one decision, one place, and `[[Index]]` from any note
+  still resolves to a URL that serves. Extend the round-trip test to cover it, and say in a comment
+  what happens to `hrefToOutputPath`'s inversion for that one path. If you find this cannot be made
+  to work cleanly, **stop and ask me** rather than writing the file twice.
+- **The stylesheet is block C.** Link it — root-absolute (`/styles.css`), so the href is correct at
+  any nesting depth — but do not write it. A missing stylesheet must not fail a page render.
+- **Zero client-side JavaScript.** No `<script>`, no inline handler, no `onclick`. `5.6` verifies this
+  across the whole output; do not be the reason it fails. Collapse state is `<details open>` on the
+  current page's ancestors and nothing else.
+- **Explorer left of the content** — spec language. Structure it so block C's stylesheet can place it
+  without the markup being rewritten.
+- **The writer stays inside its output directory.** Every path it joins is derived from a published
+  note path; assert it and test it. `isWithinVaultBoundary` in `src/selection.ts` is the existing
+  shape for this kind of check on the read side.
+- **`src/index.ts` computes `published` and discards it.** It has survived two sections as an orphan.
+  Wire it up here — the tree, the pages and the writer all want it. The CLI's argument surface is
+  `6.3`, so don't rebuild that; just stop throwing the value away.
+
+**Two things the reviewer and §4's supervisor left for this block:**
+
+- **`NavigationFolderEntry.sortKey` is the bare folder label; a note's includes `.md`.** A folder/file
+  stem collision (`Notes/` next to `Notes.md`) tie-breaks by string prefix. Unlikely to matter — but
+  the moment it appears in a golden file it is decided by accident. Add a pinning test.
+- **The integration vault carries wikilinks only** — no `base` block, callout, or frontmatter in the
+  same render. §4's supervisor asked that it be widened "when §5 writes its first whole-page golden".
+  That is this block. Widen it so one fixture exercises a full page end to end.
+
+**Standing rules from §4:**
+
+- A golden-file compare and a guarantee assertion never share an `it()`, the compare first — vitest
+  aborts at the compare and the guarantee never runs. **One `it()` per guarantee.** This block writes
+  more goldens than any before it, so this is the block that rule was written for.
+- Any assertion grepping for a confidential name must also grep its **percent-encoded** form
+  (`Confidential%20Target`). This block emits real hrefs everywhere.
+- **The eleventh.** Every protection in this project was, on first attempt, verified by something that
+  could not have failed — ten for ten. For each guarantee here, remove the protection, watch the named
+  test go red, restore it, and report what it printed. Reading the code has never caught one.
+
+**Fixtures.** No real note titles, no client name, no vault-derived content — a standing constraint on
+everything in this repository.
+
+**Done-gates.** `make build` `BUILD_EXIT:0`, `make test` `TEST_EXIT:0` (yours and all 127 existing),
+`make format` `FORMAT_EXIT:0`, `make lint` `LINT_EXIT:0`, `make validate` `VALIDATE_EXIT:0`. Quote the
+exit lines; never read a gate from its output. `make format-fix` then `make format` for the DEVLOG.
+Do not commit, do not tick — post here and hand back to me.
+
+**[worker]** Block B (5.3–5.5) implemented — `src/explorer.ts`, `src/page.ts`, `src/writer.ts` are
+new; `src/pipeline.ts`, `src/wikilinks.ts`, `src/navigation.ts`, `src/index.ts` are edited;
+`test/fixtures/integration-vault/Index.md` + updated `publish.config.yaml` widen the integration
+vault per the brief.
+
+- `5.3` — `src/explorer.ts`'s `renderExplorer` builds nested `<details>`/`<summary>` hast nodes from
+  the navigation tree. A folder opens (`{ open: true }`) exactly when it sits on the path from the
+  root to `currentNotePath`; every other folder renders closed regardless of depth. Golden-file test
+  on a synthetic 3-level-deep fixture (`test/fixtures/explorer/nested.html`) plus separate guarantee
+  `it()`s for "ancestors open" and "unrelated folder closed" — golden and guarantees in different
+  `it()`s per the standing rule.
+- `5.4` — `src/pipeline.ts` split into `treeProcessor` (parse → mdast → hast, stops before stringify)
+  and `htmlProcessor` (stringify only). New `renderNoteToHast` returns the unstringified hast `Root`;
+  `renderMarkdown` is now defined in terms of it (`stringify(renderNoteToHast(...))`), so its own
+  byte-for-byte output is unchanged — every 4.x golden still passes untouched. `src/page.ts`'s
+  `renderPage` assembles one full-document hast tree (doctype, html/head/body,
+  `<link rel="stylesheet" href="/styles.css">`, the explorer, `<main>` holding the note's own hast
+  children) and calls `rehype-stringify` exactly once — no string concatenation, no `rehype-raw`.
+  Title escaping test in `test/page.test.ts` plus a "structural embedding" test asserting a real
+  `<p>` element round-trips as markup, not as an escaped string.
+- `5.5` — `outputPathForNote` (`src/wikilinks.ts`) now special-cases the vault-relative path
+  `"Index.md"` to `"index.html"`; `notePathToHref`/`hrefToOutputPath` are unchanged and the round
+  trip still holds for that one path (documented in a comment on the asymmetry: neither function can
+  recover `"Index.md"` from `/index.html`, inherent to two paths collapsing onto one href — didn't
+  need to special-case anywhere else, so no need to stop and ask). New round-trip and
+  `outputPathForNote`/`notePathToHref` tests cover it in `wikilinks.test.ts`.
+- **Widened `test/fixtures/integration-vault`**: added a vault-root `Index.md` (frontmatter with
+  `title`/`type`/`status`, a resolved wikilink, a degraded wikilink to the still-excluded
+  `Private/Confidential Client.md`, a callout, a table, task checkboxes, a dropped Bases block) and
+  added it to `publish.config.yaml`'s `notes:`. `test/site.test.ts` composes `loadConfig` →
+  `resolveSelection` → `buildNavigationTree` → `renderNoteToHast` → `renderPage` against this fixture
+  for the 5.5 golden (`test/fixtures/site/index-page.html`) plus separate guarantee `it()`s for the
+  degraded link, the resolved link, and the exact warning set.
+- **Writer** (`src/writer.ts`, required by the brief though not separately numbered): `writeSite` +
+  `resolveOutputFilePath`, the latter deriving every path from `outputPathForNote` (never its own
+  computation) and throwing if the joined path would land outside `outputDir` — mirrors
+  `isWithinVaultBoundary`'s posture on the read side. Tested directly plus via the CLI.
+- **Wired `src/index.ts`**: `published` (previously computed and discarded) now feeds
+  `buildNavigationTree`/`renderNoteToHast`/`renderPage`/`writeSite` through a new `publishSite`
+  function, gated on an **optional third positional argument** (`process.argv[3]`, the output
+  directory) — not a new flag surface, since `6.3` owns `util.parseArgs`/`--help`/flags. Every
+  existing two-argument CLI test is untouched and still passes; new tests in `index.test.ts` spawn
+  the CLI with a temp output dir and assert the front page + a nested page land on disk, excluded
+  notes never do, and warnings still report with exit 0.
+- **Found and fixed a latent break, not scoped to 5.3–5.5**: every `src/*.ts` file except `index.ts`
+  used `.js`-suffixed relative imports (the traditional NodeNext convention, correct for the built
+  `dist/` output), but `index.ts` itself was written with `.ts`-suffixed imports so
+  `test/index.test.ts`'s `spawnSync(node, [entryPoint, ...])` can run the CLI unbuilt. Wiring
+  `index.ts` into the rest of the module graph for the first time surfaced the inconsistency: Node's
+  native loader can't resolve a `.js` specifier when only the `.ts` file exists on disk. Normalized
+  every relative import across `src/*.ts` to `.ts`, matching `index.ts`'s established (and only
+  workable, for the unbuilt-CLI test pattern) convention. Mechanical, behaviour-preserving —
+  `make build`/`make test` confirm nothing broke. Flagging this explicitly since it touched files
+  outside this block's own scope — it was necessary for this block's own deliverable (the CLI wiring)
+  to be testable at all via the harness's existing pattern, not a drive-by.
+- Added `test/fixtures/explorer/nested.html`, `test/fixtures/site/index-page.html`, and
+  `test/fixtures/integration-vault/Index.md` to `.prettierignore`, matching the existing convention
+  for golden-file fixtures whose exact bytes prettier would otherwise reformat out from under the
+  compare.
+- `NavigationFolderEntry.sortKey`/note stem-collision pinning test added to `navigation.test.ts` per
+  the carried item, plus a `noteLabel` unit test (the label logic `navigation.ts` and `page.ts` now
+  share).
+
+**Ablations (the eleventh check), each removed then restored:**
+
+- Removed `isAncestorFolder`'s body (hardcoded `return false`) → both the `explorer.test.ts` golden
+  and its two guarantee tests went red: golden diff showed the two `open` attributes missing;
+  guarantees reported `expected '...' to contain '<details open>...'` against a string with no
+  `open` anywhere.
+- Removed the `Index.md` special case from `outputPathForNote` → 3 tests in `wikilinks.test.ts` and 1
+  in `writer.test.ts` went red: `expected 'Index.html' to be 'index.html'` (and the href/writer
+  equivalents) — proving the writer's path derivation and the href actually share the one function.
+- Removed the boundary check in `resolveOutputFilePath` → both `writer.test.ts` boundary tests went
+  red: `expected [Function] to throw`, `expected promise resolved "undefined" instead of rejecting`.
+  Confirmed the escape-path write actually lands outside the sandboxed temp dir when unguarded.
+- Set `documentStringifier` to `rehype-stringify`'s `allowDangerousHtml: true` and swapped the
+  title's `text` node for a `raw` node with the same string value → the escaping test in
+  `page.test.ts` went red with the raw `<script>alert(1)</script>` now present verbatim in the
+  output. (First attempt — a malformed fake `raw` node with no `.value` — just crashed
+  hast-util-to-html rather than demonstrating the bypass; redid it with a real raw node to get a
+  genuine red.)
+- Appended a marker string after `htmlProcessor.stringify(hastTree)` in `renderMarkdown` (breaking
+  the "defined in terms of `renderNoteToHast`" contract) → 11 tests in `pipeline.test.ts` went red,
+  including every pre-existing 4.x golden and the new equivalence test — confirms `renderMarkdown`'s
+  output is still fully determined by `renderNoteToHast`'s tree.
+- Commented out `writeSite(outputDir, pages)` in `index.ts`'s `publishSite` →
+  `index.test.ts`'s "writes the front page and a nested page" test went red with `ENOENT`, while the
+  other wiring tests (skip-when-no-output-dir, warnings-still-report) stayed green — confirms they
+  weren't accidentally depending on the write.
+
+All six restored; `git diff` after each restore matched what's reported here.
+
+Gates: `BUILD_EXIT:0`, `TEST_EXIT:0` (158 tests, 14 files — 6 new: `explorer.test.ts`,
+`page.test.ts`, `writer.test.ts`, `site.test.ts`, plus additions to `wikilinks.test.ts`,
+`navigation.test.ts`, `pipeline.test.ts`, `index.test.ts`), `FORMAT_EXIT:0` (after
+`make format-fix`), `LINT_EXIT:0`, `VALIDATE_EXIT:0`. `GATES_EXIT:0` overall.
+
+→ @reviewer
+
+**[reviewer]** Block B (5.3–5.5) audited against `8131eb0`. **Request changes** — one blocker.
+
+**Blocker — `outputPathForNote`'s `Index.md` special case collides with a literal `index.md`, and
+nothing detects it (`src/wikilinks.ts:73-79`, `src/writer.ts:20-26`).** The brief asked explicitly:
+"what does it do to … a vault containing both `Index.md` and something else mapping to the same
+output path. A collision that silently overwrites one page with another is a confidentiality-relevant
+bug, not just a rendering one." The block's report addresses the subfolder case
+(`Handbook/Index.md` → `Handbook/Index.html`, tested) but not this one, and it's real: verified
+independently (not by reading — reimplemented the two branches standalone and ran them):
+
+```
+outputPathForNote("Index.md") -> "index.html"   // the special case
+outputPathForNote("index.md") -> "index.html"   // the ordinary branch, case preserved but already lowercase
+```
+
+Before this block, `Index.md` mapped to `Index.html` (case preserved) and `index.md` to `index.html`
+— no collision. The special case is what introduces the collision, precisely because it's the one
+rule that forces lowercase regardless of the source note's actual casing. A vault repo on a
+case-sensitive filesystem (which is what CI runs on) can contain both `Index.md` and `index.md` as
+distinct files; if both are selected, `writeSite` (`src/writer.ts:20-26`) writes them in `published`
+order with no duplicate check, and the second silently overwrites the first on disk — either the
+intended front page gets replaced by an unrelated note, or vice versa, with no warning, no error, and
+every existing test green. `test/wikilinks.test.ts` and `test/writer.test.ts` cover the subfolder case
+and the round trip but never assert on two distinct note paths producing the same `outputPathForNote`
+result.
+
+Needs one of: reject the collision at selection/write time (a duplicate output path is a malformed
+selection outcome, matching this project's "malformed configuration always fails" posture), or confirm
+with the Architect that `index.md`/`Index.md` co-existing at vault root is out of scope and document
+why — but right now it's neither guarded nor tested, and the writer's silent-overwrite behavior is
+exactly the shape of bug this brief called out by name.
+
+**Everything else checked clean:**
+
+- **Href/file agreement** — `writer.ts` derives every path from `outputPathForNote`, never its own
+  computation; confirmed by reading and by the worker's ablation (removing the `Index.md` branch
+  failed 4 tests with the exact `Index.html`/`index.html` mismatch described).
+- **One serialisation** — `page.ts` places `renderNoteToHast`'s tree (`noteContent: readonly
+RootContent[]`) into the document tree and calls `rehype-stringify` exactly once; no
+  `rehype-raw`, no string interpolation anywhere in `src/`. The title-escaping test
+  (`test/page.test.ts:5-15`) is genuine — re-read against the worker's reported ablation
+  (`allowDangerousHtml: true` + a raw node) and the assertion shape (`toContain` the escaped form,
+  `not.toContain` the raw `<script>`) can't pass by accident.
+- **`.prettierignore` additions** — all three are goldens (`explorer/nested.html`,
+  `site/index-page.html`, `integration-vault/Index.md`) matching the existing convention; nothing
+  else is hidden from the format gate (confirmed via `git diff .prettierignore`).
+- **`.js`→`.ts` import normalisation** — confirmed at the built-output level, not just `tsc`: `dist/*.js`
+  correctly emits `.js`-suffixed relative imports (`rewriteRelativeImportExtensions` doing its job),
+  and `node dist/index.js` runs standalone without a resolution error.
+- **Zero client-side JS** — no `<script>`, no inline handler anywhere in `page.ts`/`explorer.ts`;
+  asserted directly in both new test files.
+- **Writer boundary** — `resolveOutputFilePath` throws on an escaping note path; matches
+  `isWithinVaultBoundary`'s posture, tested directly and via `writeSite`.
+- **Gates** — reran `make gates` myself: `BUILD_EXIT:0`, `TEST_EXIT:0` (158 tests, 14 files),
+  `FORMAT_EXIT:0`, `LINT_EXIT:0`, `VALIDATE_EXIT:0`, `GATES_EXIT:0`. Matches the block's report.
+- **Fixtures** — `Index.md`, `publish.config.yaml`, and the golden HTMLs use only invented content
+  (`Onboarding`, `Handbook`, `Confidential Client` as a deliberately-excluded example) — no real note
+  titles or client-derived content.
+
+**Nit:** `test/site.test.ts:83` checks `not.toContain("Private%2FConfidential")` as the
+percent-encoded-form guard, but that isn't the encoding `notePathToHref` actually produces (segments
+are encoded individually with `/` as the literal separator, so a resolved link there would read
+`/Private/Confidential%20Client.html`, never `Private%2FConfidential`). Harmless — the preceding
+`not.toContain('href="/Private')` already covers it — but worth fixing to check the real encoded form
+next time this file is touched, so the assertion means what it says.
+
+→ @worker
+
+**[architect]** Ruling on the reviewer's blocker (`Index.md`/`index.md` output-path collision), and
+the fix brief for it. Block B stays open; this is not a remediation block, it is the review loop.
+
+**The finding stands and the call is: guard it, and fail.** Reasoning, so it does not have to be
+re-derived later:
+
+- **A silent overwrite is a confidentiality failure, not a rendering one.** Two published notes
+  landing on one file means one page's content is served at the other's URL. Every link to the
+  clobbered note now serves a _different note's_ body. On a site whose entire content is
+  confidential, "which note is at this URL" is exactly the property that must never be decided by
+  array order.
+- **It matches the posture already set.** `note-selection` treats a malformed selection as an error —
+  `ConfigError` refuses to hand back a half-valid `PublishConfig` rather than publishing its best
+  guess. A selection that cannot be written to distinct files is malformed in the same sense.
+- **It is not a warning.** `6.2` requires warnings never to fail a publish, and that is right for
+  _degradation_ — a degraded page still ships and is still correct about what it shows. A collision
+  has no degraded form: one of the two notes is simply gone, and shipping is the wrong outcome.
+- **Ambiguity is never narrowed to a guess** — the same rule `resolveWikilink` already follows for
+  more-than-one candidate. Writing "whichever came last in `published`" is precisely the guess.
+
+**What to implement.**
+
+- **Detect before writing anything.** No partial site: the whole set of output paths is checked up
+  front, and if any two published note paths map to the same output path, the run fails before the
+  first `writeFile`. A half-written output directory that a later `wrangler deploy` uploads is worse
+  than a clean failure.
+- **Fail loudly**, in the shape `ConfigError` already established — the message names **both** note
+  paths and the output path they share, so the Product Owner can fix the vault or the config without
+  reading the code. Reuse `ConfigError` or add a sibling; your call, but one error type, not a bare
+  `throw new Error`.
+- **Report every collision, not just the first.** Someone who renamed a folder wants the whole list.
+- **Test it directly**, and ablate: remove the guard, watch the named test go red, restore, report
+  what it printed. Include a test that no file is written at all when a collision is present — the
+  "before writing anything" half is a separate guarantee from the "it throws" half, and needs its own
+  `it()`.
+- **Case-only collisions** (`Notes.md` beside `notes.md`) are a near neighbour: they cannot coexist in
+  a vault checked out on macOS, but CI is case-sensitive and Cloudflare's asset store is its own
+  thing. Handle the exact-match case, and leave a comment naming the case-only variant as a known
+  adjacent hazard rather than silently implying it is covered. I will carry it to `## NEXT`.
+
+**Also fix the reviewer's nit:** `test/site.test.ts:83` asserts on `Private%2FConfidential`, a form
+`notePathToHref` never emits — it encodes segments, so `/` stays a separator. Harmless today because
+a stronger assertion beside it covers the case, but an assertion that cannot match is an assertion
+that cannot fail, and this project has ten of those on the board already. Correct it to the form the
+encoder actually produces.
+
+Nothing else in block B is reopened — the reviewer cleared the href/file agreement, the single
+serialisation, the `.prettierignore` additions, the `.ts`→`.js` import normalisation at the built
+`dist/` level, zero client-side JS, and the writer's boundary check.
+
+**[worker]** Blocker fixed — `src/writer.ts`, `test/writer.test.ts`, `test/site.test.ts`.
+
+- Added `assertNoOutputPathCollisions(pages)` to `src/writer.ts`: builds a `Map<outputPath,
+notePath[]>` over the whole `pages` set by calling `outputPathForNote` on each, then throws a new
+  `OutputPathCollisionError` (sibling to `ConfigError`, same shape — one `name`, thrown loudly, no
+  half-valid result) if any output path has more than one note path. The message names every
+  colliding note path and the output path they share, and lists every collision found, not just the
+  first (`notes "Index.md" and "index.md" all resolve to output path "index.html"`, `;`-joined per
+  collision).
+- `writeSite` calls it as its first line, before the write loop's first `mkdir`/`writeFile` — the
+  whole set is checked before anything touches disk, so a collision leaves zero files written, not a
+  partial site.
+- Left a comment on `assertNoOutputPathCollisions` naming the case-only collision (`Notes.md` beside
+  `notes.md`) as a known adjacent hazard this check does not cover — `outputPathForNote` preserves
+  source casing outside the `Index.md` rule, so two case-variant notes produce two distinct output
+  paths here and pass through undetected. Not implemented, per the ruling.
+- Tests, split per the ruling's two separate guarantees:
+  - `assertNoOutputPathCollisions` directly: throws `OutputPathCollisionError` naming both note
+    paths and the output path; reports every collision when there's more than one; does not throw
+    when every note maps to a distinct output path.
+  - `writeSite`, in its own `describe`: one `it()` asserting it rejects with
+    `OutputPathCollisionError` (the "throws" guarantee), a separate `it()` asserting `readdir` on
+    the output directory is `[]` afterward — including when a non-colliding note was in the same
+    `pages` array — (the "wrote nothing at all" guarantee). Kept apart per the brief; they are
+    different assertions and vitest would stop at the first either way if merged.
+- Also fixed the reviewer's nit: `test/site.test.ts:83` now checks
+  `not.toContain("/Private/Confidential%20Client.html")` — the actual percent-encoded href
+  `notePathToHref` would emit for that note, since `notePathToHref` encodes each segment and keeps
+  `/` as a literal separator (the old `Private%2FConfidential` string is never produced).
+
+**Ablation:** removed the `assertNoOutputPathCollisions(pages)` call from `writeSite`, leaving the
+function itself intact. `test/writer.test.ts` went red exactly as expected — the two `writeSite`
+guarantee tests, and only those two:
+
+```
+writeSite — refuses a collision before writing anything > rejects with OutputPathCollisionError when Index.md and index.md are both published
+  AssertionError: promise resolved "undefined" instead of rejecting
+writeSite — refuses a collision before writing anything > writes no file at all when a collision is present, even for the notes that don't collide
+  AssertionError: promise resolved "undefined" instead of rejecting
+```
+
+The three `assertNoOutputPathCollisions`-direct tests stayed green throughout, as expected — the
+ablation only removed the call site, not the guard. Restored; `diff` against the pre-ablation file is
+empty.
+
+Gates: `BUILD_EXIT:0`, `TEST_EXIT:0` (163 tests, 14 files — 5 new in `writer.test.ts`),
+`FORMAT_EXIT:0` (after `make format-fix`), `LINT_EXIT:0`, `VALIDATE_EXIT:0`, `GATES_EXIT:0`. Not
+committed, nothing ticked.
+
+→ @reviewer
+
+**[reviewer]** Re-audit of block B (5.3–5.5) after the collision fix. **Approve.**
+
+Verified independently, not from the report:
+
+- **Guard runs before any write, genuinely.** `src/writer.ts:82-88` —
+  `assertNoOutputPathCollisions(pages)` is `writeSite`'s literal first statement, ahead of the `for`
+  loop. Reran the ablation myself (removed just the call site, left the function intact): exactly the
+  two `writeSite`-level tests went red (`rejects with OutputPathCollisionError…`, `writes no file at
+all…`), the three `assertNoOutputPathCollisions`-direct tests stayed green, all other suites
+  unaffected — matches the worker's report verbatim. Restored; `diff` against the pre-ablation file is
+  empty. The "wrote nothing at all" test's array leads with a non-colliding note
+  (`Handbook/Onboarding.md`) before the colliding pair, so a guard placed one line later — inside the
+  loop, after that first write — would leave a non-empty `readdir` and the test would catch it; it is
+  not a test that passes regardless of placement.
+- **Every collision reported, both paths and the shared output path named.**
+  `assertNoOutputPathCollisions` builds a `Map<outputPath, notePath[]>` over the whole set and joins
+  every group with length > 1, not just the first (`test/writer.test.ts` "reports every colliding
+  output path, not just the first" asserts both `index.html` and `Handbook/Notes.html` appear in one
+  thrown message from a four-entry input with two independent collisions). Message shape includes
+  both note paths and the shared output path.
+- **`test/site.test.ts:83` now matches the real encoder.** Reimplemented
+  `outputPathForNote`/`notePathToHref` standalone and ran it on `"Private/Confidential Client.md"` →
+  `/Private/Confidential%20Client.html`, exactly the string now asserted. The assertion can fail
+  again.
+- **Case-only-collision comment is honest.** `src/writer.ts:31-38` states plainly that only
+  exact-name collisions are caught, names the case-insensitive-filesystem reason
+  `Notes.md`/`notes.md` can't coexist locally, and flags CI/Cloudflare as case-sensitive — no implied
+  coverage it doesn't have.
+- **Nothing else in the block regressed.** `git diff --stat -- src/page.ts src/explorer.ts
+.prettierignore` shows only the `.prettierignore` additions from the original block (three new
+  goldens, same convention); no `rehype-raw`/`allowDangerousHtml` anywhere in `src/`; the fix touched
+  exactly `src/writer.ts`, `test/writer.test.ts`, `test/site.test.ts` as reported, nothing in the
+  href/file-agreement, serialisation, import-normalisation, or writer-boundary code paths.
+- **Gates, reran myself:** `make gates` → `BUILD_EXIT:0`, `TEST_EXIT:0` (163 tests, 14 files),
+  `FORMAT_EXIT:0`, `LINT_EXIT:0`, `VALIDATE_EXIT:0`, `GATES_EXIT:0`. Matches the worker's report.
+
+No blockers, no nits. Clear to gate/tick/commit.
+
+→ @architect
+
 ## NEXT
 
 **Sections 1–4 are closed** (supervisor `Approve` on each; §2, §3 and §4 each took one remediation
-round). 33/59 tasks. Next is **section 5 — site assembly**.
+round). 33/59 tasks. Block B (5.3–5.5) implemented, gates green, awaiting reviewer. Next after
+review/gates/tick/commit: block C (5.6–5.7 — stylesheet and mobile).
+
+**Carried forward:** the `.js`→`.ts` import-extension normalization across `src/*.ts` (see block B's
+post above) — behaviour-preserving but touches files outside 5.3–5.5's own scope; reviewer should
+confirm it during block B's audit.
 
 **§4 delivered the pipeline.** `src/pipeline.ts` is the single `unified()` processor;
 `src/wikilinks.ts` holds the one resolver and the one note index; `src/warnings.ts` the one reporter;

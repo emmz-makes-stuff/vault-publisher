@@ -1,6 +1,6 @@
 import type { Root } from "mdast";
 import type { Plugin } from "unified";
-import type { TreeNode } from "./tree.js";
+import type { TreeNode } from "./tree.ts";
 
 /**
  * The Obsidian callout types this pipeline recognises. A blockquote opening
