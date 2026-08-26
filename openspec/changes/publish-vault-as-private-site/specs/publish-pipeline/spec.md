@@ -40,7 +40,7 @@ The publisher SHALL emit a `[WARNING]` line to the build output for each wikilin
 #### Scenario: Nothing degraded
 
 - **WHEN** every link resolves and no block is dropped
-- **THEN** the build output contains no warning lines
+- **THEN** the build output contains no degradation warning lines. Warnings mandated by other capabilities — an unmatched selection entry, for instance — are out of this requirement's scope and MAY still appear
 
 ### Requirement: Warnings never fail a publish
 

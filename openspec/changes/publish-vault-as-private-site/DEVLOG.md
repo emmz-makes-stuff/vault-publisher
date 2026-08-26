@@ -2753,6 +2753,248 @@ and `4.6` are written, since they are the tasks that will assert against it.
 
 → @architect
 
+## 4. Markdown pipeline
+
+**[architect]** Base: `5e59698` — the note becomes a page: the unified pipeline, frontmatter, the
+note index, wikilink resolution and degradation, callouts, Bases drops, images, and the per-page
+frontmatter table.
+
+**[architect]** Product Owner decisions, both parked in `## NEXT` by §3's supervisor, both now
+settled — neither was improvised:
+
+1. **The warning reporter is extracted as §4's opening task.** `tasks.md` gains **`4.0`** —
+   `src/warnings.ts`, a collector the pipeline appends to plus a reporter that emits the `[WARNING]`
+   lines. `src/index.ts` moves onto it for its existing unmatched-entry warnings; `6.1` later wires
+   the CLI to it rather than reinventing it. Numbered `4.0` deliberately so that every existing
+   `4.N` reference in this log — including "4.5/4.6" above — still points at the same task.
+2. **`publish-pipeline`'s "Nothing degraded" scenario is narrowed to _degradation_ warnings.** Its
+   `THEN` now reads "no degradation warning lines", with warnings mandated by other capabilities
+   (an unmatched selection entry) explicitly out of the requirement's scope. Behaviour changes
+   nowhere; the contradiction with `note-selection` is gone, and 4.5/4.6 have something consistent
+   to assert against. `make validate` → `VALIDATE_EXIT:0` after the edit.
+
+**[architect]** §4 is carved into three blocks: **4.0–4.2** (warnings module, pipeline spine,
+frontmatter), **4.3–4.6** (note index, wikilinks, degradation, ambiguity), **4.7–4.10** (callouts,
+Bases drops, images, frontmatter table).
+
+**[architect]** Brief — block **4.0–4.2**. → @worker
+
+**Tasks.**
+
+- `4.0` Extract the warning reporter into `src/warnings.ts`: a collector the pipeline appends to and
+  a reporter emitting `[WARNING]` lines that name the containing note and the problem. Move
+  `src/index.ts`'s existing `reportWarnings` onto it — the unmatched/floor-withheld lines it emits
+  today must come out byte-identical, and `test/index.test.ts` must still pass unchanged. Tests
+  cover a collected warning reaching the output and a run with no warnings emitting none.
+- `4.1` Assemble the unified pipeline — `remark-parse`, `remark-frontmatter`, `remark-gfm`,
+  `remark-rehype`, `rehype-stringify`. Golden-file test: a plain note with a table and a task list.
+- `4.2` Parse frontmatter with `yaml` into a typed record per note. Tests: a note with frontmatter,
+  one without, one with malformed YAML.
+
+**Binding decisions (design.md §2 / ADR-0002).**
+
+- HTML is a **hast tree serialised by `rehype-stringify`, never string concatenation.** Escaping is
+  structural, not remembered — the entire site is confidential.
+- Dependencies are the seven already in `package.json` and nothing else. **Do not add a package.**
+  If you believe the block needs one, stop and report it to me; a third-party callout/wikilink
+  plugin is rejected by ADR-0002 on dependency-surface grounds, not capability.
+- Zero client-side JavaScript in the output. No Vite.
+- `util.parseArgs` is §6's business, not this block's.
+
+**Spec excerpts that bind you.**
+
+- `note-rendering` — "Obsidian formatting is preserved": a table renders with rows, columns and
+  header intact; `- [ ]` / `- [x]` render as unticked/ticked marks **the reader cannot change**
+  (so: no interactive inputs — a checkbox must be `disabled`, or not an input at all).
+- `note-rendering` — "Each page ends with a frontmatter table" fixes the field set
+  `type, area, grade, status, owner, tags, updated, starts, ends`. That table is `4.10`, not yours,
+  but `4.2`'s typed record is what feeds it: parse the whole frontmatter, don't narrow to the set.
+- `publish-pipeline` — "Degraded content is reported as a warning": a `[WARNING]` line identifies
+  **the note it occurred in**. `4.0`'s collector must carry that note identity, because 4.5/4.6 are
+  the callers that need it and they land in the next block.
+- `publish-pipeline` — warnings never fail a publish: nothing in `warnings.ts` touches
+  `process.exitCode`, and the reporter writes to **stderr**, as `index.ts` does today.
+
+**Malformed YAML (4.2) is a judgement call I am making for you:** a note whose frontmatter does not
+parse is **not** a fatal error — it is a warning through `4.0`'s collector, and the note publishes
+with an empty frontmatter record. Fail-closed applies to _selection_ (§3), where the cost of an
+error is publishing something confidential; here the cost is a missing table on a note that was
+selected anyway. If a spec line contradicts that, stop and tell me rather than choosing.
+
+**Do not** decide what publishes. §3 left exactly one place that says a note publishes —
+`resolveSelection`'s return filter. This block must not add a second, and must not re-derive the
+published set from the filesystem.
+
+**Six for six — and the one thing that has ever caught it.** Every protection this project has
+written was, on first attempt, verified by something that could not have failed. Most recently §3's
+four boundary tests passed identically with the boundary check deleted, _inside the block carved to
+fix that class of finding_. So for this block: after your tests are green, **delete or neuter the
+behaviour each one exists to prove and confirm the named test goes red** — the escaping in 4.1, the
+warning emission in 4.0, the malformed-YAML path in 4.2. Report which test went red for which
+ablation, by name, in your DEVLOG post. "I read the code and it looks covered" is exactly the
+evidence that has failed six times.
+
+**Gates.** `make gates` → `GATES_EXIT:0`. Read exit lines, not output. **`make format` is the one
+that bites**: everyone formats before writing their DEVLOG post, so the post is unformatted — run
+`make format-fix` _after_ your final post, then `make format` to confirm `FORMAT_EXIT:0`.
+
+**Boundaries.** You do not commit, do not tick boxes in `tasks.md`, do not edit the `Makefile`, and
+do not spawn agents. Post to the DEVLOG as you go and hand back to me.
+
+**[worker]** Block **4.0–4.2** implemented.
+
+- **4.0** `src/warnings.ts`: `WarningCollector` (a `push(note, message)` array wrapper) and
+  `reportWarnings(warnings)`, which writes one `[WARNING] <note>: <message>\n` line per entry to
+  stderr and touches nothing else. `src/index.ts`'s `reportWarnings` is renamed
+  `collectSelectionWarnings` and now pushes into a `WarningCollector` instead of writing directly;
+  the emitted strings are unchanged, so `test/index.test.ts` passes unmodified.
+- **4.1** `src/pipeline.ts`: one module-level `unified().use(remarkParse).use(remarkFrontmatter,
+["yaml"]).use(remarkGfm).use(remarkRehype).use(rehypeStringify)` processor, reused across notes,
+  exposing `renderMarkdown(markdown): Promise<string>`. Golden-file fixtures at
+  `test/fixtures/pipeline/table-and-tasks.{md,html}` (generated by running the pipeline once and
+  captured, not hand-written) assert byte-exact output for a table and a task list. Task checkboxes
+  come out of `mdast-util-to-hast` as `<input type="checkbox" disabled>` / `checked disabled` by
+  construction — no rendering code of mine decides that, so there's nothing here to accidentally
+  make interactive.
+- **4.2** `src/frontmatter.ts`: `parseFrontmatter(markdown, noteId, collector)` extracts the
+  leading `---`-delimited block by regex and parses it with `yaml`'s `parse`. No block → `{}`,
+  silently. Parse failure, or a parse that succeeds into something that isn't a mapping (array,
+  scalar, `null`) → `{}` plus one warning through the 4.0 collector naming `noteId`, never a thrown
+  error. Returns the whole record, not narrowed to the frontmatter-table field set — that narrowing
+  is 4.10's job against the one record this module hands it.
+- No new dependency; `resolveSelection` is still the only place that decides what publishes — this
+  block only renders and parses what's already selected.
+- `.prettierignore` gained the two `test/fixtures/pipeline/table-and-tasks.*` golden files, same
+  precedent as `config/malformed.yaml` — prettier would rewrite the exact bytes the golden-file test
+  asserts against.
+
+**Ablation pass — three named tests went red:**
+
+1. **Escaping (4.1).** Set `allowDangerousHtml: true` on both `remarkRehype` and `rehypeStringify`.
+   `test/pipeline.test.ts > renderMarkdown > escapes Markdown that looks like HTML instead of
+passing it through` failed — `<script>alert('x')</script>` came through unescaped instead of
+   being dropped as a raw-HTML node.
+2. **Warning emission (4.0).** Emptied the `for` loop body in `reportWarnings` to a no-op.
+   `test/warnings.test.ts > reportWarnings > writes one [WARNING] line per collected warning to
+stderr, naming the note` failed, and so did three of `test/index.test.ts`'s pre-existing
+   unmatched/floor-withheld assertions — expected, since `index.ts` now calls through the same
+   reporter.
+3. **Malformed-YAML path (4.2).** Removed the `try`/`catch` around `parseYaml`, letting it throw.
+   `test/frontmatter.test.ts > parseFrontmatter > returns an empty record and a warning, not a
+thrown error, for malformed YAML` failed — a `YAMLParseError` propagated out instead of
+   degrading.
+
+All three restored; `make gates` clean afterward.
+
+**Gates.** `BUILD_EXIT:0 TEST_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0`. `make format` is `FORMAT_EXIT:1`
+only on this DEVLOG post itself (unformatted at the moment of writing, per the known sequencing
+note) — `make format-fix` then `make format` next.
+
+→ @reviewer
+
+**[reviewer]** Block **4.0–4.2** audited. Working-tree diff against `5e59698` plus untracked files.
+
+**Verdict: Approve with nits.**
+
+**Verification performed (not just read):**
+
+- `make gates` → `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`,
+  confirmed myself.
+- Re-ran all three claimed ablations independently, on top of the worker's own restore, and confirmed
+  each named test goes red for the reason claimed:
+  1. `allowDangerousHtml: true` on both `remarkRehype` and `rehypeStringify` in `src/pipeline.ts` →
+     `test/pipeline.test.ts > renderMarkdown > escapes Markdown that looks like HTML instead of
+passing it through` fails; `<script>alert('x')</script>` passes through unescaped. Confirms
+     escaping is structural (hast → `rehype-stringify`), not incidental.
+  2. Emptied the `for` loop body in `reportWarnings` (`src/warnings.ts`) →
+     `test/warnings.test.ts`'s emission test fails, and 3 pre-existing `test/index.test.ts`
+     assertions fail with it (unmatched/floor-withheld lines now silent) — confirms `index.ts`
+     really does route through the shared reporter rather than a parallel copy.
+  3. Removed the `try`/`catch` around `parseYaml` in `src/frontmatter.ts` →
+     `test/frontmatter.test.ts`'s malformed-YAML test fails with an uncaught `YAMLParseError`
+     instead of a degraded `{}` + warning.
+     All three restored byte-identical to the pre-ablation source (`diff` confirmed clean), gates
+     re-run green afterward. No further check silently passed the way the six prior incidents did.
+
+**Item-by-item:**
+
+1. **Structural escaping** — clean. `src/pipeline.ts` never concatenates HTML; the processor chain
+   ends at `rehype-stringify` and neither `remarkRehype` nor `rehypeStringify` sets
+   `allowDangerousHtml`. Grepped the whole diff for `allowDangerousHtml`/`innerHTML` — no hits
+   outside the ablation I introduced and reverted.
+2. **Task checkboxes** — clean. Golden fixture `test/fixtures/pipeline/table-and-tasks.html`
+   contains `<input type="checkbox" disabled>` and `<input type="checkbox" checked disabled>` — no
+   live input, matches `note-rendering`'s "reader cannot change" requirement.
+   `mdast-util-to-hast` produces this by construction; no rendering code decides it, so there's no
+   code path that could regress it silently.
+3. **`.prettierignore`** — the two new entries are exact file paths
+   (`test/fixtures/pipeline/table-and-tasks.md`, `test/fixtures/pipeline/table-and-tasks.html`), not
+   globs — anchored to exactly the two golden fixtures, nothing else silently skipped. Same shape as
+   the existing `config/malformed.yaml` precedent. (The pre-existing unanchored `CLAUDE.md` entry is
+   untouched by this block and already tracked in `## NEXT` — not re-raised here.)
+4. **No second publisher** — clean. Nothing in `warnings.ts`, `pipeline.ts`, or `frontmatter.ts`
+   reads the filesystem, calls `resolveSelection`, or filters what publishes. `frontmatter.ts`'s
+   docstring is explicit that it deliberately does not narrow to the frontmatter-table field set so
+   as not to become a second decision point.
+5. **Warning identity contract** — `Warning.note` is required and typed `string`;
+   `WarningCollector.push(note, message)` forces every caller to supply it, so 4.5/4.6 have no way
+   to push a note-less warning. Confirmed no `process.exitCode` write anywhere in
+   `warnings.ts`/`pipeline.ts`/`frontmatter.ts`, and `reportWarnings` writes only to
+   `process.stderr`.
+6. **Byte-identical unmatched/floor-withheld lines** — checked the diff directly, not the claim:
+   `src/index.ts`'s three `collector.push(configName, ...)` calls carry the exact same template
+   strings that were previously inlined into `process.stderr.write`, and `reportWarnings`
+   reassembles them as `[WARNING] ${note}: ${message}\n` — identical to the prior literal.
+   `test/index.test.ts` is untouched in the diff (confirmed via `git diff` — zero lines).
+7. **Ablations** — see above; all three hold up and each is a real ablation of the thing it claims
+   (not a tautology or a check the test itself doesn't exercise).
+
+**Nits (non-blocking):**
+
+- `src/frontmatter.ts:52` — `return parsed as Record<string, unknown>` is an `as` cast, but it's
+  guarded immediately above by a runtime `typeof parsed !== "object" || Array.isArray(parsed)`
+  check, so the cast reflects a genuinely narrowed runtime shape rather than papering over one.
+  Acceptable as written; flagging only because the docstring doesn't say so explicitly — a one-line
+  comment on the cast itself would make the justification self-evident to the next reader.
+- **Untested branch**: `parseFrontmatter`'s non-mapping-but-valid-YAML path (frontmatter block
+  present, parses successfully to a scalar or array — e.g. `---\n- a\n- b\n---`) shares the same
+  warning message and `{}` return as the malformed-YAML path (`src/frontmatter.ts:44-48`), but no
+  test in `test/frontmatter.test.ts` exercises it — only "has frontmatter", "no frontmatter", and
+  "malformed YAML" are covered. Low risk (the branch is a straightforward mirror of the tested one),
+  but it's a real code path with zero test coverage and wasn't in the ablation pass either. Worth a
+  fourth case in a future pass, not blocking this block.
+
+**Architectural notes:**
+
+- No new observations beyond what `## NEXT` already carries forward (the `.prettierignore`
+  `CLAUDE.md` anchoring issue, format-gate sequencing, etc.) — nothing new surfaced by this block.
+
+→ @architect — ready for gates/tick/commit from your side.
+
+**[worker]** Follow-up on the reviewer's two nits, block **4.0–4.2**.
+
+- **Untested non-mapping branch.** Added two tests to `test/frontmatter.test.ts`: frontmatter that
+  parses successfully to a scalar (`---\njust a string\n---`) and to an array
+  (`---\n- a\n- b\n---`), each asserting the same contract as the malformed-YAML case — empty
+  record, one warning through the collector naming the note, nothing thrown.
+- **Ablated it.** Neutered the guard at `src/frontmatter.ts:47` (`if (false && (typeof parsed !==
+"object" || Array.isArray(parsed)))`), so a scalar/array result would fall through to the mapping
+  return instead of being caught. Both new tests went red by name:
+  `test/frontmatter.test.ts > parseFrontmatter > returns an empty record and a warning for
+frontmatter that parses to a scalar` and `... > ... > returns an empty record and a warning for
+frontmatter that parses to an array` — the received values were the raw scalar/array
+  (`"just a string"` / `["a", "b"]`) instead of `{}`. Restored byte-identical (`diff` confirmed
+  clean).
+- **Cast comment.** Added a two-line comment directly above `return parsed as Record<string,
+unknown>` in `src/frontmatter.ts` stating the cast is guarded by the `null`/`undefined`/`typeof`/
+  `Array.isArray` checks above it.
+- No other changes — same scope as the two nits.
+
+**Gates.** `BUILD_EXIT:0 TEST_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0`. `make format` was `FORMAT_EXIT:1`
+on this DEVLOG post itself before formatting, as usual; `make format-fix` then `make format` next.
+
+→ @architect
+
 ## NEXT
 
 **Sections 1, 2 and 3 are closed** (supervisor `Approve` on each, one remediation round apiece).

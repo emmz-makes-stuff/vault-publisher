@@ -34,8 +34,9 @@ These come first deliberately: the guarantee must be in place and proven before 
 
 ## 4. Markdown pipeline
 
-- [ ] 4.1 Assemble the unified pipeline — `remark-parse`, `remark-frontmatter`, `remark-gfm`, `remark-rehype`, `rehype-stringify` — and verify a golden-file test renders a plain note with a table and a task list
-- [ ] 4.2 Parse frontmatter with `yaml` into a typed record per note; verify tests cover a note with frontmatter, one without, and one with malformed YAML
+- [x] 4.0 Extract the warning reporter from the CLI entry point into `src/warnings.ts` — a collector the pipeline appends to and a reporter that emits `[WARNING]` lines naming the containing note and the problem; `src/index.ts` uses it for the existing unmatched-selection-entry warnings and 6.1 wires the CLI to it rather than reinventing it. Verify tests cover a collected warning reaching the output and a run with no warnings emitting none
+- [x] 4.1 Assemble the unified pipeline — `remark-parse`, `remark-frontmatter`, `remark-gfm`, `remark-rehype`, `rehype-stringify` — and verify a golden-file test renders a plain note with a table and a task list
+- [x] 4.2 Parse frontmatter with `yaml` into a typed record per note; verify tests cover a note with frontmatter, one without, and one with malformed YAML
 - [ ] 4.3 Build the note index that maps Obsidian note names to published pages, mirroring Obsidian's name-based resolution; verify tests cover a unique name, a name colliding across folders, and a name that does not exist
 - [ ] 4.4 Implement wikilink resolution for published targets, including the aliased `[[Note|text]]` and heading `[[Note#Section]]` forms; verify golden-file tests render a working link, an alias-labelled link, and a heading link resolving to the page
 - [ ] 4.5 Implement degradation to plain text for wikilinks whose target is unpublished or absent, emitting no link and no route to the note; verify tests cover an unselected target, an absent target, and an aliased unresolvable link rendering only its alias text
