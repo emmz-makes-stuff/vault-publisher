@@ -5693,63 +5693,212 @@ No blockers, no nits.
 
 → @architect
 
+**[supervisor]** Section 5 re-audit, round 3 — range `6d8c84f..HEAD` (`8131eb0`, `0d73dac`,
+`4681450`, `6a4196d`, `d764e29`, `1c19976`). **Verdict: Approve.** Section 5 closes.
+
+### The blocker is closed, and I closed it by execution rather than from the thread
+
+**The fix.** `src/index.ts` is two lines (`import { main } from "./cli.ts"; await main();`) and
+`src/cli.ts:21` exports `main` with no self-invocation. `diff` of `6a4196d:src/index.ts` against
+`src/cli.ts` is exactly three hunks: the `pathToFileURL` import removed, and the guard plus its
+comment removed. Nothing else moved a character — the failure path, the front-page warning, and
+`collectSelectionWarnings` are the same code in a new file. `grep -rn "process.argv|import.meta|
+realpath|pathToFileURL" src/` leaves two kinds of hit and neither is a path-identity comparison:
+`src/cli.ts:21`'s parameter default, and `src/selection.ts:197,203`'s `realpath` calls, which are the
+floor's own resolution and were audited in §3.
+
+**The ablation, reproduced independently.** Scratch tree (`git archive HEAD`, `node_modules`
+symlinked in), `src/index.ts` replaced with a reconstruction of the pre-fix guard against the
+extracted `src/cli.ts`. `test/cli-symlink-invocation.test.ts` unmodified goes red — and red **at the
+file read**, not at the status check:
+
+```
+Error: ENOENT: no such file or directory, open '.../vault-publisher-symlink-out-1vQGEN/index.html'
+  ❯ test/cli-symlink-invocation.test.ts:55:23
+```
+
+`expect(result.status).toBe(0)` on line 53 passed. That is the property that matters: the test fails
+on the _symptom that isn't visible in the exit code_, which is the whole reason the previous suite
+could be green over a CLI that did nothing.
+
+**Invocation shapes, including ones nobody had tried.** Same fixture vault, same config, each into a
+fresh output directory, counting files written and `[WARNING]` lines printed:
+
+| shape                                                               | exit | files | warnings |
+| ------------------------------------------------------------------- | ---- | ----- | -------- |
+| real path `src/index.ts`                                            | 0    | 4     | 4        |
+| symlink to the entry **file** (what the test covers)                | 0    | 4     | 4        |
+| symlink to the **repo directory**                                   | 0    | 4     | 4        |
+| symlink to `src/`                                                   | 0    | 4     | 4        |
+| invoked via the `/tmp` → `/private/tmp` symlink                     | 0    | 4     | 4        |
+| **symlink chain** (link → link → entry)                             | 0    | 4     | 4        |
+| `$GITHUB_ACTION_PATH` pointing at a symlinked checkout — §7's shape | 0    | 4     | 4        |
+| relative `./src/index.ts` from a symlinked cwd                      | 0    | 4     | —        |
+| **compiled `dist/index.js` through a symlink**                      | 0    | 4     | —        |
+
+Every one of these was a silent 0-file no-op before. The last row matters for §7: `dist/index.js` is
+`import { main } from "./cli.js"; await main();`, structurally identical, so the built artifact
+carries the fix too.
+
+**On the `bin`/`npx` shim I was asked to consider.** It is not reachable today and not a §5 gap:
+`package.json` declares no `bin`, and `src/index.ts` has no shebang, so there is no shim to symlink.
+The point of the structural fix is that it makes the question moot — invocation _shape_ no longer
+participates in the decision to run, because there is no decision. The residual risk moved from "a
+predicate might be false" to "Node must be able to load the entry", which fails loudly.
+
+### Nothing I cleared in rounds 1 and 2 was disturbed by the move
+
+Re-checked at `HEAD`, not carried over from the earlier passes:
+
+- **One selection authority.** The only floor/selection logic outside `src/selection.ts` is
+  `src/cli.ts:166,169` calling the exported `isEntryWithheldByFloor` for _warning text_. No renderer,
+  explorer or writer filters notes: `page.ts:78` filters `doctype` nodes, `bases.ts:30` filters a
+  hast child list, `writer.ts:53` filters the collision map — none of them decide publication.
+- **One path authority.** `outputPathForNote` (`src/wikilinks.ts:77`) is the single definition, and
+  `src/writer.ts:44,109` is its only consumer. `writer.ts:109` still composes the real file path from
+  it — the substitution I ablated in round 1 is still what `test/no-client-js.test.ts`'s
+  link-integrity check catches.
+- **One rendering path.** No HTML string construction anywhere in `src/` outside `styles.ts` (CSS,
+  which is not markup); every `<...>` hit is prose in a docblock.
+- **Zero client-side JS.** No `script`/`onclick`/`addEventListener` in `src/`; the two hits are
+  comments in `styles.ts` saying so.
+- **One warning reporter.** `warnings.ts:37` is still the only writer of a `[WARNING]` line, and both
+  call sites (`cli.ts:72` on the failure path, `cli.ts:77` on the success path) survived the move —
+  confirmed live above: a symlinked invocation prints all four warnings, not just writes four files.
+- **CLI error routing.** `test/cli-error-handling.test.ts` changed by exactly one line (the import
+  moving to `../src/cli.ts`). All four assertions still hold: clean stderr message, `exitCode` 1, no
+  `at …` stack frame, and `reportWarnings` still running before the `return`.
+- **Front-page warning, fixtures, committed output.** `VAULT_ROOT_INDEX_NOTE` logic untouched, only
+  relocated. `.gitignore` still covers `dist/`, `vault/`, `.vault/`, `rendered-preview/`; `git
+ls-files` shows no rendered output tracked. Fixtures remain invented content.
+- **Gate coverage.** No new test directory or package — `test/cli-symlink-invocation.test.ts` sits in
+  the suite `make test` already runs (`vitest run`), and the reviewer's `TEST_EXIT:0` (182 tests, 18
+  files) accounts for it.
+
+`5.7` is ticked on the Product Owner's own visual verification recorded in `d764e29`. That is the
+only authority for it and I treat it as settled.
+
+### Carry-forward into `6.3`'s brief — precise, as requested
+
+I agree with the reviewer: the test's _structure_ is independent of argument parsing, its
+_invocation line_ is not. For `6.3`'s brief, verbatim:
+
+> `test/cli-symlink-invocation.test.ts` must survive this task, not be deleted as "the old CLI test".
+> The only line `6.3` may change is the `spawnSync` argument array at lines 49–51,
+> `[symlinkedEntryPoint, integrationVaultConfigPath, outputDir]`, which becomes whatever the new flag
+> surface is. Everything else stays as it is: the `symlink()` in `beforeEach` (it is the only test in
+> the suite that reaches the entry point through a symlink), and — mega-critical — the
+> `readFile(path.join(outputDir, "index.html"))` plus `toContain("<title>Welcome</title>")` at lines
+> 55–56. **Do not reduce the assertions to `expect(result.status).toBe(0)`.** Exit 0 was the
+> _symptom_ of the bug this test exists for; the on-disk read is the only assertion that can see it.
+> Keep the docblock: it explains why a symlink appears in a test at all, and without it the symlink
+> reads like incidental setup someone can simplify away.
+
+`test/index.test.ts` and `test/no-client-js.test.ts` also spawn the entry point with positional
+arguments and will need the same mechanical update in `6.3`; only this one has the symlink property
+worth protecting.
+
+### Architectural notes — `## NEXT`, not a fix block
+
+- All previously parked items stand and none were touched by `1c19976`: the reused-output-directory
+  hazard (`6.4`/`7.6`), the duplicated private `element()` in `page.ts`/`explorer.ts`,
+  `test/site.test.ts` reimplementing `publishSite`'s composition, the stale comment at
+  `src/page.ts:21`, `table { display: block }`.
+- **`src/cli.ts:24-30`'s positional `output-dir` stopgap is now `6.3`'s to remove**, and its own
+  comment says so. Worth naming in the brief so the "site generation is skipped entirely when a third
+  argument is absent" branch goes away with it — a CLI that silently does nothing when an argument is
+  missing is a milder cousin of the bug just fixed, and `6.3` is where it stops being deliberate.
+- **Nothing tests the compiled `dist/` entry point.** Every CLI test spawns `src/index.ts` under
+  Node's type stripping. I verified `dist/index.js` by hand above and it is fine, but if §7's action
+  invokes the build output, that path is exercised for the first time by the action itself. A note
+  for `7.1`, not a §5 gap.
+- The round-2 note stands: the output-path collision is unreachable end to end on a case-insensitive
+  filesystem by construction, so a Linux CI job — if one ever exists here — is where the one real
+  end-to-end collision test could live.
+
+→ @architect
+
+**[architect]** Section 5 closed. Supervisor `Approve` on round 3, verified across nine invocation
+shapes including the compiled `dist/` entry and §7's `$GITHUB_ACTION_PATH` form. Six commits
+(`8131eb0`, `0d73dac`, `4681450`, `6a4196d`, `d764e29`, `1c19976`), 7/7 tasks ticked, 41/59 overall,
+182 tests, all five gates green. `## NEXT` rewritten below for §6.
+
 ## NEXT
 
-**Sections 1–4 are closed** (supervisor `Approve` on each; §2, §3 and §4 each took one remediation
-round). 33/59 tasks. Block B (5.3–5.5) implemented, gates green, awaiting reviewer. Next after
-review/gates/tick/commit: block C (5.6–5.7 — stylesheet and mobile).
+**Sections 1–5 are closed** (supervisor `Approve` on each). 41/59 tasks. Next is **section 6 —
+warnings and CLI**. §5 took **three** remediation rounds — the first section to exceed §3c.4's
+two-round limit, carried past it by an explicit Product Owner decision on 2026-08-27.
 
-**Carried forward:** the `.js`→`.ts` import-extension normalization across `src/*.ts` (see block B's
-post above) — behaviour-preserving but touches files outside 5.3–5.5's own scope; reviewer should
-confirm it during block B's audit.
+**§5 delivered the site.** `src/navigation.ts` builds the explorer model from `resolveSelection`'s
+`published` and nothing else; `src/explorer.ts` and `src/page.ts` render it as hast; `src/writer.ts`
+lands files; `src/styles.ts` is the one stylesheet; `src/cli.ts` holds `main` and `src/index.ts` is a
+two-line entry. The supervisor re-verified at HEAD, not by carrying earlier conclusions forward: one
+selection authority, one path authority (`outputPathForNote`), one rendering path, one warning
+reporter, zero client-side JS, no rendered output tracked.
 
-**§4 delivered the pipeline.** `src/pipeline.ts` is the single `unified()` processor;
-`src/wikilinks.ts` holds the one resolver and the one note index; `src/warnings.ts` the one reporter;
-`src/callouts.ts`, `src/bases.ts`, `src/frontmatter.ts`, `src/tree.ts` the rest. `resolveSelection`'s
-return filter is still the only thing that decides what publishes, and there is no HTML string
-building anywhere in `src/`. The supervisor re-verified all of that after the remediation rather than
-carrying its first-pass conclusions forward.
+**Twelve for twelve, and the shape changed twice.** Every protection this project has written was, on
+first attempt, verified by something that could not have failed. §5 added two of a kind not seen
+before:
 
-**Ten for ten.** Every protection this project has written was, on first attempt, verified by
-something that could not have failed. §4 added three: the guarantee assertions that never executed
-because a golden `toBe` aborted the `it()` first; a whole requirement (`note-rendering`'s Image
-scenario) that four block reviews and 116 tests passed over because the code could not satisfy it;
-and — inside the fix for that — an integration test that stayed green with the exclusion floor
-disabled. **The eighth was caught before its commit; the tenth was caught inside the fix for the
-ninth.** Assume the eleventh is already written. Running the code with the protection removed is
-still the only thing that has ever surfaced one.
+- **The eleventh was a guarantee with _no_ check at all** — href/file agreement, the thing §4's
+  supervisor called the most important item in §5's first brief. Closed by construction in block A,
+  never observed until the first remediation. The hand-run found 0 broken links, which is how the
+  previous ten looked the day before they were found. **Construction is not observation.**
+- **The twelfth was introduced _by a remediation_** — the entry-point guard, which made the CLI exit
+  0 having written nothing through any symlinked path. Every CLI test spawned by real path, so the
+  suite was green in exactly the configuration where the CLI did nothing. **A fix is not exempt from
+  the rule that produced it.**
 
-**Two rules §4 paid for, now standing:**
+Also §5: the architect's own suggested ablation was **wrong and the worker refuted it with evidence**
+(breaking `notePathToHref` reddens the round-trip test too, isolating nothing; the writer side is the
+real hazard). Take an ablation instruction as a hypothesis, not an order.
 
-- **A golden-file compare and a guarantee assertion never share an `it()`, the compare first.** Vitest
-  aborts at the compare and the guarantee never runs. One `it()` per guarantee.
-- **Any assertion grepping for a confidential name must also grep its percent-encoded form.**
-  `Confidential%20Target` is a different string, and §5 emits real hrefs everywhere.
+**Two rules §5 paid for, now standing** (in addition to §4's two, which still hold):
 
-**Carried into §5 — what the supervisor says it inherits:**
+- **Ablate the divergence, not the shared function.** When two things must agree, break _one side_ and
+  confirm the check reddens while the other side's tests stay green. Breaking what they share proves
+  only that something is wired up.
+- **Never assert exit 0 alone for a process whose job is to write files.** Exit 0 was the symptom of
+  the twelfth. Assert the artifact landed.
 
-- **`notePathToHref` has no inverse yet** (`src/wikilinks.ts:42-46`). §5 adds the writer that decides
-  where files actually land. If it computes output paths independently, hrefs and files disagree and
-  every link 404s behind authentication — **a failure no §4 test can see.** §5 must share the
-  function and assert the round trip. This is the single most important thing in §5's first brief.
-- **The nested-anchor degrade is silent** (`src/wikilinks.ts:210-213`). Not a spec violation and no
-  confidentiality consequence, but `8.5` reviews `[WARNING]` lines with the Product Owner to confirm
-  every degraded link is expected, and this class will never appear there. **Architect's call taken:
-  add the `collector.push`** — one line plus a test, folded into §5's first block.
-- **`src/index.ts` still computes `published` and discards it.** §6 is meant to give it a consumer;
-  §5 will want it too. It has now survived two sections as an orphan.
-- **The format gate still fails on the DEVLOG at every block boundary** (four for four in §4), because
-  every agent formats before writing its post. `make format-fix` then `make format` is the sequence.
+**Carried into §6 — what the supervisor says it inherits:**
 
-**Settled during §4, for the record:**
+- **`6.3` must not break the symlink test.** `test/cli-symlink-invocation.test.ts` is the suite's only
+  symlinked invocation. The **only** line `6.3` may change is the `spawnSync` argument array at lines
+  49–51; the `symlink()` in `beforeEach` stays, and the `readFile` + `toContain("<title>Welcome</title>")`
+  at lines 55–56 **must not** be reduced to `expect(result.status).toBe(0)`. Keep the docblock, or the
+  symlink reads like incidental setup and someone simplifies it away. `test/index.test.ts` and
+  `test/no-client-js.test.ts` need the same mechanical argv update but protect no such property.
+- **`src/cli.ts:24-30`'s positional `output-dir` is a stopgap `6.3` removes** — including the branch
+  that skips site generation when the third argument is absent. **A CLI that silently does nothing on
+  a missing argument is a milder cousin of the bug §5 closed three times.**
+- **A reused output directory still serves an unpublished note.** Reproduced by the supervisor: a note
+  dropped from the config keeps its page and its full body; the explorer hides it, nothing warns, exit 0. `6.4` and `7.6` own this — and **`6.4` must not be written against a fresh directory and declared
+  green**, since that is the configuration in which the hazard is invisible.
+- **Nothing tests the compiled `dist/` entry.** Every CLI test spawns `src/index.ts` under type
+  stripping. `dist/index.js` was verified by hand and is fine. A note for `7.1`, not a §5 gap.
+- **The output-path collision is unreachable end to end on a case-insensitive filesystem.**
+  `resolveSelection` returns from a `Set`, so the `Index.md` rule is the only route to one. Both halves
+  either side of the test's mock are real; CI is where the whole path is reachable.
+- **Smaller, parked deliberately:** the duplicated private `element()` helper (`src/page.ts:81`,
+  `src/explorer.ts:59`); `test/site.test.ts:25-61` reimplementing `publishSite`'s composition instead
+  of calling it; a stale comment at `src/page.ts:21`; `table { display: block }` dropping the native
+  table role.
+- **The format gate fails on the DEVLOG at every block boundary** — now eight for eight. `make
+format-fix` then `make format`.
 
-- **B1 — images do not publish in v1** (Product Owner). `note-rendering` amended, `proposal.md`
-  amended, task 4.9's wording amended in place with a note, dead image code deleted.
-- **`publish-pipeline`'s "Nothing degraded" scenario** narrowed to degradation warnings.
-- **Nested anchors removed** — a wikilink inside a Markdown link renders as plain text, so §5's page
-  goldens cannot assert markup browsers repair.
+**Settled during §5, for the record:**
 
-**Still open, unchanged from §3:**
+- **An output-path collision fails the publish**, it does not warn: a collision has no degraded form —
+  one note is simply gone, served at the other's URL. Warnings are for degradation, which still ships
+  something honest.
+- **An unselected vault-root `Index.md` warns**, it does not fail: a publish with no front page is odd
+  but valid, and `6.2` forbids warnings failing a publish. Silence was the wrong third option.
+- **`5.7` was ticked on the Product Owner's own visual verification** (`d764e29`) — narrow viewport,
+  wide table, explorer reachable, dark-mode device still served the light theme. No gate can settle it
+  and none claims to.
+
+**Still open, unchanged from §3/§4:**
 
 - **Hardlinks defeat `isWithinVaultBoundary`** — a threat-model decision parked for §6/§8 hardening.
 - **Unobserved claims in `reader-access`**: removal's "can no longer authenticate" half, and the
