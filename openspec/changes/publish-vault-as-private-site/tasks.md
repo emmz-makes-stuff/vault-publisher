@@ -43,7 +43,7 @@ These come first deliberately: the guarantee must be in place and proven before 
 - [x] 4.6 Treat an ambiguous wikilink target as a warning rather than a silent guess; verify a test asserts the warning and the chosen behaviour
 - [x] 4.7 Implement the callout transform for blockquotes opening `> [!type] Title`, covering `warning`, `important`, `danger`, `note`, `abstract`, `tip`, `quote`, `success`, `info`; verify a golden-file test renders each type with its title, body, and type-distinguishing markup
 - [x] 4.8 Drop ` ```base ` blocks entirely, emitting nothing to the page; verify a golden-file test asserts the block's absence and that surrounding content renders
-- [x] 4.9 Render images referenced by published notes and verify a golden-file test; verify non-image attachments produce no page and no download
+- [x] 4.9 Degrade image embeds to plain text with a warning, emitting no `<img>`, `src` or path; verify a golden-file test, and that attachments of every kind produce no page and no download. (Amended by the Product Owner at section 4's close: the published set is `.md` only and no stage copies assets, so the original "render images" wording was unsatisfiable — see `note-rendering` and the section 4 supervisor verdict.)
 - [x] 4.10 Render the per-page frontmatter table at the foot of every page over the fixed field set `type, area, grade, status, owner, tags, updated, starts, ends`; verify tests cover a note with some fields, a note with none (no table rendered), and a note carrying fields outside the set (omitted)
 
 ## 5. Site assembly

@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { renderMarkdown } from "../src/pipeline.js";
 import { WarningCollector } from "../src/warnings.js";
-import { buildNoteIndex } from "../src/wikilinks.js";
+import { buildNoteIndex, type WikilinkContext } from "../src/wikilinks.js";
 
 const embedNoteIndex = (): ReturnType<typeof buildNoteIndex> =>
   buildNoteIndex([
@@ -13,6 +13,18 @@ const embedNoteIndex = (): ReturnType<typeof buildNoteIndex> =>
     "Handbook/Handbook Note.md",
   ]);
 
+/**
+ * A real (empty) wikilink context for tests that exercise other pipeline
+ * stages — `wikilinks` is a required parameter of `renderMarkdown` (4.
+ * remediation B2), so nothing here can omit it to skip `remarkWikilinks`
+ * and `remarkDropBases`.
+ */
+const noWikilinks = (noteId = "Home.md"): WikilinkContext => ({
+  noteId,
+  noteIndex: buildNoteIndex([]),
+  collector: new WarningCollector(),
+});
+
 const fixturesDir = fileURLToPath(new URL("./fixtures/pipeline", import.meta.url));
 const wikilinkFixturesDir = fileURLToPath(new URL("./fixtures/wikilinks", import.meta.url));
 
@@ -21,20 +33,23 @@ describe("renderMarkdown", () => {
     const markdown = await readFile(`${fixturesDir}/table-and-tasks.md`, "utf8");
     const expected = await readFile(`${fixturesDir}/table-and-tasks.html`, "utf8");
 
-    const html = await renderMarkdown(markdown);
+    const html = await renderMarkdown(markdown, noWikilinks());
 
     expect(`${html}\n`).toBe(expected);
   });
 
   it("renders task checkboxes as disabled inputs the reader cannot change", async () => {
-    const html = await renderMarkdown("- [ ] Todo\n- [x] Done\n");
+    const html = await renderMarkdown("- [ ] Todo\n- [x] Done\n", noWikilinks());
 
     expect(html).toContain('<input type="checkbox" disabled>');
     expect(html).toContain('<input type="checkbox" checked disabled>');
   });
 
   it("escapes Markdown that looks like HTML instead of passing it through", async () => {
-    const html = await renderMarkdown("<script>alert('x')</script>\n\nHello & welcome");
+    const html = await renderMarkdown(
+      "<script>alert('x')</script>\n\nHello & welcome",
+      noWikilinks(),
+    );
 
     expect(html).not.toContain("<script>alert");
     expect(html).toContain("&#x26; welcome");
@@ -95,6 +110,7 @@ describe("renderMarkdown wikilinks", () => {
       const { html } = await renderDegraded();
 
       expect(html).not.toContain("Confidential Target");
+      expect(html).not.toContain("Confidential%20Target");
     });
 
     it("emits one warning per degraded wikilink, each naming the containing note", async () => {
@@ -155,14 +171,27 @@ describe("renderMarkdown wikilinks", () => {
     });
   });
 
-  it("leaves [[...]] text untouched when no wikilink context is supplied", async () => {
-    const html = await renderMarkdown("See [[Some Note]] for details.");
+  it("degrades a wikilink to plain text when its target is not in the published index", async () => {
+    const collector = new WarningCollector();
 
-    expect(html).toContain("[[Some Note]]");
+    const html = await renderMarkdown("See [[Some Note]] for details.", {
+      noteId: "Home.md",
+      noteIndex: buildNoteIndex([]),
+      collector,
+    });
+
+    expect(html).toContain("Some Note");
+    expect(html).not.toContain("[[");
     expect(html).not.toContain("<a ");
+    expect(collector.all()).toStrictEqual([
+      {
+        note: "Home.md",
+        message: 'wikilink to "Some Note" could not be resolved and was rendered as plain text',
+      },
+    ]);
   });
 
-  it("pins today's behaviour for a wikilink nested inside a Markdown link — nested anchors, unresolved for now", async () => {
+  it("renders a wikilink as plain text, not a nested <a>, when it sits inside a Markdown link", async () => {
     const noteIndex = buildNoteIndex(["Handbook/Wikilink Target.md"]);
     const collector = new WarningCollector();
 
@@ -171,13 +200,14 @@ describe("renderMarkdown wikilinks", () => {
       { noteId: "Home.md", noteIndex, collector },
     );
 
-    // Not the intended shape — an <a> nested inside another <a> is invalid
-    // HTML — but this is what the pipeline does today, and this test exists
-    // so that stays a known, observed fact rather than an untested path.
+    // The inner wikilink resolves, but nesting an <a> inside the outer
+    // Markdown link's <a> is invalid HTML — a browser repairs it by closing
+    // the outer anchor early, silently breaking the author's link. So the
+    // inner wikilink renders as plain text instead of a second anchor.
     expect(html).toBe(
-      '<p><a href="https://example.com">Some text with ' +
-        '<a href="/Handbook/Wikilink%20Target.html">Wikilink Target</a> inside</a></p>',
+      '<p><a href="https://example.com">Some text with Wikilink Target inside</a></p>',
     );
+    expect(collector.all()).toStrictEqual([]);
   });
 });
 
@@ -186,7 +216,7 @@ describe("renderMarkdown callouts", () => {
     const markdown = await readFile(`${fixturesDir}/callouts.md`, "utf8");
     const expected = await readFile(`${fixturesDir}/callouts.html`, "utf8");
 
-    const html = await renderMarkdown(markdown);
+    const html = await renderMarkdown(markdown, noWikilinks());
 
     expect(`${html}\n`).toBe(expected);
   });
@@ -194,7 +224,7 @@ describe("renderMarkdown callouts", () => {
   it("carries a type-distinguishing class for each callout type", async () => {
     const markdown = await readFile(`${fixturesDir}/callouts.md`, "utf8");
 
-    const html = await renderMarkdown(markdown);
+    const html = await renderMarkdown(markdown, noWikilinks());
 
     for (const type of [
       "warning",
@@ -212,13 +242,13 @@ describe("renderMarkdown callouts", () => {
   });
 
   it("leaves a blockquote with no [!type] marker as an ordinary blockquote", async () => {
-    const html = await renderMarkdown("> Not a callout, just an ordinary quote.\n");
+    const html = await renderMarkdown("> Not a callout, just an ordinary quote.\n", noWikilinks());
 
     expect(html).toBe("<blockquote>\n<p>Not a callout, just an ordinary quote.</p>\n</blockquote>");
   });
 
   it("falls back to a capitalised type name when no title is given", async () => {
-    const html = await renderMarkdown("> [!info]\n> Some info, no title given.\n");
+    const html = await renderMarkdown("> [!info]\n> Some info, no title given.\n", noWikilinks());
 
     expect(html).toContain('<p class="callout-title">Info</p>');
   });
@@ -267,7 +297,7 @@ describe("renderMarkdown dropped Bases blocks", () => {
   });
 });
 
-describe("renderMarkdown image embeds", () => {
+describe("renderMarkdown embeds — no attachment, image or otherwise, is ever published", () => {
   async function renderEmbeds(): Promise<{ html: string; collector: WarningCollector }> {
     const markdown = await readFile(`${wikilinkFixturesDir}/embeds.md`, "utf8");
     const collector = new WarningCollector();
@@ -286,31 +316,32 @@ describe("renderMarkdown image embeds", () => {
     expect(`${html}\n`).toBe(expected);
   });
 
-  it("renders a published image as an <img> pointing at its published path", async () => {
+  it("degrades an embedded image to plain text with no <img> element, src, or path", async () => {
     const { html } = await renderEmbeds();
 
-    expect(html).toContain('<img src="/Assets/photo.png" alt="photo.png">');
+    expect(html).toContain("An embedded image: photo.png");
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("src=");
+    expect(html).not.toContain("/Assets/photo.png");
   });
 
-  it("uses the alias as alt text for an aliased embed", async () => {
+  it("uses the alias as the degraded plain text for an aliased image embed", async () => {
     const { html } = await renderEmbeds();
 
-    expect(html).toContain('<img src="/Assets/photo.png" alt="A caption">');
+    expect(html).toContain("An aliased embedded image: A caption");
   });
 
-  it("emits exactly the two <img> tags for the two published-image embeds, no more", async () => {
+  it("emits no <img> tag anywhere on the page", async () => {
     const { html } = await renderEmbeds();
 
-    expect(html.match(/<img /g)).toHaveLength(2);
+    expect(html).not.toContain("<img");
   });
 
-  it("emits no src attribute naming the unpublished image — no <img> tag mentions it at all", async () => {
+  it("emits no trace of the unpublished image's path", async () => {
     const { html } = await renderEmbeds();
 
-    const imgTags = html.match(/<img [^>]*>/g) ?? [];
-    for (const tag of imgTags) {
-      expect(tag).not.toContain("Secret");
-    }
+    expect(html).not.toContain("Assets/Secret");
+    expect(html).not.toContain("Assets%2FSecret");
   });
 
   it("never inlines the body of a transcluded note — only its bare name as plain text", async () => {
@@ -324,13 +355,24 @@ describe("renderMarkdown image embeds", () => {
     const { html } = await renderEmbeds();
 
     expect(html).not.toContain("href");
-    expect(html).not.toContain('src="/Assets/report.pdf"');
+    expect(html).not.toContain("/Assets/report.pdf");
+    expect(html).not.toContain("Assets%2Freport.pdf");
   });
 
-  it("warns once per unresolved, transcluded, or non-image embed, naming the containing note", async () => {
+  it("warns once per unresolved, transcluded, or otherwise unpublishable embed, naming the containing note", async () => {
     const { collector } = await renderEmbeds();
 
     expect(collector.all()).toStrictEqual([
+      {
+        note: "Home.md",
+        message:
+          'embed of "photo.png" is an attachment and cannot be published; it was rendered as plain text',
+      },
+      {
+        note: "Home.md",
+        message:
+          'embed of "photo.png" is an attachment and cannot be published; it was rendered as plain text',
+      },
       {
         note: "Home.md",
         message:
@@ -349,7 +391,7 @@ describe("renderMarkdown image embeds", () => {
       {
         note: "Home.md",
         message:
-          'embed of "report.pdf" is not an image and cannot be published; it was rendered as plain text',
+          'embed of "report.pdf" is an attachment and cannot be published; it was rendered as plain text',
       },
     ]);
   });
@@ -360,7 +402,7 @@ describe("renderMarkdown frontmatter table", () => {
     const markdown = await readFile(`${fixturesDir}/frontmatter-table.md`, "utf8");
     const expected = await readFile(`${fixturesDir}/frontmatter-table.html`, "utf8");
 
-    const html = await renderMarkdown(markdown, undefined, {
+    const html = await renderMarkdown(markdown, noWikilinks(), {
       type: "reference",
       area: "Handbook",
       owner: "R&D <Team>",
@@ -372,7 +414,7 @@ describe("renderMarkdown frontmatter table", () => {
   });
 
   it("omits a field outside the fixed set", async () => {
-    const html = await renderMarkdown("Body.\n", undefined, {
+    const html = await renderMarkdown("Body.\n", noWikilinks(), {
       type: "reference",
       secret: "should never appear",
       another_unlisted_field: "also never appears",
@@ -385,7 +427,7 @@ describe("renderMarkdown frontmatter table", () => {
   });
 
   it("escapes an HTML metacharacter in a frontmatter value", async () => {
-    const html = await renderMarkdown("Body.\n", undefined, { owner: "R&D <Team>" });
+    const html = await renderMarkdown("Body.\n", noWikilinks(), { owner: "R&D <Team>" });
 
     expect(html).not.toContain("<Team>");
     expect(html).toContain("&#x26;");
@@ -393,13 +435,13 @@ describe("renderMarkdown frontmatter table", () => {
   });
 
   it("renders no table element for a note with no frontmatter", async () => {
-    const html = await renderMarkdown("Body.\n");
+    const html = await renderMarkdown("Body.\n", noWikilinks());
 
     expect(html).not.toContain("<table");
   });
 
   it("renders no table element for a note whose frontmatter has none of the listed fields", async () => {
-    const html = await renderMarkdown("Body.\n", undefined, { secret: "unlisted" });
+    const html = await renderMarkdown("Body.\n", noWikilinks(), { secret: "unlisted" });
 
     expect(html).not.toContain("<table");
   });

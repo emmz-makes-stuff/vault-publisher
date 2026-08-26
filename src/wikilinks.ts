@@ -45,29 +45,6 @@ export function notePathToHref(notePath: string): string {
   return `/${encodedSegments.join("/")}.html`;
 }
 
-/**
- * The extensions `![[...]]` embeds are willing to publish as an `<img>`.
- * Everything else that resolves to exactly one candidate — a `.md` note
- * (transclusion) or any other attachment (a PDF, say) — degrades instead of
- * emitting a route to the file, per `note-rendering`'s "unsupported
- * constructs are dropped" and "attachments are not published" rules.
- */
-const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".avif"];
-
-function isImagePath(assetPath: string): boolean {
-  const lower = assetPath.toLowerCase();
-  return IMAGE_EXTENSIONS.some((extension) => lower.endsWith(extension));
-}
-
-/**
- * The published path a non-note asset (an image) is served at. Unlike
- * `notePathToHref`, no extension is stripped and no `.html` is appended —
- * an asset is served as itself, not rendered as a page.
- */
-export function assetPathToSrc(assetPath: string): string {
-  return `/${assetPath.split("/").map(encodeURIComponent).join("/")}`;
-}
-
 export interface WikilinkContext {
   readonly noteId: string;
   readonly noteIndex: NoteIndex;
@@ -120,24 +97,25 @@ export const remarkWikilinks: Plugin<[], Root> = () => {
   };
 };
 
-function transformNode(node: TreeNode, context: WikilinkContext): void {
+function transformNode(node: TreeNode, context: WikilinkContext, insideLink = false): void {
   if (node.children === undefined) {
     return;
   }
 
+  const childInsideLink = insideLink || node.type === "link";
   const nextChildren: TreeNode[] = [];
   for (const child of node.children) {
     if (child.type === "text" && child.value !== undefined) {
-      nextChildren.push(...splitWikilinks(child.value, context));
+      nextChildren.push(...splitWikilinks(child.value, context, childInsideLink));
     } else {
-      transformNode(child, context);
+      transformNode(child, context, childInsideLink);
       nextChildren.push(child);
     }
   }
   node.children = nextChildren;
 }
 
-function splitWikilinks(value: string, context: WikilinkContext): TreeNode[] {
+function splitWikilinks(value: string, context: WikilinkContext, insideLink: boolean): TreeNode[] {
   const result: TreeNode[] = [];
   let lastIndex = 0;
   WIKILINK_PATTERN.lastIndex = 0;
@@ -152,7 +130,9 @@ function splitWikilinks(value: string, context: WikilinkContext): TreeNode[] {
     if (match.index > lastIndex) {
       result.push({ type: "text", value: value.slice(lastIndex, match.index) });
     }
-    result.push(resolveWikilink(rawTarget.trim(), rawAlias?.trim(), bang === "!", context));
+    result.push(
+      resolveWikilink(rawTarget.trim(), rawAlias?.trim(), bang === "!", context, insideLink),
+    );
     lastIndex = match.index + full.length;
   }
 
@@ -172,25 +152,34 @@ function splitWikilinks(value: string, context: WikilinkContext): TreeNode[] {
  * `![[target]]` embed match against the published-only index — the single
  * resolver both links and embeds share, so "is this published" is answered
  * in exactly one place regardless of which syntax asked. Exactly one
- * candidate is the only case that can ever produce a route (a `link` or an
- * `image` node); zero and more-than-one both degrade to plain text, on the
- * same branch shape so ambiguity cannot be quietly narrowed into a guess.
+ * candidate is the only case that can ever produce a route (a `link` node);
+ * zero and more-than-one both degrade to plain text, on the same branch
+ * shape so ambiguity cannot be quietly narrowed into a guess.
  *
  * Degraded display text is always `alias ?? target` — never the target name
  * when an alias was written, because the target is often the confidential
  * half of the pair the author deliberately hid behind the alias.
  *
- * An embed resolving to a single candidate still degrades, with no route,
- * in two more cases specific to `!`: the candidate is a note (Obsidian's
- * transclusion — inlining it would republish content on a page never
- * selected to carry it) or an attachment that isn't an image (the rest of
- * `note-rendering`'s "attachments are not published" rule).
+ * An embed never produces a route at all, per `note-rendering`'s
+ * "attachments are not published" rule: the published set is Markdown notes
+ * only, so a single candidate is either a note (Obsidian's transclusion —
+ * inlining it would republish content on a page never selected to carry
+ * it) or a non-note attachment (an image included — there is no publishable
+ * asset kind). Both degrade to plain text with a warning; no `<img>`,
+ * `src`, or path to the file ever appears on the page.
+ *
+ * `insideLink` degrades an otherwise-resolvable link to plain text with no
+ * warning: nesting an `<a>` inside a Markdown link's `<a>` is invalid HTML,
+ * and a browser repairs it by closing the outer anchor early, silently
+ * breaking the author's link. An embed never produces a route at all, so
+ * nesting never applies to it — only the non-embed link branch checks this.
  */
 function resolveWikilink(
   target: string,
   alias: string | undefined,
   isEmbed: boolean,
   context: WikilinkContext,
+  insideLink: boolean,
 ): TreeNode {
   const displayText = alias ?? target;
   const candidates = context.noteIndex.get(target.toLowerCase()) ?? [];
@@ -219,6 +208,9 @@ function resolveWikilink(
   }
 
   if (!isEmbed) {
+    if (insideLink) {
+      return { type: "text", value: displayText };
+    }
     return {
       type: "link",
       url: notePathToHref(onlyCandidate),
@@ -234,13 +226,9 @@ function resolveWikilink(
     return { type: "text", value: displayText };
   }
 
-  if (!isImagePath(onlyCandidate)) {
-    context.collector.push(
-      context.noteId,
-      `embed of "${target}" is not an image and cannot be published; it was rendered as plain text`,
-    );
-    return { type: "text", value: displayText };
-  }
-
-  return { type: "image", url: assetPathToSrc(onlyCandidate), alt: displayText };
+  context.collector.push(
+    context.noteId,
+    `embed of "${target}" is an attachment and cannot be published; it was rendered as plain text`,
+  );
+  return { type: "text", value: displayText };
 }

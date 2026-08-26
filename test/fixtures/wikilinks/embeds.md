@@ -1,6 +1,6 @@
-A published image: ![[photo.png]]
+An embedded image: ![[photo.png]]
 
-An aliased published image: ![[photo.png|A caption]]
+An aliased embedded image: ![[photo.png|A caption]]
 
 An unpublished image: ![[Secret Diagram.png]]
 

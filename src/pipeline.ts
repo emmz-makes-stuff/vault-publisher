@@ -40,11 +40,14 @@ const processor = unified()
  * only ever recognised and discarded by `remark-frontmatter` so it does not
  * leak into the body as a literal `---` block.
  *
- * `wikilinks` is optional so 4.1's plain-rendering tests are unaffected —
- * with it omitted, `remarkWikilinks` is a no-op, `[[...]]`/`![[...]]` text
- * passes through untouched, and `remarkDropBases` (which reads the same
- * context for its `noteId`/collector) no-ops too. Callers that render
- * published notes always supply it.
+ * `wikilinks` is required, not optional: `remarkWikilinks` and
+ * `remarkDropBases` both read it, and an omitted context previously made
+ * both silently no-op — including the Bases drop, so an unpublished
+ * `` ```base `` block naming a confidential folder rendered verbatim with
+ * no warning. A caller with nothing to resolve against still supplies a
+ * real (possibly empty) `WikilinkContext`, so pass-through of unresolved
+ * `[[...]]` text is a chosen, tested outcome of an empty index rather than
+ * a compile-time way to skip both guarantees.
  *
  * `frontmatter` is the whole record `parseFrontmatter` returned for this
  * note — narrowed to the fixed table field set here, not by the caller, so
@@ -52,7 +55,7 @@ const processor = unified()
  */
 export async function renderMarkdown(
   markdown: string,
-  wikilinks?: WikilinkContext,
+  wikilinks: WikilinkContext,
   frontmatter?: Record<string, unknown>,
 ): Promise<string> {
   const frontmatterFields =
