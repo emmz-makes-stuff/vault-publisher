@@ -48,8 +48,8 @@ These come first deliberately: the guarantee must be in place and proven before 
 
 ## 5. Site assembly
 
-- [ ] 5.1 Build the navigation tree from the published set — a folder appears when any note within it, at any depth, is published; verify tests cover a partially published folder, a folder with no published notes, and a folder published only via a subfolder
-- [ ] 5.2 Label entries by frontmatter `title` where present and filename otherwise, ordering by filename; verify a test asserts ordering is unaffected when titles sort differently from filenames
+- [x] 5.1 Build the navigation tree from the published set — a folder appears when any note within it, at any depth, is published; verify tests cover a partially published folder, a folder with no published notes, and a folder published only via a subfolder
+- [x] 5.2 Label entries by frontmatter `title` where present and filename otherwise, ordering by filename; verify a test asserts ordering is unaffected when titles sort differently from filenames
 - [ ] 5.3 Render the explorer with `<details>`/`<summary>`, emitting the current page's ancestor folders already open; verify a golden-file test on a nested page shows its ancestors open and unrelated folders closed
 - [ ] 5.4 Render the page layout as a hast tree serialised by `rehype-stringify`, never string concatenation; verify a test asserts that a note title containing HTML metacharacters is escaped
 - [ ] 5.5 Render the vault root `Index.md` as the site front page under the same rules as any other page; verify a golden-file test including a degraded link in the index

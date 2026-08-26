@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildNoteIndex, notePathToHref } from "../src/wikilinks.js";
+import {
+  buildNoteIndex,
+  hrefToOutputPath,
+  notePathToHref,
+  outputPathForNote,
+} from "../src/wikilinks.js";
 
 describe("buildNoteIndex", () => {
   it("indexes a unique name to its single published path", () => {
@@ -38,5 +43,23 @@ describe("notePathToHref", () => {
 
   it("encodes path segments containing spaces", () => {
     expect(notePathToHref("Handbook/Some Note.md")).toBe("/Handbook/Some%20Note.html");
+  });
+});
+
+describe("hrefToOutputPath / outputPathForNote round trip", () => {
+  it("round-trips a path with a space through notePathToHref and back", () => {
+    const notePath = "Handbook/Some Note.md";
+
+    expect(hrefToOutputPath(notePathToHref(notePath))).toBe(outputPathForNote(notePath));
+  });
+
+  it("round-trips a path with a # through notePathToHref and back", () => {
+    const notePath = "Handbook/Some #1 Note.md";
+
+    expect(hrefToOutputPath(notePathToHref(notePath))).toBe(outputPathForNote(notePath));
+  });
+
+  it("outputPathForNote yields a decoded, filesystem-safe path with no percent-encoding", () => {
+    expect(outputPathForNote("Handbook/Some Note.md")).toBe("Handbook/Some Note.html");
   });
 });

@@ -207,7 +207,13 @@ describe("renderMarkdown wikilinks", () => {
     expect(html).toBe(
       '<p><a href="https://example.com">Some text with Wikilink Target inside</a></p>',
     );
-    expect(collector.all()).toStrictEqual([]);
+    expect(collector.all()).toStrictEqual([
+      {
+        note: "Home.md",
+        message:
+          'wikilink to "Wikilink Target" is nested inside another link and was rendered as plain text',
+      },
+    ]);
   });
 });
 

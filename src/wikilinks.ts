@@ -35,14 +35,38 @@ function noteNameKey(notePath: string): string {
 }
 
 /**
+ * The output file path a note path writes to, relative to the site root —
+ * decoded, filesystem-safe, exactly what the output writer joins onto its
+ * site root to place the rendered file on disk. `notePathToHref` below is
+ * defined in terms of this so the href and the file it points at can never
+ * be computed independently and drift apart: if they did, every wikilink
+ * would 404 behind authentication with no test able to see it, since a
+ * test asserting only the href's shape would still pass.
+ */
+export function outputPathForNote(notePath: string): string {
+  const withoutExtension = notePath.endsWith(".md") ? notePath.slice(0, -".md".length) : notePath;
+  return `${withoutExtension}.html`;
+}
+
+/**
+ * The inverse of `outputPathForNote`: decodes an href produced by
+ * `notePathToHref` back to the same output path, so a round-trip test can
+ * assert the two functions agree without either one hard-coding the
+ * other's encoding rules.
+ */
+export function hrefToOutputPath(href: string): string {
+  const withoutLeadingSlash = href.startsWith("/") ? href.slice(1) : href;
+  return withoutLeadingSlash.split("/").map(decodeURIComponent).join("/");
+}
+
+/**
  * The published page a note path renders to. `[[Note#Heading]]` links here
  * too — `note-rendering` requires navigating to the page, not the section,
  * so no heading id is ever synthesised or appended.
  */
 export function notePathToHref(notePath: string): string {
-  const withoutExtension = notePath.endsWith(".md") ? notePath.slice(0, -".md".length) : notePath;
-  const encodedSegments = withoutExtension.split("/").map(encodeURIComponent);
-  return `/${encodedSegments.join("/")}.html`;
+  const encodedSegments = outputPathForNote(notePath).split("/").map(encodeURIComponent);
+  return `/${encodedSegments.join("/")}`;
 }
 
 export interface WikilinkContext {
@@ -168,11 +192,12 @@ function splitWikilinks(value: string, context: WikilinkContext, insideLink: boo
  * asset kind). Both degrade to plain text with a warning; no `<img>`,
  * `src`, or path to the file ever appears on the page.
  *
- * `insideLink` degrades an otherwise-resolvable link to plain text with no
- * warning: nesting an `<a>` inside a Markdown link's `<a>` is invalid HTML,
- * and a browser repairs it by closing the outer anchor early, silently
- * breaking the author's link. An embed never produces a route at all, so
- * nesting never applies to it — only the non-embed link branch checks this.
+ * `insideLink` degrades an otherwise-resolvable link to plain text, with a
+ * warning like any other degradation: nesting an `<a>` inside a Markdown
+ * link's `<a>` is invalid HTML, and a browser repairs it by closing the
+ * outer anchor early, silently breaking the author's link. An embed never
+ * produces a route at all, so nesting never applies to it — only the
+ * non-embed link branch checks this.
  */
 function resolveWikilink(
   target: string,
@@ -209,6 +234,10 @@ function resolveWikilink(
 
   if (!isEmbed) {
     if (insideLink) {
+      context.collector.push(
+        context.noteId,
+        `${reference} is nested inside another link and was rendered as plain text`,
+      );
       return { type: "text", value: displayText };
     }
     return {
