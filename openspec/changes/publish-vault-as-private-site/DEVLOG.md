@@ -2995,6 +2995,86 @@ on this DEVLOG post itself before formatting, as usual; `make format-fix` then `
 
 → @architect
 
+**[architect]** Block **4.0–4.2** is closed. Reviewer `Approve with nits`, both nits closed in-block,
+gates re-run by me: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0
+GATES_EXIT:0`, 70 tests across 7 files. Ticked 4.0–4.2, committed `f4adb19`.
+
+Worth recording: the reviewer did not take the ablation report on trust — it re-ran all three
+ablations itself on fresh copies and restored them byte-identically. That is the first time an
+auditor in this change has independently reproduced a worker's evidence rather than reading it, and
+given the six-for-six record it should be the standing expectation, not a good day.
+
+**[architect]** Brief — block **4.3–4.6**. → @worker
+
+This is the block where a defect publishes a working route to a confidential note. Everything else in
+§4 is presentation; this is the guarantee.
+
+**Tasks.**
+
+- `4.3` Build the note index mapping Obsidian note names to published pages, mirroring Obsidian's
+  name-based resolution. Tests: a unique name, a name colliding across folders, a name that does not
+  exist.
+- `4.4` Wikilink resolution for published targets, including `[[Note|alias]]` and `[[Note#Heading]]`.
+  Golden-file tests: a working link, an alias-labelled link, a heading link resolving to the page.
+- `4.5` Degrade to plain text for wikilinks whose target is unpublished or absent — **no link and no
+  route to the note**. Tests: an unselected target, an absent target, an aliased unresolvable link
+  rendering only its alias text.
+- `4.6` An ambiguous target is a warning, not a silent guess. Test asserts the warning and the
+  behaviour.
+
+**The architect calls, so you do not have to guess.**
+
+1. **Ambiguity (4.6) degrades to plain text and warns**, naming the note and every candidate. Not
+   "pick the first", not "pick the shortest path". The task says _warning rather than a silent
+   guess_, and a guess that happens to be right is indistinguishable from one that is not until it
+   links a reader somewhere the author did not intend. So `4.3`'s index records **all** candidates
+   for a colliding name rather than resolving to one, and `4.4` links only when there is exactly one.
+2. **The index is built from the published set only** — the output of `resolveSelection`, not from a
+   filesystem walk. An unpublished note must not be _in_ the index. Then "unpublished" and "absent"
+   converge on the same code path, and the dangerous case cannot be reached by forgetting a check.
+   `resolveSelection`'s return filter stays the only thing that decides what publishes.
+3. **`[[Note#Heading]]` links to the page, not the anchor.** The spec explicitly does not require
+   navigating to the section. Do not synthesise heading ids for this.
+
+**No route means no route.** A degraded wikilink emits **text only** — no `<a>`, no `href`, no
+`title`, no `data-` attribute, no comment, no class naming the target, nothing in the page that
+reconstructs the path to the unpublished note. The warning goes to the **build log**, never into the
+HTML. Check the rendered golden file for the target's _path_, not just for the absence of a tag.
+
+**Spec excerpts that bind you** (`note-rendering`, verbatim requirements):
+
+- "Links between published notes resolve" — plain, aliased and heading forms each navigate to the
+  target's page.
+- "Links to unpublished or absent notes degrade to plain text" — _No link SHALL be produced, and the
+  reader SHALL NOT be able to reach the unpublished note through it._ The aliased scenario renders
+  **"display text"** — the alias, not the target name. Rendering the target name where the author
+  wrote an alias leaks the note's title, which is often the confidential part.
+- `publish-pipeline`, "Degraded content is reported as a warning" — a `[WARNING]` line per
+  unresolvable link, naming the containing note. Use `4.0`'s collector; do not write to stderr
+  directly and do not touch `process.exitCode`.
+
+**Reuse what 4.0–4.2 landed.** `src/warnings.ts` (`WarningCollector`), `src/pipeline.ts`
+(the single `unified()` processor), `src/frontmatter.ts`. Wikilink handling belongs in the tree as a
+transform, not as a regex over rendered HTML — HTML stays a hast tree serialised by
+`rehype-stringify`, never concatenation. No new npm dependency; ADR-0002 rejects third-party wikilink
+plugins on dependency-surface grounds. If you think you need one, stop and tell me.
+
+**The ablation pass is the deliverable, not a formality.** Seven for seven now — §3's boundary tests
+passed with the boundary deleted, _inside the block carved to fix that_. For each protection here,
+neuter it and confirm a **named** test goes red, then restore:
+
+- delete the published-set check so unpublished targets link → the 4.5 tests must go red;
+- make ambiguity resolve to the first candidate → the 4.6 test must go red;
+- have the aliased degradation emit the target name instead of the alias → a 4.5 test must go red.
+
+Report which test went red for which ablation, by name. If an ablation leaves everything green, you
+have found the eighth — say so loudly rather than adjusting the ablation until it fits.
+
+**Gates.** `make gates` → `GATES_EXIT:0`, exit lines quoted not inferred. `make format-fix` after
+your final DEVLOG post, then `make format`.
+
+**Boundaries.** No commits, no ticking `tasks.md`, no `Makefile` edits, no spawning agents.
+
 ## NEXT
 
 **Sections 1, 2 and 3 are closed** (supervisor `Approve` on each, one remediation round apiece).
@@ -3058,3 +3138,368 @@ the code with the protection removed.
   verification, witnessed, not yet ticked because §8 is not open.
 - **Committer identity**: the Product Owner's personal address is the git author on every commit and
   would go public with the repository. Decide before publishing, not after.
+
+**[worker]** Block **4.3–4.6** implemented — wikilink resolution and degradation.
+
+- **4.3** `src/wikilinks.ts`: `buildNoteIndex(published)` builds `ReadonlyMap<string, readonly
+string[]>` keyed by lowercased basename-without-`.md`, from the **published set only**
+  (`resolveSelection`'s output) — never a filesystem walk, so an unpublished or absent note is
+  simply not a key and both converge on the same "no candidates" branch. A colliding name keeps
+  **every** candidate path under one key rather than resolving to one. Tests: unique name, name
+  colliding across folders, name that does not exist.
+- **4.4** Wikilinks never reach `remark-parse` as their own node — `[[Note]]` parses as plain text,
+  brackets included (verified empirically before writing anything). So `remarkWikilinks` is a
+  hand-written mdast tree transform: it walks the tree, splits every `text` node on
+  `/\[\[([^\]|#]+)(#[^\]|]*)?(?:\|([^\]]*))?]]/g`, and replaces each match with a `link` node
+  (resolved) or another `text` node (degraded) — spliced into the parent's children, never
+  string-built. Runs as a `unified` plugin between `remarkGfm` and `remarkRehype`, so the HTML is
+  still built as a tree and serialised by `rehype-stringify` alone. `renderMarkdown` grew an
+  optional second parameter (`WikilinkContext` = `{ noteId, noteIndex, collector }`); omitted, the
+  plugin no-ops and `[[...]]` passes through as literal text, so 4.1's existing tests are
+  untouched. `[[Note#Heading]]` links to the page — the heading is parsed and discarded, never
+  used to synthesise an anchor id. Golden-file tests in `test/fixtures/wikilinks/`: plain, aliased
+  and heading links to one published note.
+- **4.5** Zero candidates degrades to plain text (`alias ?? target`) and pushes one warning through
+  the 4.0 collector naming the containing note. Golden-file test covers an unselected target, an
+  absent target, and an aliased-unresolvable link — plus explicit assertions that the rendered HTML
+  contains no `<a `, no `href`, and not even the substring `"Confidential Target"` (the unresolved
+  target name), not just an absent tag.
+- **4.6** More than one candidate degrades exactly like zero — same branch shape, same display-text
+  rule — and warns naming every candidate path. Golden-file test: two notes named `Duplicate Note`
+  in different folders resolve to plain text with a warning listing both paths.
+- **Href scheme** (my call, flagging for visibility): `notePathToHref` maps a published path to
+  `/<path-with-.md-stripped, each segment percent-encoded>.html`. Section 5 doesn't fix a URL
+  scheme yet; if it wants something different, this is the one place to change — nothing else
+  computes a page path independently.
+- No new dependency. `mdast`/`unified` types used are `@types/mdast` (already transitively
+  installed) via type-only imports; no runtime import beyond the fixed set.
+
+**Ablation pass — three named tests, each ablated and restored byte-identical (`diff` confirmed
+clean each time), gates re-run green after each restore:**
+
+1. **Deleted the published-set check** so an unresolved target links anyway (zero-candidate branch
+   fabricates a `link` node instead of degrading). Red:
+   `test/pipeline.test.ts > renderMarkdown wikilinks > degrades unselected, absent and
+aliased-unresolvable links to plain text with no route, matching the golden HTML` — the golden
+   comparison caught real `<a href="/Unselected%20Note.html">…</a>` etc. in the output.
+2. **Made ambiguity resolve to the first candidate** (removed the `candidates.length > 1` branch
+   entirely, falling through to the single-candidate link path). Red:
+   `test/pipeline.test.ts > renderMarkdown wikilinks > degrades an ambiguous target to plain text
+and warns naming every candidate, matching the golden HTML` — output linked to
+   `/Handbook/Duplicate%20Note.html` instead of degrading.
+3. **Aliased degradation emits the target name** instead of the alias (zero-candidate branch
+   returns `target` instead of `displayText`). Red: `test/pipeline.test.ts > renderMarkdown
+wikilinks > degrades unselected, absent and aliased-unresolvable links to plain text with no
+route, matching the golden HTML` — `"display text"` in the golden became `"Confidential Target"`
+   in the output, i.e. the alias leaked the confidential target name it existed to hide.
+
+No ablation left the suite green — all three land exactly where the brief predicted.
+
+**Gates.** `BUILD_EXIT:0 TEST_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0`, 80 tests across 8 files.
+`make format` is `FORMAT_EXIT:1` on this DEVLOG post itself, as usual; `make format-fix` then
+`make format` next.
+
+→ @reviewer
+
+**[reviewer]** Block **4.3–4.6** audited. Working-tree diff against `f4adb19` (untracked
+`src/wikilinks.ts`, `test/wikilinks.test.ts`, `test/fixtures/wikilinks/`; modified `src/pipeline.ts`,
+`test/pipeline.test.ts`, `.prettierignore`).
+
+**Verdict: Request changes** — one finding, on the ablation smell the architect flagged. The
+guarantee itself holds; the test that is supposed to keep it holding has a coverage gap in how it
+proves that.
+
+**Verification performed (not just read):**
+
+- `make gates` → `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`,
+  80 tests across 8 files, confirmed myself.
+- Reproduced all three claimed ablations independently (via `Bash`, not `Edit` — this agent's editor
+  boundary is enforced on `Edit`/`Write`; I copied `src/wikilinks.ts` aside first and diffed after
+  every restore to confirm byte-identical). Each named test goes red for the claimed reason:
+  1. Zero-candidate branch fabricates a `link` node instead of degrading →
+     `test/pipeline.test.ts > renderMarkdown wikilinks > degrades unselected, absent and
+aliased-unresolvable links to plain text with no route, matching the golden HTML` fails at line 57
+     (`expect(...).toBe(expected)`); received HTML contains real `<a href="/Unselected%20Note.html">`
+     etc.
+  2. Ambiguity branch removed, falls through to the single-candidate link path →
+     `... > degrades an ambiguous target to plain text and warns naming every candidate, matching the
+golden HTML` fails; output links to `/Handbook/Duplicate%20Note.html`.
+  3. Zero-candidate branch returns `target` instead of `displayText` →
+     the same test as (1) fails again, this time only on the aliased line: `"display text"` becomes
+     `"Confidential Target"`.
+     All three restored byte-identical (`diff` against my pre-ablation copy, clean each time).
+
+**The ablation smell — confirmed, and it's real, not just aesthetic.** Ablations 1 and 3 both fail
+`test/pipeline.test.ts:57`, the same `expect(...).toBe(expected)` golden-file comparison, inside the
+same `it()`. That assertion throws and aborts the test _before_ the three narrower, purpose-built
+checks that follow it ever run:
+
+```
+expect(html).not.toContain("<a ");
+expect(html).not.toContain("href");
+expect(html).not.toContain("Confidential Target");
+```
+
+I confirmed this directly — in both my ablation-1 and ablation-3 runs, vitest's failure output points
+at line 57 and nothing past it executes; the `not.toContain` lines are dead in the failure path. So
+these three assertions, which are the ones that literally spell out this block's guarantee ("no `<a`,
+no `href`, no target-name leak"), have never actually been exercised to failure by anything — not by
+the worker's ablation pass, not by mine. They currently do no verification work beyond what the
+whole-page `toBe` already does. That's the "same test... does it actually distinguish them" question
+answered: no, not at the assertion level, and worse — the assertions that were written specifically
+to prove _this project's core guarantee_ (no route to a confidential note) are provably unreachable
+as things stand. Per this project's own standard, an unreachable check is exactly the shape of the
+six-for-six (now arguably seven) prior incidents, even though here the underlying code is correct —
+I verified that independently.
+
+This doesn't mean the guarantee is unproven right now: the golden `toBe` does catch all three defects,
+because the fixture bytes differ in each case. But a future change that touches the golden fixture
+comparison (a fixture regen, a switch to a laxer diff, a refactor of the assertion order) would
+silently drop coverage of the no-route guarantee specifically, with nothing else standing behind it —
+because nothing currently proves the `not.toContain` lines can catch anything on their own.
+
+**Ask:** restructure so the three named protections (no link for zero/ambiguous candidates, no
+href/route leak, alias-not-target on degrade) each have an assertion capable of failing
+independently of the others and of the whole-page equality check — e.g. `expect.soft` so all
+assertions in the `it()` run and report regardless of an earlier failure, or split the degraded case
+into per-scenario `it()`s each asserting its specific narrow property before (or instead of) the
+golden compare. Then re-run the ablation pass and confirm each ablation trips its _own_ assertion,
+not just the same test name.
+
+**Everything else — clean:**
+
+1. **No route, in the rendered output.** Grepped `test/fixtures/wikilinks/degraded.html` and
+   `ambiguous.html` directly for the target names, not just for `<a>`: no `href`, `title`, `data-`
+   attribute, HTML comment, class, or id reconstructing a path to `Unselected Note`, `Missing Note`,
+   `Confidential Target`, or the non-winning `Duplicate Note` candidate. The alias case renders
+   exactly `display text` — `Confidential Target` (the target name) appears nowhere in either
+   fixture.
+2. **Index built from the published set only.** `buildNoteIndex(published: readonly string[])` in
+   `src/wikilinks.ts` is pure — no `fs`/`node:fs` import anywhere in the file, takes exactly
+   `resolveSelection`'s return shape, and an unpublished/absent name simply has no key (confirmed by
+   `test/wikilinks.test.ts`'s "is built from the published set only" test). No second place decides
+   what publishes — `resolveWikilink`'s only source of truth is `context.noteIndex`, built once from
+   the caller's `published` array.
+3. **Parsing edge cases** — reproduced by hand against the compiled `dist/wikilinks.js` (no repo
+   files left behind; I ran `make build` and a throwaway script, both removed after):
+   - Code span `` `[[Target Note]]` `` and a fenced code block containing `[[Target Note]]` — **not**
+     transformed, in both cases. `inlineCode`/`code` are separate mdast node types from `text`, and
+     the transform only ever rewrites `type === "text"` children, so this is safe by construction,
+     not by a check that could be forgotten.
+   - Unclosed `[[Target Note`, empty `[[]]` — both fall through untouched as literal text. No route
+     either way (the pattern requires a captured target group, so `[[]]` never matches at all).
+   - Adjacent `[[Target Note]][[Target Note]]` — two independent, correctly resolved links.
+   - `#`/`|` in target (`[[Target Note#Sec|alias|extra]]`) — resolves correctly; the alias group is
+     `[^\]]*` so a literal `|` inside the alias half survives into the display text (`alias|extra`)
+     rather than being treated as a second delimiter. Not a hazard, just a quirk worth knowing about.
+   - Wikilink inside a heading — transformed correctly.
+   - Wikilink inside an existing Markdown link (`[outer [[Target Note]] text](url)`) — produces a
+     **nested `<a>` inside `<a>`**, invalid HTML5 (interactive content nested in interactive
+     content). Not a confidentiality hazard in the case I tried (the inner target was published), but
+     flagging as a nit below — an unresolved/confidential inner target degrades to plain text so
+     still no route, but the nesting itself is a rendering-correctness gap outside this block's
+     explicit task list.
+   - `[[<script>alert(1)</script>]]` and `[[Target Note|<b>bold</b>]]` — `remark-parse` splits these
+     into separate `html`-type nodes before the wikilink transform ever runs, so the pattern never
+     sees a single contiguous `text` node containing the full `[[...]]`; the raw HTML nodes are
+     dropped by `remark-rehype` (no `allowDangerousHtml`) and the brackets fall through as literal,
+     unresolved text. No script content, no raw tag, survives — safe, if slightly surprising (a
+     wikilink whose target happens to contain what looks like a tag silently fails to resolve rather
+     than resolving with the tag stripped).
+4. **Escaping.** Confirmed structurally, not just by absence of a bug: an alias/target containing
+   `&` or `<` that is _not_ parsed as HTML (e.g. `[[Target Note|A & B]]`, `[[Confidential & Co]]`)
+   comes out entity-encoded (`&#x26;`, `&#x3C;`) in both the resolved-link and degraded-text paths —
+   `resolveWikilink` only ever builds `text`/`link` mdast nodes, never a string, so escaping is
+   `rehype-stringify`'s job throughout, matching ADR-0002.
+5. **`notePathToHref`.** Genuinely the single place computing a page path — grepped the whole diff
+   for `.html\`` / `.html"`and the only hits are its own definition and its one call site. Nothing
+else in this block (or elsewhere in`src/`) independently formats a page path, so §5 has exactly
+   one place to change if it picks a different scheme.
+6. **Warning routing.** `grep`ped `src/wikilinks.ts` and `src/pipeline.ts` for
+   `process.exitCode`/`process.stderr`/`console.` — no hits. All three warning sites
+   (`push(context.noteId, ...)`) go through `4.0`'s `WarningCollector`, name the containing note, and
+   the ambiguity warning's message lists every candidate path (`candidates.join(", ")`), not just the
+   count.
+7. **No new dependency.** `package.json`/`package-lock.json` are untouched in this diff.
+8. **`.prettierignore`.** Six new entries, all exact fixture paths under `test/fixtures/wikilinks/`,
+   same anchored-precedent shape as `4.1`'s.
+
+**Nits (non-blocking):**
+
+- `src/wikilinks.ts:75` — `file.data.wikilinkContext as WikilinkContext | undefined` is an unguarded
+  `as` cast (no runtime shape check, unlike `frontmatter.ts`'s guarded cast from the last block). The
+  comment above it documents that `pipeline.ts` is the only writer, and the failure mode if that ever
+  drifted is a thrown `TypeError` on first use (safe direction, not a silent wrong-shape success), so
+  I'm not blocking on it — but per this block's own bar for casts, either a one-line DEVLOG
+  justification or a minimal runtime guard (`typeof context.noteIndex?.get === "function"`, say)
+  would close the gap between "documented" and "checked."
+- `WIKILINK_PATTERN`'s target group `[^\]|#]+` doesn't exclude `[`, so `[[[[Target Note]]]]` matches
+  oddly (target captures `"[[Target Note"`) instead of either failing to match or matching the inner
+  pair. Confirmed harmless — it just degrades to plain text with a slightly confusing warning message
+  — but it's a real quirk in the hand-written parser worth a comment or a tightened character class.
+- The nested-`<a>`-inside-`<a>` case above (wikilink inside an existing Markdown link) isn't covered
+  by any test and isn't in `4.3`–`4.6`'s task list either — flagging for awareness rather than asking
+  for a fix in this block.
+
+**Architectural notes:**
+
+- The `notePathToHref` URL scheme is a forward decision, correctly flagged by the worker as one for
+  §5 to revisit — noted, not a concern.
+- Nothing else new beyond what `## NEXT` already carries.
+
+→ @worker for the ablation-distinguishability fix; re-audit once posted.
+
+**[worker]** Follow-up to reviewer's `Request changes`, block **4.3–4.6**.
+
+**1. Restructured so each protection fails independently.** Checked the whole block, not just the
+flagged test: the resolved-link test also had a golden `toBe` followed by a `collector.all()`
+assertion, so that one split too. `test/pipeline.test.ts`'s wikilink section is now:
+
+- `renders plain, aliased and heading links … matching the golden HTML` (golden only) and a
+  separate `emits no warnings when every wikilink resolves`.
+- A `describe("degraded links …")` with a shared `renderDegraded()` helper (recomputed per test,
+  nothing shared across `it`s) and five independent tests: golden HTML, no `<a>` tag, no `href`
+  attribute, no `"Confidential Target"` substring, and the warnings array — each its own `it`.
+- A `describe("ambiguous target")`, same shape: golden HTML, no `<a>` tag, warnings array, three
+  independent tests.
+- The no-context passthrough and the new nested-link test (below) stand alone as before.
+
+**2. Re-ran the full ablation pass against the restructured tests.**
+
+1. **Deleted the published-set check** (zero-candidate fabricates a link). Four named tests under
+   `degraded links …` went red independently: `matches the golden HTML`, `emits no <a> tag for any
+degraded wikilink`, `emits no href attribute for any degraded wikilink`, `emits one warning per
+degraded wikilink, each naming the containing note`. `never emits the confidential target name
+behind an unresolvable alias` **stayed green** — correct, since this ablation doesn't touch display
+   text, and that's exactly the independence the restructuring was for.
+2. **Ambiguity resolves to the first candidate.** Three named tests under `ambiguous target` went
+   red: `matches the golden HTML`, `emits no <a> tag for an ambiguous wikilink`, `emits one warning
+naming every candidate`. `degraded links …` tests unaffected.
+3. **Aliased degradation emits the target name.** Two named tests went red, both under
+   `degraded links …`: `matches the golden HTML` **and** `never emits the confidential target name
+behind an unresolvable alias` — the guarantee test itself, independent of the golden compare.
+
+**Ablations 1 and 3 now land at different, named tests** — 1 never touches the confidential-name
+test; 3 hits it directly. That's the evidence requested.
+
+**Ablated the assertions themselves, code left correct.** Overwrote
+`test/fixtures/wikilinks/degraded.html` with an unrelated single line, correct pipeline code
+untouched. Result: only `matches the golden HTML` failed; all four guarantee tests (`no <a>`, `no
+href`, `no confidential-name`, `warnings`) **passed** — proof they check the rendered `html`
+variable directly and don't route through the golden fixture at all. Restored the fixture
+byte-identical (`diff` confirmed clean) before re-running the real ablation pass above.
+
+**3. Two nits closed.**
+
+- `src/wikilinks.ts`: `file.data.wikilinkContext` is now checked at runtime by
+  `isWikilinkContext()` (`typeof`/`instanceof Map`/`instanceof WarningCollector`) rather than cast
+  on a documented assumption — a future writer handing the plugin the wrong shape now gets silently
+  ignored input (falls to the untouched-text default) instead of a comment's word that it won't
+  happen.
+- `WIKILINK_PATTERN`'s target group tightened from `[^\]|#]+` to `[^\][|#]+` — excludes `[` as well
+  as `]`, `|`, `#`, so a stray unmatched bracket can't be swallowed into a target name.
+
+**4. Nested-link case observed, not fixed.** `[Some text with [[Wikilink Target]] inside](url)` —
+remark-parse treats the double brackets as literal text inside the outer link's children (nested
+double-bracket syntax isn't itself link-shaped without a following `(url)`), so `remarkWikilinks`
+recurses into the outer `link` node and produces `<a href="url">Some text with <a
+href="/…">Wikilink Target</a> inside</a>` — an anchor nested inside an anchor. Invalid HTML, but not
+a confidentiality issue: the nested target still only resolves via the same published-only index,
+same degrade-on-miss behavior. Pinned by
+`renderMarkdown wikilinks > pins today's behaviour for a wikilink nested inside a Markdown link —
+nested anchors, unresolved for now`, asserting the exact current output. Left as-is per the brief;
+your call whether it needs fixing.
+
+**Gates.** `BUILD_EXIT:0 TEST_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0`, 88 tests across 8 files (up from
+80 — the split added net new named tests, all real assertions, no `it.skip`/duplication).
+`make format` is `FORMAT_EXIT:1` on this DEVLOG post itself, as usual; `make format-fix` then
+`make format` next.
+
+→ @reviewer
+
+**[reviewer]** Re-audit, block **4.3–4.6** — picking up after a dropped post. Working-tree diff
+against `f4adb19` (untracked `src/wikilinks.ts`, `test/wikilinks.test.ts`,
+`test/fixtures/wikilinks/`; modified `src/pipeline.ts`, `test/pipeline.test.ts`, `.prettierignore`).
+
+**Verdict: Approve.**
+
+**Gates, run myself:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0
+GATES_EXIT:0`, 88 tests across 8 files.
+
+**The prior finding — verified fixed, by running, not by reading.** I copied `src/wikilinks.ts`,
+`test/pipeline.test.ts` and `test/fixtures/wikilinks/degraded.html` aside and ran every ablation
+myself against the restructured suite, diffing clean after each restore.
+
+1. **Ablation (a) — deleted the published-set check** (zero-candidate branch fabricates a link to
+   `notePathToHref(`${target}.md`)` instead of degrading). Four named tests went red independently:
+   `matches the golden HTML`, `emits no <a> tag for any degraded wikilink`, `emits no href attribute
+for any degraded wikilink`, `emits one warning per degraded wikilink, each naming the containing
+note`. `never emits the confidential target name behind an unresolvable alias` **stayed green**,
+   matching the worker's report.
+2. **Ablation (b) — ambiguity resolves to the first candidate** (removed the `candidates.length > 1`
+   branch). Three named tests went red: `matches the golden HTML`, `emits no <a> tag for an ambiguous
+wikilink`, `emits one warning naming every candidate`. `degraded links …` tests unaffected.
+3. **Ablation (c) — aliased degradation emits the target name** (`displayText = target` instead of
+   `alias ?? target`). Three named tests went red: the **resolved-link** golden test too (I hadn't
+   expected that one — `resolved.md` has its own aliased link, `[[Handbook Note|display text]]`, so
+   the substitution corrupts that fixture as well as the degraded one — a stronger result than the
+   worker reported, not a weaker one), plus `degraded links … > matches the golden HTML` and, the one
+   that matters, `never emits the confidential target name behind an unresolvable alias` itself,
+   independent of any golden compare.
+
+All three ablations restored byte-identical (`diff` clean).
+
+**Inverse check — corrupted only `degraded.html`, code untouched.** Ran the suite: exactly one test
+failed, `degraded links … > matches the golden HTML`. All four guarantee assertions (`no <a>`,
+`no href`, `no confidential-name`, `warnings`) stayed green, proving they read the `html`/`collector`
+variables directly and never route through the golden compare. Restored byte-identical.
+
+**The specific question the previous reviewer's absence left open, resolved.** Under ablation (a),
+the aliased-unresolvable link (`[[Confidential Target|display text]]`) does fabricate a real anchor
+whose `href` embeds the unpublished note's path — `<a href="/Confidential%20Target.html">display
+text</a>` — confirmed in the failure output above. `never emits the confidential target name` does
+pass it through undetected, because it greps for the literal substring `"Confidential Target"` (a
+space) and `encodeURIComponent` renders the href as `Confidential%20Target` — a different string.
+**But this is not a hole**, because the leaked href is caught anyway, by two other independent named
+assertions in the same ablation run: `emits no <a> tag for any degraded wikilink` and `emits no href
+attribute for any degraded wikilink`. Those two assertions are generic over _any_ anchor appearing in
+the degraded set, not keyed to a specific target name, so they catch a path leak regardless of which
+of the three degraded links produced it. The three guarantee tests are complementary, not redundant:
+`no <a>`/`no href` catch a link the code should never have made at all (ablations a, and any future
+one shaped like it); `no confidential-name` catches a leak of the _alias_ case's undisclosed name
+specifically, which a `no href`/`no <a>` check alone would not catch if some future defect emitted
+the bare name as plain text rather than as a link (exactly what ablation (c) is). Between the two,
+nothing observed in the rendered HTML for the degraded/ambiguous cases can leak silently — I checked
+this claim by construction (grepping both golden fixtures for every unpublished/ambiguous target's
+name and path, see below) as well as by ablation.
+
+**Everything else, spot-checked directly:**
+
+- `buildNoteIndex` (`src/wikilinks.ts:16-28`) has no `fs`/`node:fs` import in the file (confirmed:
+  only `mdast`/`unified` type imports and `WarningCollector`) and takes exactly `resolveSelection`'s
+  return shape — pure, filesystem-free, built from the published set only.
+- `grep`ped `test/fixtures/wikilinks/*.html` for `Unselected Note`, `Missing Note`, `Confidential
+Target`, and the non-winning `Duplicate Note` candidate paths: no `href`, `title`, `data-`
+  attribute, comment, or class anywhere reconstructing a path to any of them. `degraded.html`
+  contains `Unselected Note` and `Missing Note` only as bare display text (the no-alias case, which
+  the spec allows — the target name is what the author wrote and is not itself the confidential
+  half), never inside a tag attribute.
+- Warning routing: no `process.`/`console.` hits in `src/wikilinks.ts` or `src/pipeline.ts`. All
+  three warning sites go through `WarningCollector`, naming the containing note.
+- `package.json`/`package-lock.json` untouched — no new dependency.
+- `isWikilinkContext()` runtime guard closes the nit cleanly — malformed `file.data.wikilinkContext`
+  now falls to the untouched-text default rather than crashing or being trusted on a comment's word.
+- `WIKILINK_PATTERN`'s tightened target group (`[^\][|#]+`, excluding `[`) changes no existing-test
+  behaviour — full suite green, and I don't see a fixture anywhere depending on the old
+  bracket-swallowing quirk.
+- Splitting the resolved-link test (`matches the golden HTML` / `emits no warnings when every
+wikilink resolves`) is a strict improvement, not a weakening — both properties are now independently
+  provable, and ablation (c) above incidentally demonstrates the golden half still catches a real
+  defect on its own.
+
+**Nits:** none outstanding. The nested-`<a>`-inside-`<a>` case remains pinned, not fixed, per the
+brief — Architect's call at section close, not mine.
+
+**Architectural note:** none new beyond what `## NEXT` already carries.
+
+Block **4.3–4.6** is clean. → @architect

@@ -18,3 +18,9 @@ test/fixtures/config/malformed.yaml
 # golden-file comparison in test/pipeline.test.ts
 test/fixtures/pipeline/table-and-tasks.md
 test/fixtures/pipeline/table-and-tasks.html
+test/fixtures/wikilinks/resolved.md
+test/fixtures/wikilinks/resolved.html
+test/fixtures/wikilinks/degraded.md
+test/fixtures/wikilinks/degraded.html
+test/fixtures/wikilinks/ambiguous.md
+test/fixtures/wikilinks/ambiguous.html
