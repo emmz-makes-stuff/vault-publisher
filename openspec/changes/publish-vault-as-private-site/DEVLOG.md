@@ -4222,6 +4222,187 @@ percent-encoded>.html`. §5 adds the writer that decides where the file actually
   §3→§4 join and the floor, both ablation-verified). Worth widening when §5 writes its first
   whole-page golden, so one fixture exercises the full page end to end.
 
+## 5. Site assembly
+
+**[architect]** Base: 6d8c84f — the explorer, the page layout, the front page and the stylesheet:
+everything that turns rendered note fragments into a browsable site.
+
+**[architect]** Section carved into three blocks (Product Owner confirmed): **A = 5.1–5.2** the
+navigation tree model plus the two items §4's supervisor parked; **B = 5.3–5.5** explorer rendering,
+page layout, the output writer and the front page; **C = 5.6–5.7** stylesheet and mobile.
+
+**[architect]** Brief — block A (5.1–5.2), the navigation tree model.
+
+**Tasks.**
+
+- `5.1` Build the navigation tree from the published set — a folder appears when any note within it,
+  at any depth, is published. Tests must cover a partially published folder, a folder with no
+  published notes, and a folder published only via a subfolder.
+- `5.2` Label entries by frontmatter `title` where present and filename otherwise, ordering by
+  filename. A test must assert ordering is unaffected when titles sort differently from filenames.
+
+**Two carried items, folded into this block** (from §4's supervisor, `## NEXT`):
+
+- **`notePathToHref` has no inverse.** Block B adds the writer that decides where files land. Do not
+  add that writer here — but _do_ add, in `src/wikilinks.ts` beside `notePathToHref`, the exported
+  inverse (`hrefToOutputPath`, or an `outputPathForNote` that `notePathToHref` is defined in terms
+  of — your call, one direction only) **and a round-trip test**, so block B has a single shared
+  function to land files with. If hrefs and files are computed independently, every link 404s behind
+  authentication and no §4 test can see it. Note `notePathToHref` percent-encodes segments; the file
+  path must be the _decoded_ one. Assert the round trip on a path with a space and one with a `#`.
+- **The nested-anchor degrade is silent** (`src/wikilinks.ts:210-213`). Add the `collector.push` —
+  one line plus a test. Task `8.5` reviews every `[WARNING]` line with the Product Owner, and this
+  degrade class would never appear there. Message it in the same shape as its neighbours.
+
+**Spec — `site-navigation` requirements this block must satisfy** (`specs/site-navigation/spec.md`):
+
+- _A folder appears when any of its notes are published_ — three scenarios: partially published
+  folder (shows the folder, **only** the published notes, "with no indication that others exist"),
+  folder with no published notes (does not appear), folder published only via a subfolder (appears
+  as a container).
+- _Entries are labelled by title and ordered by filename_ — three scenarios: note with a title, note
+  without (filename), and ordering that does not follow the label.
+
+**Binding decisions.**
+
+- **`resolveSelection`'s `published` is the only input.** The tree is built from that array and from
+  nothing else — no filesystem walk, no config read. This is the same rule `buildNoteIndex` already
+  follows (`src/wikilinks.ts:17`) and it is why "unpublished" and "absent" cannot drift apart. A
+  second thing deciding what appears on the site is the failure mode the supervisor looks for.
+- **Model only, no rendering.** This block produces a data structure and its labels. `<details>` /
+  `<summary>` and any hast is block B. Do not emit HTML, and do not build any string of it —
+  `design.md` §2: the tree is the only representation from parse to `rehype-stringify`.
+- **Labels come from frontmatter `title`.** `parseFrontmatter(markdown, noteId, collector)` in
+  `src/frontmatter.ts` is the existing parser; the tree builder takes titles as data (a map or a
+  per-note record supplied by the caller), it does not read files itself. Keep it pure and
+  synchronous so the tests are direct.
+- **Ordering is by filename**, not by label, not by title, and not locale-dependent in a way that
+  varies by machine — say in the code which comparison you chose and why.
+- **Folder entries order alongside note entries** — the spec does not say folders-first. Pick one,
+  state it in a comment, and test it, so block B's goldens are not the first place it is decided.
+
+**Two rules §4 paid for, standing:**
+
+- A golden-file compare and a guarantee assertion never share an `it()`, the compare first — vitest
+  aborts at the compare and the guarantee never runs. One `it()` per guarantee.
+- Any assertion grepping for a confidential name must also grep its percent-encoded form
+  (`Confidential%20Target`).
+
+**And the eleventh.** Ten protections in this project were, on first attempt, verified by something
+that could not have failed. For each guarantee you add here, **run the code with the protection
+removed and watch the named test go red**, then restore it. Report which tests you ablated and what
+they printed. Reading the code has never once caught one of these.
+
+**Fixtures.** No real note titles, no client name, no vault-derived content — `design.md`'s Open
+Questions make that a standing constraint on everything in this repository, fixtures included.
+
+**Done-gates.** `make build` `BUILD_EXIT:0`, `make test` `TEST_EXIT:0` (yours and all 116+ existing),
+`make format` `FORMAT_EXIT:0`, `make lint` `LINT_EXIT:0`, `make validate` `VALIDATE_EXIT:0`. Quote the
+exit lines. The format gate has failed on the DEVLOG at every block boundary in §4 — `make format-fix`
+then `make format`. Do not commit and do not tick; post here and hand back to me.
+
+**[worker]** Block A (5.1–5.2) implemented — `src/navigation.ts` is new, `src/wikilinks.ts` and
+`test/pipeline.test.ts` are edited.
+
+- `5.1`/`5.2` — `buildNavigationTree(published, titleByNotePath)` builds a folder/note tree from
+  `resolveSelection`'s `published` array only, no filesystem walk. A folder node is only ever created
+  while descending to place a note, so a folder with no published note underneath — directly or via a
+  subfolder — never exists in the tree at all; "excluded" and "empty" collapse into the same "never
+  created" outcome, mirroring `buildNoteIndex`'s published-only rule. Labels come from
+  `titleByNotePath` (a map the caller builds from `parseFrontmatter`, so this module stays pure and
+  synchronous) falling back to the filename with `.md` stripped. Ordering is by `sortKey` — the raw
+  filename/folder-name segment, never the label — compared with plain `<`/`>` (not `localeCompare`,
+  which is ICU-version-dependent and could reorder on a different machine running the same code).
+  Folders and notes interleave in one sorted list rather than folders-first; the spec doesn't say
+  either way, so I picked one, said so in a comment, and tested it. Model only — no HTML, no
+  `<details>`, no `TreeNode`.
+- Carried item (a) — `src/wikilinks.ts` now exports `outputPathForNote` (decoded, filesystem-safe
+  output path) and its inverse `hrefToOutputPath`; `notePathToHref` is now defined in terms of
+  `outputPathForNote` rather than computing independently, so hrefs and files can't drift. Round-trip
+  tests cover a path with a space and one with a `#`.
+- Carried item (b) — the nested-anchor degrade at `resolveWikilink` now calls `collector.push` with a
+  message shaped like its neighbours (`"... is nested inside another link and was rendered as plain
+text"`). This changed the existing pipeline test asserting `collector.all()` was empty for that
+  case — updated it to assert the new warning instead, since the old assertion was exactly the gap
+  this item existed to close.
+
+**Ablations (the eleventh check), each removed then restored:**
+
+- Removed the new `collector.push` in the nested-anchor branch → `pipeline.test.ts`'s "renders a
+  wikilink as plain text, not a nested `<a>`..." test went red: `expected [] to strictly equal
+[ { note: 'Home.md', … } ]`.
+- Made `notePathToHref` compute its own encoding again (`.htm` typo, not derived from
+  `outputPathForNote`) → both round-trip tests in `wikilinks.test.ts` went red:
+  `expected 'Handbook/Some Note.htm' to be 'Handbook/Some Note.html'` (and the `#` case identically).
+- Pre-populated `buildNavigationTree`'s root with an unconditional empty `"Private"` folder → "does
+  not create a node for a folder with no published notes" went red:
+  `expected [ 'Handbook', 'Private' ] to not include 'Private'`.
+- Swapped the sort comparator to compare `label` instead of `sortKey` → "orders entries by filename
+  even when titles sort the other way" went red: `expected [ 'Alpha Note', 'Zeta Note' ] to strictly
+equal [ 'Zeta Note', 'Alpha Note' ]`.
+- Dropped the `titleByNotePath.get(notePath) ??` fallback, using the filename unconditionally →
+  "labels a published note with its frontmatter title when present" went red: `label: 'Onboarding'`
+  instead of `'Welcome Aboard'`.
+
+All five restored; diffs are clean against what's reported below.
+
+Gates: `BUILD_EXIT:0`, `TEST_EXIT:0` (127 tests, 10 files — 7 new in `navigation.test.ts`, 3 new +
+1 amended in `wikilinks.test.ts`/`pipeline.test.ts`), `LINT_EXIT:0`. Format and validate pending
+after this post (format gate needs the DEVLOG write first).
+
+→ @reviewer
+
+**[reviewer]** Block A (5.1–5.2) — **Approve.**
+
+Audited `src/navigation.ts`, `test/navigation.test.ts`, the `src/wikilinks.ts` diff,
+`test/wikilinks.test.ts` diff, `test/pipeline.test.ts` diff.
+
+Checks performed:
+
+- `buildNavigationTree` takes only `published: readonly string[]` and `titleByNotePath` — no fs
+  import, no config read. Confirmed by reading the whole file; a folder node is only ever created
+  while descending to place a published note, so "excluded" and "empty" collapse into "never
+  created" — matches `buildNoteIndex`'s rule and the brief's binding decision.
+- Ran `make build` (`BUILD_EXIT:0`), `make test` (`TEST_EXIT:0`, 127 tests / 10 files, matches
+  worker's count), `make format` (`FORMAT_EXIT:0`), `make lint` (`LINT_EXIT:0`), `make validate`
+  (`VALIDATE_EXIT:0`) myself against the working tree.
+- Re-ran two of the worker's five claimed ablations independently rather than trusting the DEVLOG
+  post: (1) stripped the new `collector.push` in the nested-anchor branch — `pipeline.test.ts`'s
+  nested-link test went red exactly as reported (`expected [] to strictly equal [...]`); (2)
+  reverted `notePathToHref` to compute its own `.htm`-typo encoding instead of deriving from
+  `outputPathForNote` — both round-trip tests in `wikilinks.test.ts` went red exactly as reported.
+  Both restored cleanly (`git diff` on `src/wikilinks.ts` back to worker's version). Did not re-run
+  the other three (empty-folder, sortKey-vs-label, title-fallback) but their expected/actual pairs
+  are of the same falsifiable shape as the two verified.
+- Round-trip contract for block B: `outputPathForNote`/`hrefToOutputPath` genuinely test the
+  inversion — `hrefToOutputPath(notePathToHref(p))` goes through real encode-then-decode, and the
+  ablation shows it's not vacuous.
+- Nested-anchor degrade now warns with a message shaped like its neighbours
+  (`wikilinks.ts:234-240`); existing pipeline test updated to assert the new warning, not weakened.
+- Scope: model only. No HTML, no `<details>`, no hast in `src/navigation.ts` — confirmed by reading
+  the whole file.
+- Ordering: plain UTF-16 comparison (`compareBySortKey`), not `localeCompare`, rationale commented —
+  matches the brief. Folders/notes interleaved by filename, decision commented and tested
+  (`test/navigation.test.ts:105-110`).
+- No new `any`/`as`/`!`/`@ts-ignore`/`eslint-disable` introduced by this diff — the one pre-existing
+  `as Partial<...>` cast at `wikilinks.ts:91` predates this diff (confirmed via `git diff` — not
+  touched).
+- Fixtures (`Handbook/Onboarding.md`, `Handbook/Policies/Leave.md`, `Alpha.md`/`Beta.md`, "Welcome
+  Aboard"/"Zeta Note"/"Alpha Note" titles) are all invented, no vault-derived or client content.
+- No filesystem/`index.ts` wiring added — correctly left for block B, matching the brief.
+
+No blockers, no nits worth holding up the block on.
+
+**Architectural note (not blocking):** `NavigationFolderEntry.sortKey` is the folder's `label`
+while `NavigationNoteEntry.sortKey` is the raw filename _including_ `.md`. Both are correct per the
+"filename" requirement, but a folder and a note that share a stem (e.g. folder `Notes/` vs file
+`Notes.md`) would sort by `"Notes"` vs `"Notes.md"` — string-prefix ordering, not filename-only
+ordering, since one sortKey carries an extension and the other doesn't. Unlikely to matter given
+Obsidian filenames, but block B or the supervisor may want a test pinning that specific tie-break if
+it ever becomes a golden-file source of flakiness.
+
+→ @architect — gates confirmed green, ready to tick 5.1–5.2 and commit.
+
 ## NEXT
 
 **Sections 1–4 are closed** (supervisor `Approve` on each; §2, §3 and §4 each took one remediation
