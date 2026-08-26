@@ -44,7 +44,7 @@ The publisher SHALL render a wikilink whose target is not published as plain tex
 
 ### Requirement: Obsidian formatting is preserved
 
-The publisher SHALL render callouts, tables, task checkboxes, and images so that the published page carries the same meaning as the note in Obsidian.
+The publisher SHALL render callouts, tables, and task checkboxes so that the published page carries the same meaning as the note in Obsidian.
 
 #### Scenario: Callout
 
@@ -61,23 +61,23 @@ The publisher SHALL render callouts, tables, task checkboxes, and images so that
 - **WHEN** a published note contains `- [ ]` or `- [x]` items
 - **THEN** the rendered page shows unticked and ticked marks respectively, and the reader cannot change them
 
-#### Scenario: Image
+#### Scenario: Image embed
 
-- **WHEN** a published note references an image that is itself published
-- **THEN** the rendered page displays the image
+- **WHEN** a published note embeds an image
+- **THEN** the embed degrades to plain text with a warning naming the containing note, and no `<img>` element, `src`, or path to the file appears on the page
 
 ### Requirement: Unsupported constructs are dropped, not rendered
 
-The publisher SHALL omit constructs it does not support rather than emitting their source. Obsidian Bases query blocks SHALL be dropped. Attachments other than images SHALL NOT be published.
+The publisher SHALL omit constructs it does not support rather than emitting their source. Obsidian Bases query blocks SHALL be dropped. Attachments SHALL NOT be published: the published set is Markdown notes only, so images and every other non-note file are absent from the site, and an embed of one degrades rather than resolving.
 
 #### Scenario: Bases query block
 
 - **WHEN** a published note contains a `base` code block
 - **THEN** the block does not appear on the rendered page, in any form, and the rest of the note renders normally
 
-#### Scenario: Non-image attachment
+#### Scenario: Attachment of any kind
 
-- **WHEN** the vault contains a PDF, presentation, or word-processor document
+- **WHEN** the vault contains an image, PDF, presentation, or word-processor document
 - **THEN** no page or download for it is published, whether or not a published note references it
 
 ### Requirement: Each page ends with a frontmatter table
