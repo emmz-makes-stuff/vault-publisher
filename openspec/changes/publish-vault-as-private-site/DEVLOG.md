@@ -5411,6 +5411,186 @@ closed with independent verification, not just the report accepted.
 
 → @architect
 
+**[supervisor]** Section 5 re-audit, round 2 — range `6d8c84f..HEAD` (`8131eb0`, `0d73dac`,
+`4681450`, `6a4196d`). **Verdict: Request changes.** One blocker, and it is new — introduced by the
+remediation block itself.
+
+**All three of my first-pass blockers are closed. I verified each by execution, not from the thread.**
+
+- **Blocker 1 (link integrity had no observational check) — closed, and the check is real.** I ran
+  the ablation myself in a scratch tree (`git archive HEAD`, `node_modules` symlinked in): changed
+  `resolveOutputFilePath` (`src/writer.ts:109`) to `path.join(outputDir, "pages",
+outputPathForNote(notePath))` and ran the two suites. `test/no-client-js.test.ts >` _"has no page
+  whose href names a file the run did not write"_ went red on `brokenLinksByFile`, and
+  `test/wikilinks.test.ts` stayed **fully green (17 passed → 1 failed / 16 passed, the one failure
+  being the new test)**. The worker's rejection of the href-side ablation is correct and the
+  substitution is the better test: it isolates writer/href divergence, which is the actual hazard,
+  from the round trip, which cannot see it.
+- **Blocker 2 (`OutputPathCollisionError` escaping the CLI) — closed.** `src/index.ts:60-73` routes
+  every `publishSite` throw through the same catch-print-`exitCode` convention `loadConfig` uses, and
+  `reportWarnings` runs inside the catch before the `return`, so the warnings a dying run already
+  collected are no longer discarded. On the mock: **I agree with the reviewer, for a reason worth
+  recording.** `resolveSelection` returns `published` from a `Set` (`selection.ts:48,74`), so a
+  duplicate note path is unreachable; the `Index.md` rule in `outputPathForNote` is the _only_ way two
+  distinct note paths can share an output path, which makes a real end-to-end collision reachable only
+  on a case-sensitive filesystem. What is mocked is narrow and the two halves either side of it are
+  both real: `writeSite` itself — not a mock — is proven to detect the collision and write nothing
+  (`test/writer.test.ts`, ablated in block B and re-ablated by that block's reviewer), and
+  `publishSite` is proven to really call `writeSite` (`test/index.test.ts`, files land). The mock
+  supplies only the input this filesystem cannot hold. That is isolation, not a narrowed guarantee.
+- **Blocker 3 (block C's record) — closed.** Gate lines posted, `[reviewer]` verdict on block C's
+  final state including `overflow-wrap` posted, with an independent re-ablation of that line.
+
+**Nothing from the first pass's "what holds" list was disturbed.** The remediation touches
+`src/index.ts` and one export in `src/wikilinks.ts` and nothing else in `src/` (`git show 6a4196d --
+src/`). One selection authority, one path authority, one rendering path, one warning reporter, zero
+client-side JS, dependency set untouched, no rendered output committed — all still hold. The two
+fixture warning-count updates are additive, not loosened: exact `toHaveLength` on both sides plus a
+new `toContain` naming the exact line. The new `no-front-page-vault` fixture is invented content. The
+`VAULT_ROOT_INDEX_NOTE` warning fires unconditionally, consistent with the other selection-level
+warnings, and `5.7` correctly remains unticked.
+
+---
+
+### Blocker — the entry-point guard silently disables the whole CLI whenever a symlink appears anywhere in the script's path
+
+`src/index.ts:196`:
+
+```ts
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+```
+
+`import.meta.url` is the module's **resolved real path**; `process.argv[1]` is the path **as given**.
+Node resolves symlinks when loading the entry module (that is the default — `--preserve-symlinks-main`
+is off), so the two are unequal the moment any component of the invocation path is a symlink, the
+guard is false, `main()` never runs, and the process exits **0 having done nothing at all** — no
+pages, no `styles.css`, no `[WARNING]` lines, no message on stderr.
+
+Observed, not reasoned. Same file, two paths, on this machine (`/tmp` is a symlink to `/private/tmp`):
+
+```
+node /tmp/vpsym/dist/index.js         <cfg> <out>   → exit 0, 0 files written, no output
+node /private/tmp/vpsym/dist/index.js <cfg> <out>   → exit 0, 4 files written, 4 warnings
+```
+
+and equivalently for a symlink to the entry file itself, and for a symlinked directory containing the
+repo. Spaces in the path are fine; a `..`/`.` segment is fine; `dist/` and `src/` both run correctly
+by real path. **Only the symlink case fails, and it fails silently.**
+
+Why this is a section-level blocker rather than a note for `6.3`:
+
+- **It is a new silent-success path, added by the remediation, with no test.** The guard exists only
+  so `test/cli-error-handling.test.ts` can import `main`. It bought that testability by making "does
+  the CLI run at all" conditional on a comparison no test exercises — and every existing CLI test
+  spawns the entry point by its real path, so the whole suite stays green in exactly the
+  configuration where the CLI does nothing. This is the shape this project is now eleven-for-eleven
+  on: a protection verified by something that could not have failed. The difference is that here the
+  thing unverified is the program running.
+- **The failure compounds with a hazard already parked.** `## NEXT` carries "a reused output
+  directory still serves an unpublished note" (`6.4`/`7.6`). A silent no-op into a reused directory
+  means the previous run's pages — including notes since removed from the config — are what
+  `wrangler deploy` uploads, on a green build, with nothing anywhere saying the publish did not
+  happen. Behind Access, so not an unauthenticated leak; but "which notes are on the site" would be
+  decided by a stale directory and a comparison that quietly evaluated false.
+- **`7.1`'s specified shape survives it today, which is exactly why it will not be found.**
+  `$GITHUB_ACTION_PATH` on a hosted runner is a real path, so the action works and the section-7
+  verification passes. Any indirection added later — a `bin` entry in `package.json` and therefore an
+  `npm`/`npx` shim (`node_modules/.bin/*` is a symlink), a workflow staging the action under
+  `$RUNNER_TEMP`, a self-hosted runner with a symlinked workspace, a developer running from `/tmp` —
+  silently reverts the publish to a no-op with a green job.
+
+Blocks involved: the remediation block (`src/index.ts:196-198`, `src/index.ts:22`), against block B's
+CLI wiring (`src/index.ts:58-75`).
+
+### Suggested remediation shape (one block)
+
+1. **Remove the conditional rather than repair it.** The cleanest fix is structural: move `main` into
+   its own module (`src/cli.ts`, exported, never self-invoking) and leave `src/index.ts` as a
+   two-line entry point that imports it and `await`s it **unconditionally**. Tests import `src/cli.ts`;
+   nothing has to decide whether to run, so this class of bug cannot recur. If the entry point is to
+   stay one file, compare real paths instead — `import.meta.filename === realpathSync(process.argv[1])`,
+   with the `realpathSync` throw handled — but that is the weaker fix, because it keeps a conditional
+   whose false branch is silence.
+2. **Test it observationally, the way blocker 1 was closed.** Spawn the real CLI **through a symlink**
+   to the entry point, into a temp output dir, and assert it wrote the pages — one `it()`. On today's
+   code that test fails; that is the ablation, and it needs no code removed to produce it. `6.3` will
+   rewrite this entry point, so the test is the part that has to outlive the fix.
+3. Consider, separately, whether a run given an output directory that finishes having written nothing
+   should be an error at all. That is a `6.4`-shaped question, not part of this fix.
+
+### Process — this is round 2
+
+Per `CLAUDE.md` §3c.4 I am not carving a third round on my own judgement; this goes to the Product
+Owner. My read, for that decision: this is **not** a sign the section breakdown or the spec is wrong.
+The section's own contract is met and every first-pass finding is genuinely closed. The blocker is a
+single well-understood defect in a file `6.3` will restructure anyway, and the fix is small. A
+targeted third remediation block — or an explicit, test-bearing handover into `6.3` — both close it;
+what would not be acceptable is closing §5 with it recorded as a nit, because its failure mode is a
+publish that reports success and does nothing.
+
+❓ @architect — if the Product Owner prefers the handover, `6.3`'s brief needs the symlink-invocation
+test named in it explicitly, not the fix described in prose.
+
+### Architectural notes — `## NEXT`, not the fix block
+
+- The first pass's parked items stand unchanged and I re-confirmed none were touched: reused output
+  directory (`6.4`/`7.6`), the duplicated private `element()` in `page.ts`/`explorer.ts`,
+  `test/site.test.ts` reimplementing `publishSite`'s composition, the stale comment at
+  `src/page.ts:21`, `table { display: block }`.
+- **The output-path collision is unreachable end to end on a case-insensitive filesystem, by
+  construction** — worth recording as a property rather than a gap, since it is the reason a mock is
+  correct here and will be the reason again next time someone asks. If any CI job in this repository
+  ever runs on Linux, that job could carry the one real end-to-end collision test this machine cannot.
+- `VAULT_ROOT_INDEX_NOTE`'s warning reads _"Index.md: is not in the published set"_ for a vault that
+  has no `Index.md` at all. Accurate about the consequence, slightly odd about the cause; worth a
+  second clause when `8.5` reviews warning wording with the Product Owner.
+
+→ @architect
+
+**[architect]** Two Product Owner decisions, §3c.4 having stopped the loop after the supervisor's
+second `Request changes`.
+
+**`5.7` — confirmed and ticked.** The Product Owner inspected the rendered fixture site at phone
+width and with the device in dark mode, against the three `site-navigation` scenarios (legible with
+no horizontal scrolling, explorer reachable, wide table readable without breaking the layout, light
+theme surviving a dark-mode device) and reported it satisfied. That is the whole of `5.7`'s
+verification — it was never gate-settleable — so the box is ticked on their word, which is the only
+authority for it.
+
+**The symlink blocker — a third remediation block, authorised.** I reproduced the supervisor's
+finding before putting it to them rather than relaying it: invoked through a symlinked path the CLI
+exits 0 having written nothing, printed nothing and warned about nothing; by real path the same code
+writes four files and four warnings.
+
+The Product Owner's call was the third round, and §3c.4's own reasoning supports it: the rule exists
+because a section that will not converge in two rounds usually has a wrong breakdown or a wrong spec,
+and neither is the case here. Every first-pass finding is closed and verified by execution; the
+section's contract is met. What remains is one defect **the remediation itself introduced**, with a
+known fix and a test that fails on today's code.
+
+**[architect]** Remediation block 2 — section 5. **No new `N.M` numbers, nothing ticks.**
+
+1. **Remove the conditional rather than repair it.** Move `main` to `src/cli.ts`, exported and never
+   self-invoking; `src/index.ts` becomes a two-line entry that awaits it unconditionally. A guard
+   comparing a resolved real path against an as-given path has no correct form worth keeping — every
+   repair leaves a predicate that can be false when it should be true, and its failure mode is
+   silence. Delete the class of bug, not the instance.
+2. **One observational test: spawn the real CLI through a symlink and assert the pages landed.** It
+   fails on today's code, so it is its own ablation — run it against `HEAD` first and record what it
+   prints, then make it pass. This is the part that must outlive `6.3`'s rewrite of this file:
+   `6.3` replaces the argument surface, and a test that only ever ran by real path would let the
+   silent-no-op return unnoticed.
+3. **Check the same hazard has no sibling.** Anything else in `src/` deciding behaviour from
+   `process.argv[1]`, `import.meta.url`, or a path comparison of that shape.
+
+**Why this was a blocker and not a nit**, recorded so it is not re-argued: every CLI test in the
+suite spawns by real path, so **the suite was green in exactly the configuration where the CLI does
+nothing**. `7.1`'s `$GITHUB_ACTION_PATH` shape survives it today, which is precisely what would have
+kept it hidden — an npm `bin` entry (those shims are symlinks), a `$RUNNER_TEMP` staging step, or a
+self-hosted runner with a symlinked workspace each revert the publish to a no-op later, on a green
+job. And it compounds with the reused-output-directory hazard parked for `6.4`/`7.6`: a silent no-op
+into a directory nothing cleans is what `wrangler deploy` then uploads, stale pages included.
+
 ## NEXT
 
 **Sections 1–4 are closed** (supervisor `Approve` on each; §2, §3 and §4 each took one remediation
