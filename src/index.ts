@@ -2,6 +2,7 @@ import path from "node:path";
 import type { PublishConfig } from "./config.ts";
 import { loadConfig } from "./config.ts";
 import { isEntryWithheldByFloor, listVaultNotes, resolveSelection } from "./selection.ts";
+import { reportWarnings, WarningCollector } from "./warnings.ts";
 
 async function main(): Promise<void> {
   const configPath = process.argv[2];
@@ -25,17 +26,21 @@ async function main(): Promise<void> {
   const vaultPaths = await listVaultNotes(vaultRoot);
   const { unmatched } = resolveSelection(config, vaultPaths);
 
-  reportWarnings(config, unmatched, path.basename(configPath));
+  const collector = new WarningCollector();
+  collectSelectionWarnings(config, unmatched, path.basename(configPath), collector);
+  reportWarnings(collector.all());
 }
 
 /**
- * Warnings never fail a publish: every line here goes to stderr, and nothing
- * here touches `process.exitCode` — the process stays at its default 0.
+ * Populates `collector` with the unmatched-entry and floor-withheld
+ * warnings for one config load. Pure with respect to output — nothing here
+ * writes anywhere; `reportWarnings` in `warnings.ts` is the only writer.
  */
-function reportWarnings(
+function collectSelectionWarnings(
   config: PublishConfig,
   unmatched: readonly string[],
   configName: string,
+  collector: WarningCollector,
 ): void {
   // The floor check runs before the unmatched guard: an excluded entry is
   // reported as excluded whether or not it currently exists in the vault.
@@ -52,17 +57,13 @@ function reportWarnings(
 
   for (const entry of config.folders) {
     if (floorWithheldFolders.has(entry)) {
-      process.stderr.write(
-        `[WARNING] ${configName}: "${entry}/" is excluded and will not publish\n`,
-      );
+      collector.push(configName, `"${entry}/" is excluded and will not publish`);
     }
   }
 
   for (const entry of config.notes) {
     if (floorWithheldNotes.has(entry)) {
-      process.stderr.write(
-        `[WARNING] ${configName}: "${entry}" is excluded and will not publish\n`,
-      );
+      collector.push(configName, `"${entry}" is excluded and will not publish`);
     }
   }
 
@@ -70,7 +71,7 @@ function reportWarnings(
     if (floorWithheldFolders.has(entry) || floorWithheldNotes.has(entry)) {
       continue;
     }
-    process.stderr.write(`[WARNING] ${configName}: no path in the vault matches "${entry}"\n`);
+    collector.push(configName, `no path in the vault matches "${entry}"`);
   }
 }
 

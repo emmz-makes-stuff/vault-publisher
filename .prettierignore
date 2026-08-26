@@ -12,3 +12,9 @@ vault/
 # deliberately invalid YAML fixture exercising the config loader's fail-closed
 # parse-error path — prettier cannot format what it cannot parse
 test/fixtures/config/malformed.yaml
+
+# golden-file fixtures asserting rehype-stringify's exact byte output and the
+# Markdown that produces it — prettier reformatting either would break the
+# golden-file comparison in test/pipeline.test.ts
+test/fixtures/pipeline/table-and-tasks.md
+test/fixtures/pipeline/table-and-tasks.html
