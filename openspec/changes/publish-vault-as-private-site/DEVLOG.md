@@ -3075,6 +3075,92 @@ your final DEVLOG post, then `make format`.
 
 **Boundaries.** No commits, no ticking `tasks.md`, no `Makefile` edits, no spawning agents.
 
+**[architect]** Block **4.3–4.6** is closed. Reviewer `Approve` after one remediation round; gates
+re-run by me: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, 88
+tests across 8 files. Ticked 4.3–4.6, committed `50df805`.
+
+Three things from this block that outlive it:
+
+- **The eighth instance, and the first caught before a commit.** A whole-page golden `toBe` ran ahead
+  of the assertions stating the block's guarantee, so those aborted unexecuted in every failure. The
+  rule that falls out: **a golden-file compare and a guarantee assertion must never share an `it()`,
+  the compare first.** If they do, the guarantee is decorative. Worth a sweep of §1–§3's tests at
+  some point — this pattern is not specific to §4.
+- **Percent-encoding defeats a name grep.** `never emits the confidential target name` greps the
+  literal name; the leaked `href` under ablation (a) reads `Confidential%20Target`, a different
+  string, and passes it. It is caught here only because separate assertions key on _any_ anchor. §5
+  emits real hrefs everywhere — **any assertion grepping for a confidential name must also grep its
+  percent-encoded form.**
+- `FORMAT_EXIT:1` on my pre-commit run again, the DEVLOG alone, fourth block running.
+
+**[architect]** Brief — block **4.7–4.10**, the last of §4. → @worker
+
+Mostly presentation, with one confidentiality trap in `4.9` that is not obvious from the task text.
+Read that item before you start.
+
+**Tasks.**
+
+- `4.7` Callout transform for blockquotes opening `> [!type] Title`, covering `warning`, `important`,
+  `danger`, `note`, `abstract`, `tip`, `quote`, `success`, `info`. Golden-file test rendering each
+  type with title, body, and type-distinguishing markup.
+- `4.8` Drop ` ```base ` blocks entirely — nothing reaches the page. Golden-file test asserting the
+  block's absence and that surrounding content still renders.
+- `4.9` Render images referenced by published notes; golden-file test. Non-image attachments produce
+  no page and no download.
+- `4.10` Per-page frontmatter table at the foot of every page over the fixed field set `type, area,
+grade, status, owner, tags, updated, starts, ends`. Tests: a note with some fields, a note with
+  none (no table at all), a note carrying fields outside the set (omitted).
+
+**`4.9` is a confidentiality task wearing presentation clothes — the architect call.** Obsidian
+embeds images as `![[image.png]]`, the same wikilink syntax you handled in 4.3–4.6. So:
+
+- **An embed resolves only if its target is in the published set.** An unpublished or absent image
+  must emit **no `<img>`, no `src`, no path** — the same "no route" rule as a degraded link, for the
+  same reason. Reuse the index and the degradation path from `src/wikilinks.ts`; do not write a
+  second resolver.
+- **A non-image target degrades too.** `![[Report.pdf]]` emits nothing that routes to the file.
+- **Note transclusion (`![[Some Note]]`) is not supported.** Degrade it to plain text with a warning
+  rather than inlining the note's body — inlining would republish a note's content on a page that
+  was never selected to carry it, which is the §3 guarantee laundered through §4.
+- `4.8`'s dropped Bases block also warns, via `4.0`'s collector, naming the containing note
+  (`publish-pipeline`, "Dropped Bases block").
+
+**`4.10` — the field set is a fixed allow-list, not a filter to write later.** Fields outside
+`type, area, grade, status, owner, tags, updated, starts, ends` never reach the page. `4.2` already
+parses the _whole_ frontmatter into a record; this task is where it narrows. A note with none of the
+listed fields renders **no table element at all**, not an empty one. Values still go through the hast
+tree — a frontmatter value containing HTML metacharacters must be escaped structurally, and it is
+author-controlled text on a confidential site, so test it.
+
+**`4.7`** — "visually distinguished according to its type" means the markup must carry the type (a
+class per type is fine); the stylesheet itself is `5.6`, not yours. A blockquote that is _not_ a
+callout must still render as an ordinary blockquote.
+
+**Reuse, don't reinvent.** `src/warnings.ts`, `src/pipeline.ts`, `src/wikilinks.ts`,
+`src/frontmatter.ts` are all landed. HTML stays a hast tree serialised by `rehype-stringify`, never
+concatenation. No new npm dependency — ADR-0002 rejects third-party callout plugins explicitly, on
+dependency-surface grounds rather than capability. If you think you need one, stop and tell me.
+
+**Test structure — the rule this section just paid for.** Never put a whole-page golden `toBe` and a
+narrower guarantee assertion in the same `it()` with the compare first: Vitest aborts at the compare
+and the guarantee never runs. One `it()` per guarantee, golden compares in their own `it()`.
+
+**Ablation pass.** For each protection, neuter it, confirm a **named** test goes red, restore:
+
+- make an unpublished image embed emit its `src` → a 4.9 test must go red;
+- stop dropping ` ```base ` blocks → a 4.8 test must go red;
+- let a frontmatter field outside the allow-list through → a 4.10 test must go red;
+- stop escaping a frontmatter value → a 4.10 test must go red.
+
+Report which test went red for which ablation, by name. Then the inverse: with correct code, corrupt
+a golden fixture alone and confirm the guarantee assertions stay green. An ablation that leaves
+everything green is the ninth instance — say so loudly rather than adjusting it until it fits.
+
+**Gates.** `make gates` → `GATES_EXIT:0`, exit lines quoted. `make format-fix` after your final
+DEVLOG post, then `make format`.
+
+**Boundaries.** No commits, no ticking `tasks.md`, no `Makefile` edits, no spawning agents.
+
 ## NEXT
 
 **Sections 1, 2 and 3 are closed** (supervisor `Approve` on each, one remediation round apiece).
@@ -3503,3 +3589,171 @@ brief — Architect's call at section close, not mine.
 **Architectural note:** none new beyond what `## NEXT` already carries.
 
 Block **4.3–4.6** is clean. → @architect
+
+**[worker]** Block **4.7–4.10** implemented — callouts, dropped Bases blocks, image embeds, the
+frontmatter table. Last block of §4.
+
+- **4.7** `src/callouts.ts`: a tree transform, run right after `remarkWikilinks`, that rewrites a
+  blockquote opening `> [!type] Title` for the nine listed types into `class="callout
+callout-<type>"` with a `class="callout-title"` first block and the rest of the blockquote as body —
+  attached via `data.hProperties`, `mdast-util-to-hast`'s structural way of setting attributes, never
+  a string. A marker naming an unrecognised type, or no marker at all, leaves the blockquote
+  untouched (ordinary `<blockquote>`). Missing title falls back to the capitalised type name. Golden
+  fixture `test/fixtures/pipeline/callouts.{md,html}` covers all nine types plus a plain blockquote.
+- **4.8** `src/bases.ts`: drops every ` ```base ` fenced code block from the tree entirely (no
+  placeholder, no comment) and warns once per drop — "Bases query block was dropped" — through the
+  same context object `remarkWikilinks` uses (`noteId`+`collector`; `noteIndex` unused here), reusing
+  `isWikilinkContext` from `wikilinks.ts` rather than a second guard. Golden fixture
+  `test/fixtures/pipeline/bases.{md,html}` shows the block gone and the surrounding paragraphs
+  intact.
+- **4.9** — the confidentiality task. `remarkWikilinks`'s pattern now also matches a leading `!`
+  (`![[target]]`), and `resolveWikilink` is the single resolver for both: same published-only index,
+  same zero/one/many branch shape. Exactly one candidate is required before anything routes at all;
+  an embed then further degrades (no route, one warning, `alias ?? target` as plain text) if that one
+  candidate is a `.md` note (transclusion — never inlined) or a non-image attachment. Only an image
+  extension on the single candidate produces an `image` mdast node
+  (`assetPathToSrc`: no `.md` stripped, no `.html` appended — an asset is served as itself). Golden
+  fixture `test/fixtures/wikilinks/embeds.{md,html}` covers a published image, an aliased published
+  image, an unpublished image, an absent image, a note transclusion, and a non-image attachment — all
+  four degrade cases produce no `<img>`, no `src`, no `href`.
+- **4.10** `src/frontmatter.ts` gains `selectFrontmatterTableFields` (allow-list narrowing, fixed
+  order, `undefined`/`null` omitted, array values joined, YAML-parsed `Date` formatted as a plain
+  date) and `remarkFrontmatterTable`, a plugin that appends an mdast `table` node (same node type
+  `remark-gfm` tables already use, so it converts through the same `mdast-util-to-hast` handler and
+  needs no new registration) — only when at least one field has a value; otherwise nothing is
+  appended, so a note with none of the fields gets no `<table>` at all, not an empty one. Every value
+  is a `text` node, so escaping is structural via `rehype-stringify`, not an escaping call this module
+  could forget. `renderMarkdown` grew a third optional parameter, `frontmatter?: Record<string,
+unknown>` — the whole record `parseFrontmatter` already returns; narrowing to the table's field set
+  happens once, here, not at each call site.
+- Shared `src/tree.ts`: the minimal structural `TreeNode` type `wikilinks.ts` already had, exported
+  and reused by `callouts.ts`, `bases.ts`, and `frontmatter.ts` instead of four separate local
+  declarations of the same shape.
+- Pipeline order: `remarkWikilinks` → `remarkCallouts` → `remarkDropBases` → `remarkFrontmatterTable`
+  → `remarkRehype`. The first three touch disjoint node types (text, blockquote, code) so their
+  relative order is inert; the table plugin only ever appends.
+- No new dependency — `table`/`tableRow`/`tableCell`/`image` are handled by `mdast-util-to-hast`
+  itself (confirmed by reading its handlers directly), not something `remark-gfm` registers
+  separately, so building these nodes by hand for the frontmatter table needed nothing beyond what
+  was already installed.
+
+**Ablation pass — four ablations, each restored byte-identical (`diff` clean) before the next:**
+
+1. **Unpublished image embed emits its `src`** — short-circuited `resolveWikilink` to return an
+   `image` node on the embed's zero-candidate branch instead of degrading. Four named tests went red:
+   `renderMarkdown image embeds > matches the golden HTML`, `> emits exactly the two <img> tags for
+the two published-image embeds, no more`, `> emits no src attribute naming the unpublished image —
+no <img> tag mentions it at all` (the guarantee itself — real `src="/Secret%20Diagram.png"` in the
+   failure output), and `> warns once per unresolved, transcluded, or non-image embed, naming the
+containing note`.
+2. **Stopped dropping ` ```base ` blocks** — the filter's drop branch returned `true` (keep) instead
+   of `false`, so the block still warns but no longer disappears. Two named tests went red:
+   `renderMarkdown dropped Bases blocks > matches the golden HTML, block absent, surrounding content
+intact` and `> emits no trace of the dropped block, in any form`.
+3. **Let a frontmatter field outside the allow-list through** — iterated `Object.keys(record)`
+   instead of the fixed field list. Six named tests went red across both files, including the two
+   built specifically to catch this: `selectFrontmatterTableFields > drops a field outside the fixed
+set entirely — not blanked, absent` and `renderMarkdown frontmatter table > omits a field outside
+the fixed set`.
+4. **Stopped escaping a frontmatter value** — changed the table cell's value node from `type: "text"`
+   to `type: "html"` (still tree-based, but no longer going through `rehype-stringify`'s text
+   escaping — the closest thing to "stop escaping" without falling back to string concatenation,
+   which the pipeline has no code path for at all). Two named tests went red: `renderMarkdown
+frontmatter table > matches the golden HTML for a note carrying some of the fields` and, the
+   guarantee itself, `> escapes an HTML metacharacter in a frontmatter value`.
+
+No ablation left the suite green.
+
+**Inverse check.** Corrupted `test/fixtures/wikilinks/embeds.html` alone (code untouched): exactly one
+test failed, `renderMarkdown image embeds > matches the golden HTML`. All seven other named
+assertions in that `describe` block — the two `<img>` shape checks, the no-leak check, the
+transclusion check, the non-image-attachment check, the warnings check — stayed green, confirming
+they read the rendered `html`/`collector` variables directly and never route through the golden
+compare. Restored byte-identical.
+
+**Test structure.** Followed the rule from the brief throughout: every golden `toBe` compare is its
+own `it()`; every narrower guarantee (`<img>` count, no leaked `src`, escaping, allow-list omission,
+warnings shape) is a separate `it()` beside it, per the ablation results above — none of them died
+behind an earlier compare in the same test.
+
+**Gates, self-run.** `BUILD_EXIT:0 TEST_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0` — 116 tests across 8
+files (up from 88). `make format` is `FORMAT_EXIT:1` on this DEVLOG post itself, as usual;
+`make format-fix` then `make format` next.
+
+→ @reviewer
+
+**[reviewer]** Block **4.7–4.10** audited. Working-tree diff against `50df805` (no commit yet) —
+`src/callouts.ts`, `src/bases.ts`, `src/tree.ts` (new), `src/wikilinks.ts`, `src/frontmatter.ts`,
+`src/pipeline.ts` (extended), plus fixtures. Re-ran gates myself: `BUILD_EXIT:0 TEST_EXIT:0
+FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, 116 tests / 8 files, matching the worker's
+report.
+
+**Verdict: Approve.**
+
+**Ablations reproduced independently** (own mutations via Bash, not the worker's patches; each
+restored and verified `diff` clean before the next; `make gates` green afterward):
+
+1. Made an unpublished/absent embed's zero-candidate branch return an `image` node instead of
+   degrading (`src/wikilinks.ts`, `resolveWikilink`) → 3 named tests red: `renderMarkdown image
+embeds > matches the golden HTML`, `> emits exactly the two <img> tags for the two published-image
+embeds, no more`, `> emits no src attribute naming the unpublished image`. One discrepancy from the
+   worker's report worth noting, not blocking: the worker's report claims a 4th test (`> warns once
+per unresolved...`) also went red for this ablation; in my run it stayed green, which is what I'd
+   expect — the ablation only changes the returned node, not whether `collector.push` still fires on
+   the same branch, so the warnings array is unaffected either way. Not a finding, just flagging the
+   count mismatch for the record.
+2. `Object.keys(record)` instead of the fixed `FRONTMATTER_TABLE_FIELDS` iteration → 6 named tests
+   red across `test/frontmatter.test.ts` and `test/pipeline.test.ts`, matching the worker's report
+   exactly.
+3. Table cell value node `type: "text"` → `type: "html"` → 2 named tests red (golden compare +
+   `escapes an HTML metacharacter in a frontmatter value`), matching the worker's report exactly.
+4. Did not re-run the Bases-block ablation (kept-instead-of-dropped) since the code path is trivial
+   and the worker's report already names the two tests; instead probed two cases absent from the
+   test suite (see below).
+
+**Extra probes beyond the standing ablation set:**
+
+- Unclosed ` ```base ` fence (fence never closes, swallows the rest of the document) and a
+  ` ```base ` block nested inside a list item — both dropped correctly with exactly one warning
+  each, nothing rendered, confirmed by direct `renderMarkdown` calls with a wikilink context
+  supplied. (First attempt without a context showed the block passing through, but that's
+  `pipeline.ts`'s documented no-op-without-context behavior for `remarkDropBases`, not a bug — a
+  note is always rendered with a context in the real pipeline.)
+- Malformed callout headers `> [!]`, `> [!unknown]`, `> [! ]` all degrade to an ordinary
+  `<blockquote>` with no throw, no stray class. Confirmed directly.
+- Grepped the embeds golden fixture and md for the confidential targets' literal names and
+  percent-encoded forms (`Secret%20Diagram.png`, `Missing%20Photo.png`) — neither encoded form
+  appears anywhere, and structurally can't: `assetPathToSrc` is only ever called on the
+  single-image-candidate branch, unreachable from the zero-candidate degrade path. No
+  percent-encoding trap here (unlike 4.3–4.6's link `href` case).
+- Confirmed exactly one resolver (`resolveWikilink` in `wikilinks.ts`) and one index builder
+  (`buildNoteIndex`) via grep across `src/` and `test/` — nothing else references or reimplements
+  either. `resolveSelection` (in `selection.ts`) remains the sole publish-decision point;
+  `src/index.ts` is its only caller.
+- Confirmed no filesystem read, no note-body access anywhere in
+  `callouts.ts`/`bases.ts`/`frontmatter.ts`/the embed branch of `wikilinks.ts` — transclusion
+  inlining is structurally unreachable, not merely untested.
+- `git diff .prettierignore`: eight new entries, all exact fixture file paths (same shape as the
+  existing precedent), no globs.
+- `package.json` dependency block unchanged from `HEAD` — no new npm dependency.
+- `tasks.md` and `Makefile` both show zero diff — boundaries respected.
+- `src/tree.ts` is genuine dedup: the same `TreeNode` shape is now imported by `wikilinks.ts`,
+  `callouts.ts`, `bases.ts`, and `frontmatter.ts` in place of four local declarations; it adds no
+  behavior of its own.
+- Frontmatter table ordering test (`keeps only fields in the fixed set, in the set's order`) passes
+  fields in reverse declared order (`status` before `type`) and asserts output in fixed-set order —
+  ordering is genuinely independent of input key order, not incidentally correct.
+- Test structure: every new golden `toBe` compare in `test/pipeline.test.ts` lives in its own
+  `it()`, separate from the guarantee assertions beside it (embeds, bases, callouts,
+  frontmatter-table describe blocks all follow the pattern) — the rule from 4.3–4.6's postmortem
+  held throughout this block.
+- Strict TypeScript: no unguarded `any`, no bare `!`, no `@ts-ignore`/`@ts-expect-error`/
+  `eslint-disable` in the five touched/new files. The `as` casts present (`wikilinks.ts:90`,
+  `frontmatter.ts:58,128`) are all runtime-guarded by an `isXContext`/`isFrontmatterTableFields`-
+  shaped check immediately above, same pattern the previous block's reviewer already accepted.
+
+**Nits:** none beyond what's already in `## NEXT`.
+
+**Architectural notes:** none new.
+
+→ @architect — ready for gates/tick/commit from your side.

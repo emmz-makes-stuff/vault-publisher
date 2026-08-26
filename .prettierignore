@@ -24,3 +24,11 @@ test/fixtures/wikilinks/degraded.md
 test/fixtures/wikilinks/degraded.html
 test/fixtures/wikilinks/ambiguous.md
 test/fixtures/wikilinks/ambiguous.html
+test/fixtures/pipeline/callouts.md
+test/fixtures/pipeline/callouts.html
+test/fixtures/pipeline/bases.md
+test/fixtures/pipeline/bases.html
+test/fixtures/pipeline/frontmatter-table.md
+test/fixtures/pipeline/frontmatter-table.html
+test/fixtures/wikilinks/embeds.md
+test/fixtures/wikilinks/embeds.html
