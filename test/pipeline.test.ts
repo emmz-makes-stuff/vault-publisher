@@ -5,6 +5,14 @@ import { renderMarkdown } from "../src/pipeline.js";
 import { WarningCollector } from "../src/warnings.js";
 import { buildNoteIndex } from "../src/wikilinks.js";
 
+const embedNoteIndex = (): ReturnType<typeof buildNoteIndex> =>
+  buildNoteIndex([
+    "Assets/photo.png",
+    "Assets/report.pdf",
+    "Handbook/Transclude Note.md",
+    "Handbook/Handbook Note.md",
+  ]);
+
 const fixturesDir = fileURLToPath(new URL("./fixtures/pipeline", import.meta.url));
 const wikilinkFixturesDir = fileURLToPath(new URL("./fixtures/wikilinks", import.meta.url));
 
@@ -170,5 +178,229 @@ describe("renderMarkdown wikilinks", () => {
       '<p><a href="https://example.com">Some text with ' +
         '<a href="/Handbook/Wikilink%20Target.html">Wikilink Target</a> inside</a></p>',
     );
+  });
+});
+
+describe("renderMarkdown callouts", () => {
+  it("renders each recognised callout type matching the golden HTML", async () => {
+    const markdown = await readFile(`${fixturesDir}/callouts.md`, "utf8");
+    const expected = await readFile(`${fixturesDir}/callouts.html`, "utf8");
+
+    const html = await renderMarkdown(markdown);
+
+    expect(`${html}\n`).toBe(expected);
+  });
+
+  it("carries a type-distinguishing class for each callout type", async () => {
+    const markdown = await readFile(`${fixturesDir}/callouts.md`, "utf8");
+
+    const html = await renderMarkdown(markdown);
+
+    for (const type of [
+      "warning",
+      "important",
+      "danger",
+      "note",
+      "abstract",
+      "tip",
+      "quote",
+      "success",
+      "info",
+    ]) {
+      expect(html).toContain(`callout-${type}`);
+    }
+  });
+
+  it("leaves a blockquote with no [!type] marker as an ordinary blockquote", async () => {
+    const html = await renderMarkdown("> Not a callout, just an ordinary quote.\n");
+
+    expect(html).toBe("<blockquote>\n<p>Not a callout, just an ordinary quote.</p>\n</blockquote>");
+  });
+
+  it("falls back to a capitalised type name when no title is given", async () => {
+    const html = await renderMarkdown("> [!info]\n> Some info, no title given.\n");
+
+    expect(html).toContain('<p class="callout-title">Info</p>');
+  });
+});
+
+describe("renderMarkdown dropped Bases blocks", () => {
+  async function renderBases(): Promise<{ html: string; collector: WarningCollector }> {
+    const markdown = await readFile(`${fixturesDir}/bases.md`, "utf8");
+    const collector = new WarningCollector();
+    const html = await renderMarkdown(markdown, {
+      noteId: "Home.md",
+      noteIndex: embedNoteIndex(),
+      collector,
+    });
+    return { html, collector };
+  }
+
+  it("matches the golden HTML, block absent, surrounding content intact", async () => {
+    const expected = await readFile(`${fixturesDir}/bases.html`, "utf8");
+    const { html } = await renderBases();
+
+    expect(`${html}\n`).toBe(expected);
+  });
+
+  it("emits no trace of the dropped block, in any form", async () => {
+    const { html } = await renderBases();
+
+    expect(html).not.toContain("base");
+    expect(html).not.toContain("filters");
+    expect(html).not.toContain("status");
+  });
+
+  it("still renders the content before and after the block", async () => {
+    const { html } = await renderBases();
+
+    expect(html).toContain("Some intro text before the block.");
+    expect(html).toContain("Some outro text after the block.");
+  });
+
+  it("emits one warning naming the containing note", async () => {
+    const { collector } = await renderBases();
+
+    expect(collector.all()).toStrictEqual([
+      { note: "Home.md", message: "Bases query block was dropped" },
+    ]);
+  });
+});
+
+describe("renderMarkdown image embeds", () => {
+  async function renderEmbeds(): Promise<{ html: string; collector: WarningCollector }> {
+    const markdown = await readFile(`${wikilinkFixturesDir}/embeds.md`, "utf8");
+    const collector = new WarningCollector();
+    const html = await renderMarkdown(markdown, {
+      noteId: "Home.md",
+      noteIndex: embedNoteIndex(),
+      collector,
+    });
+    return { html, collector };
+  }
+
+  it("matches the golden HTML", async () => {
+    const expected = await readFile(`${wikilinkFixturesDir}/embeds.html`, "utf8");
+    const { html } = await renderEmbeds();
+
+    expect(`${html}\n`).toBe(expected);
+  });
+
+  it("renders a published image as an <img> pointing at its published path", async () => {
+    const { html } = await renderEmbeds();
+
+    expect(html).toContain('<img src="/Assets/photo.png" alt="photo.png">');
+  });
+
+  it("uses the alias as alt text for an aliased embed", async () => {
+    const { html } = await renderEmbeds();
+
+    expect(html).toContain('<img src="/Assets/photo.png" alt="A caption">');
+  });
+
+  it("emits exactly the two <img> tags for the two published-image embeds, no more", async () => {
+    const { html } = await renderEmbeds();
+
+    expect(html.match(/<img /g)).toHaveLength(2);
+  });
+
+  it("emits no src attribute naming the unpublished image — no <img> tag mentions it at all", async () => {
+    const { html } = await renderEmbeds();
+
+    const imgTags = html.match(/<img [^>]*>/g) ?? [];
+    for (const tag of imgTags) {
+      expect(tag).not.toContain("Secret");
+    }
+  });
+
+  it("never inlines the body of a transcluded note — only its bare name as plain text", async () => {
+    const { html } = await renderEmbeds();
+
+    expect(html).toContain("Transclude Note");
+    expect(html).not.toContain("<a ");
+  });
+
+  it("emits no route for a non-image attachment", async () => {
+    const { html } = await renderEmbeds();
+
+    expect(html).not.toContain("href");
+    expect(html).not.toContain('src="/Assets/report.pdf"');
+  });
+
+  it("warns once per unresolved, transcluded, or non-image embed, naming the containing note", async () => {
+    const { collector } = await renderEmbeds();
+
+    expect(collector.all()).toStrictEqual([
+      {
+        note: "Home.md",
+        message:
+          'embed of "Secret Diagram.png" could not be resolved and was rendered as plain text',
+      },
+      {
+        note: "Home.md",
+        message:
+          'embed of "Missing Photo.png" could not be resolved and was rendered as plain text',
+      },
+      {
+        note: "Home.md",
+        message:
+          'embed of "Transclude Note" is a note; transclusion is not supported and it was rendered as plain text',
+      },
+      {
+        note: "Home.md",
+        message:
+          'embed of "report.pdf" is not an image and cannot be published; it was rendered as plain text',
+      },
+    ]);
+  });
+});
+
+describe("renderMarkdown frontmatter table", () => {
+  it("matches the golden HTML for a note carrying some of the fields", async () => {
+    const markdown = await readFile(`${fixturesDir}/frontmatter-table.md`, "utf8");
+    const expected = await readFile(`${fixturesDir}/frontmatter-table.html`, "utf8");
+
+    const html = await renderMarkdown(markdown, undefined, {
+      type: "reference",
+      area: "Handbook",
+      owner: "R&D <Team>",
+      tags: ["ops", "confidential & internal"],
+      secret: "should never appear",
+    });
+
+    expect(`${html}\n`).toBe(expected);
+  });
+
+  it("omits a field outside the fixed set", async () => {
+    const html = await renderMarkdown("Body.\n", undefined, {
+      type: "reference",
+      secret: "should never appear",
+      another_unlisted_field: "also never appears",
+    });
+
+    expect(html).not.toContain("secret");
+    expect(html).not.toContain("should never appear");
+    expect(html).not.toContain("another_unlisted_field");
+    expect(html).not.toContain("also never appears");
+  });
+
+  it("escapes an HTML metacharacter in a frontmatter value", async () => {
+    const html = await renderMarkdown("Body.\n", undefined, { owner: "R&D <Team>" });
+
+    expect(html).not.toContain("<Team>");
+    expect(html).toContain("&#x26;");
+    expect(html).toContain("&#x3C;");
+  });
+
+  it("renders no table element for a note with no frontmatter", async () => {
+    const html = await renderMarkdown("Body.\n");
+
+    expect(html).not.toContain("<table");
+  });
+
+  it("renders no table element for a note whose frontmatter has none of the listed fields", async () => {
+    const html = await renderMarkdown("Body.\n", undefined, { secret: "unlisted" });
+
+    expect(html).not.toContain("<table");
   });
 });

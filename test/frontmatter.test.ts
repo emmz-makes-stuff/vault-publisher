@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseFrontmatter } from "../src/frontmatter.js";
+import { parseFrontmatter, selectFrontmatterTableFields } from "../src/frontmatter.js";
 import { WarningCollector } from "../src/warnings.js";
 
 describe("parseFrontmatter", () => {
@@ -57,5 +57,57 @@ describe("parseFrontmatter", () => {
     expect(frontmatter).toStrictEqual({});
     expect(collector.all()).toHaveLength(1);
     expect(collector.all()[0]?.note).toBe("Handbook/List.md");
+  });
+});
+
+describe("selectFrontmatterTableFields", () => {
+  it("keeps only fields in the fixed set, in the set's order", () => {
+    const fields = selectFrontmatterTableFields({
+      status: "active",
+      type: "reference",
+      secret: "should never appear",
+    });
+
+    expect(fields).toStrictEqual([
+      { field: "type", value: "reference" },
+      { field: "status", value: "active" },
+    ]);
+  });
+
+  it("drops a field outside the fixed set entirely — not blanked, absent", () => {
+    const fields = selectFrontmatterTableFields({ type: "reference", not_a_real_field: "leak" });
+
+    expect(fields).toStrictEqual([{ field: "type", value: "reference" }]);
+    expect(fields.some((entry) => entry.value.includes("leak"))).toBe(false);
+  });
+
+  it("omits a listed field with no value", () => {
+    const fields = selectFrontmatterTableFields({
+      type: "reference",
+      owner: null,
+      grade: undefined,
+    });
+
+    expect(fields).toStrictEqual([{ field: "type", value: "reference" }]);
+  });
+
+  it("returns an empty list for a record with none of the listed fields", () => {
+    expect(selectFrontmatterTableFields({ secret: "unlisted" })).toStrictEqual([]);
+  });
+
+  it("returns an empty list for an empty record", () => {
+    expect(selectFrontmatterTableFields({})).toStrictEqual([]);
+  });
+
+  it("joins an array value with a comma", () => {
+    const fields = selectFrontmatterTableFields({ tags: ["ops", "internal"] });
+
+    expect(fields).toStrictEqual([{ field: "tags", value: "ops, internal" }]);
+  });
+
+  it("formats a YAML-parsed Date value as a plain date, not a full timestamp", () => {
+    const fields = selectFrontmatterTableFields({ updated: new Date("2026-08-01T00:00:00.000Z") });
+
+    expect(fields).toStrictEqual([{ field: "updated", value: "2026-08-01" }]);
   });
 });

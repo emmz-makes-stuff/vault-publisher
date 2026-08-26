@@ -41,10 +41,10 @@ These come first deliberately: the guarantee must be in place and proven before 
 - [x] 4.4 Implement wikilink resolution for published targets, including the aliased `[[Note|text]]` and heading `[[Note#Section]]` forms; verify golden-file tests render a working link, an alias-labelled link, and a heading link resolving to the page
 - [x] 4.5 Implement degradation to plain text for wikilinks whose target is unpublished or absent, emitting no link and no route to the note; verify tests cover an unselected target, an absent target, and an aliased unresolvable link rendering only its alias text
 - [x] 4.6 Treat an ambiguous wikilink target as a warning rather than a silent guess; verify a test asserts the warning and the chosen behaviour
-- [ ] 4.7 Implement the callout transform for blockquotes opening `> [!type] Title`, covering `warning`, `important`, `danger`, `note`, `abstract`, `tip`, `quote`, `success`, `info`; verify a golden-file test renders each type with its title, body, and type-distinguishing markup
-- [ ] 4.8 Drop ` ```base ` blocks entirely, emitting nothing to the page; verify a golden-file test asserts the block's absence and that surrounding content renders
-- [ ] 4.9 Render images referenced by published notes and verify a golden-file test; verify non-image attachments produce no page and no download
-- [ ] 4.10 Render the per-page frontmatter table at the foot of every page over the fixed field set `type, area, grade, status, owner, tags, updated, starts, ends`; verify tests cover a note with some fields, a note with none (no table rendered), and a note carrying fields outside the set (omitted)
+- [x] 4.7 Implement the callout transform for blockquotes opening `> [!type] Title`, covering `warning`, `important`, `danger`, `note`, `abstract`, `tip`, `quote`, `success`, `info`; verify a golden-file test renders each type with its title, body, and type-distinguishing markup
+- [x] 4.8 Drop ` ```base ` blocks entirely, emitting nothing to the page; verify a golden-file test asserts the block's absence and that surrounding content renders
+- [x] 4.9 Render images referenced by published notes and verify a golden-file test; verify non-image attachments produce no page and no download
+- [x] 4.10 Render the per-page frontmatter table at the foot of every page over the fixed field set `type, area, grade, status, owner, tags, updated, starts, ends`; verify tests cover a note with some fields, a note with none (no table rendered), and a note carrying fields outside the set (omitted)
 
 ## 5. Site assembly
 
