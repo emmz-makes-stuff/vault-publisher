@@ -53,7 +53,7 @@ These come first deliberately: the guarantee must be in place and proven before 
 - [x] 5.3 Render the explorer with `<details>`/`<summary>`, emitting the current page's ancestor folders already open; verify a golden-file test on a nested page shows its ancestors open and unrelated folders closed
 - [x] 5.4 Render the page layout as a hast tree serialised by `rehype-stringify`, never string concatenation; verify a test asserts that a note title containing HTML metacharacters is escaped
 - [x] 5.5 Render the vault root `Index.md` as the site front page under the same rules as any other page; verify a golden-file test including a degraded link in the index
-- [ ] 5.6 Write the single light-theme stylesheet covering typography, callout types, tables, task marks, and the explorer; verify no client-side JavaScript is emitted anywhere in the output
+- [x] 5.6 Write the single light-theme stylesheet covering typography, callout types, tables, task marks, and the explorer; verify no client-side JavaScript is emitted anywhere in the output
 - [ ] 5.7 Make pages readable at mobile widths, with wide tables handled without breaking layout; verify by inspecting the rendered output at a narrow viewport
 
 ## 6. Warnings and CLI

@@ -4795,6 +4795,271 @@ No blockers, no nits. Clear to gate/tick/commit.
 
 → @architect
 
+**[architect]** Block B closed. Reviewer `Approve` on re-audit (one round: the output-path collision
+blocker, ruled and fixed). Gates `BUILD_EXIT:0` `TEST_EXIT:0` (163) `FORMAT_EXIT:0` (after
+`format-fix` — the DEVLOG, six for six) `LINT_EXIT:0` `VALIDATE_EXIT:0`. `5.3`, `5.4`, `5.5` ticked,
+committed as `0d73dac`.
+
+**[architect]** Brief — block C (5.6–5.7): the stylesheet and mobile. The last block of §5.
+
+**Tasks.**
+
+- `5.6` Write the single light-theme stylesheet covering typography, callout types, tables, task
+  marks, and the explorer. **Verify no client-side JavaScript is emitted anywhere in the output.**
+- `5.7` Make pages readable at mobile widths, with wide tables handled without breaking layout.
+  Verify by inspecting the rendered output at a narrow viewport.
+
+**Spec — `site-navigation`'s _The site is readable on a phone_** (`specs/site-navigation/spec.md`),
+three scenarios: page on a narrow screen (legible **without horizontal scrolling**, explorer still
+reachable); wide table on a narrow screen (readable, layout not broken); and — easy to miss —
+**reader's device prefers dark mode → the site still presents its light theme.**
+
+**Binding decisions.**
+
+- **Block B links `/styles.css`; this block must actually emit it.** If the writer does not put the
+  file in the output directory, every page 404s its stylesheet and the site renders unstyled while
+  every test stays green. Wire it into `writeSite` (or whatever `src/index.ts` calls) and **test that
+  the file lands**, not merely that the string exists in the source.
+- **Light theme only, and it must survive a dark-mode device.** The spec scenario is explicit. That
+  means not leaving colours to the user-agent default: set an explicit background and foreground
+  rather than inheriting, and do not add a `prefers-color-scheme: dark` block. Consider whether
+  `color-scheme: light` belongs here — form controls and scrollbars are what the UA darkens on its
+  own, and this page has `disabled` checkboxes from GFM task lists. **Test the dark-mode scenario**
+  in whatever form is actually testable — at minimum, assert the emitted CSS contains no dark-scheme
+  media query and does set explicit colours.
+- **Zero client-side JavaScript, and `5.6` asks you to _verify_ it, not to refrain from adding it.**
+  The verification must scan the **whole emitted output** — every page and every asset — for
+  `<script>`, `javascript:` URLs, and inline event-handler attributes, and it must run over a
+  rendered fixture site, not over the source. Ablate it: put a `<script>` into a fixture page's
+  render path, watch the named test go red, restore it. A check that has never seen a failure is
+  worth nothing here, and this project is ten for ten on exactly that.
+- **The explorer stays reachable on a phone with no script.** `<details>`/`<summary>` is the only
+  interaction primitive available. If a CSS-only layout change is enough, prefer that. If reaching it
+  genuinely needs a markup change, make it — but say so clearly in your DEVLOG post so the reviewer
+  re-checks block B's goldens rather than discovering the diff.
+- **Wide tables scroll inside their own container**, not the page. The page body must never scroll
+  horizontally — that is the spec's "without horizontal scrolling" scenario failing.
+- **One hand-written stylesheet**, per `design.md` §2. No framework, no CSS build step, no Vite — the
+  standing frontend preference assumes a bundle and explicitly does not apply here.
+- **Callout types** need styling per type; `src/callouts.ts` is where the class names are decided.
+  Read it rather than inventing names.
+
+**`5.7` will not be ticked by an automated gate.** Its verification is visual, which makes it a §4
+human-in-the-loop task: I hand the Product Owner a way to look at it and wait for their word. So
+**produce the artifact that makes that possible** — a rendered fixture site in a known location and
+the exact command to serve or open it, quoted in your DEVLOG post. Do everything automatable
+(container overflow, viewport meta, no body-level horizontal scroll) and test that; leave the "does it
+actually look right" half to the Product Owner.
+
+**Standing rules from §4:** one `it()` per guarantee, golden compare and guarantee assertion never
+sharing one; any assertion grepping a confidential name greps its percent-encoded form too; and for
+every guarantee, remove the protection, watch the named test go red, restore, report what it printed.
+
+**Fixtures.** No real note titles, no client name, no vault-derived content.
+
+**Done-gates.** `make build` `BUILD_EXIT:0`, `make test` `TEST_EXIT:0` (yours and all 163 existing),
+`make format` `FORMAT_EXIT:0`, `make lint` `LINT_EXIT:0`, `make validate` `VALIDATE_EXIT:0`. Quote the
+exit lines. `make format-fix` then `make format` for the DEVLOG. Do not commit, do not tick — post
+here and hand back to me.
+
+**[worker]** Block C (5.6–5.7) implemented — `src/styles.ts` is new (the one hand-written stylesheet,
+exported as a string constant rather than a `.css` asset, since `rootDir: src`/`outDir: dist` in
+`tsconfig.json` has no asset-copy step and adding one is a Makefile/build change outside this block);
+`src/writer.ts` edited to write it; no markup change to `page.ts` or `explorer.ts`.
+
+- `5.6` — `writeSite` (`src/writer.ts`) now also writes `STYLESHEET` to `<outputDir>/styles.css`,
+  after the collision check and before any page write, so a run either writes a complete site
+  (styles included) or writes nothing. Styled: typography (system font stack, headings, code/pre),
+  all nine callout types from `src/callouts.ts` read directly (`.callout-note`, `-info`, `-abstract`,
+  `-tip`, `-success`, `-quote`, `-warning`, `-important`, `-danger`), tables including
+  `.frontmatter-table`, GFM task marks (`.contains-task-list`, `.task-list-item input[type=checkbox]`),
+  and the explorer (`nav.explorer`, nested `<details>`/`<summary>`). No `<script>`, no inline handler,
+  nothing referencing one.
+- **No-client-JS verification** (the brief's real ask for `5.6`, not merely "don't add any"): new
+  `test/no-client-js.test.ts` runs the actual CLI against the integration-vault fixture into a temp
+  output dir, walks every emitted file by hand (not `readdir`'s `recursive: true` — sync/async disagree
+  on symlink descent, a bad default for a security-relevant scan), and asserts zero matches for
+  `<script`, `javascript:`, or an inline `on*=` handler attribute across the whole output — pages and
+  `styles.css` alike. A separate `it()` unit-tests the scanner itself against synthetic bad content
+  first (proves it isn't vacuously passing), per the standing rule against a check nothing has ever
+  seen fail.
+- `5.7` — mobile: viewport meta was already in `page.ts` from block B. CSS-only, no markup change:
+  `table { display: block; overflow-x: auto; max-width: 100% }` makes each table (including wide ones)
+  its own horizontal-scroll container — the element itself becomes the scroll box, no wrapper div
+  needed; `pre` gets the same treatment for long code lines. `html, body { overflow-x: hidden }` keeps
+  the page itself from ever scrolling sideways. `.layout` is a flexbox (explorer left, content right)
+  that switches to `flex-direction: column` under a 40em breakpoint, so the explorer stacks above the
+  content on a phone — still reachable through the same `<details>`/`<summary>` block B rendered, no
+  script, no markup change, so **block B's goldens are untouched** (confirmed: `explorer.test.ts` and
+  `site.test.ts` pass unmodified).
+- **Dark-mode-device scenario** (`site-navigation`'s third, easy-to-miss one): `:root { color-scheme:
+light }` and explicit `background`/`color` on `body`, `h1`–`h6`, `a`, `code`/`pre`, callouts, and
+  table cells. No `prefers-color-scheme: dark` block exists anywhere in `STYLESHEET`, asserted
+  directly. `color-scheme: light` specifically covers the GFM task-list `disabled` checkboxes
+  (`pipeline.ts`'s comment already notes they're UA-rendered) — without it a dark-mode browser darkens
+  those controls even though every authored colour on the page stays light.
+- New `test/styles.test.ts` (7 tests) asserts: no dark media query, `color-scheme: light` present,
+  explicit `body` background/colour, a selector per callout type, `table`'s own `overflow-x: auto`,
+  `html, body`'s `overflow-x: hidden`, and the `.layout` column-stack under the mobile media query.
+
+**Ablations (the eleventh-plus check), each removed then restored:**
+
+- Removed the `writeFile(.../styles.css, STYLESHEET)` call from `writeSite` → 3 named tests went red:
+  both `writer.test.ts` "5.6 the stylesheet actually lands" tests (`ENOENT` reading `styles.css`) and
+  `index.test.ts`'s "writes styles.css to the output root" test, same cause via the CLI. Confirms the
+  writer, not just the source string, is what these tests actually check.
+- Injected a raw `<script>alert(1)</script>` element directly into `page.ts`'s document body (bypassing
+  the pipeline, simulating what a broken escaping path would leak) → `no-client-js.test.ts`'s named
+  whole-output test went red, reporting `<script> tag` violations on all three rendered pages
+  (`index.html`, `Handbook/Index.html`, `Handbook/Onboarding.html`) — the scanner isn't just checking
+  `styles.css` or one golden string, it inspects everything the CLI actually wrote.
+- Added a `@media (prefers-color-scheme: dark) { body { background: #000000 } }` block to
+  `STYLESHEET` → `styles.test.ts`'s "never defines a prefers-color-scheme: dark block" test went red
+  (`toMatch` found the pattern it's meant to guard against).
+
+All three restored; `diff` against a pre-ablation backup matched after each restore.
+
+**5.7 — visual verification, not automated.** Generated a rendered fixture site from the integration
+vault fixture (invented content only) at `rendered-preview/` (gitignored, regenerate on demand — not
+committed):
+
+```
+node src/index.ts test/fixtures/integration-vault/publish.config.yaml rendered-preview
+npx serve rendered-preview   # or: python3 -m http.server -d rendered-preview 8080
+```
+
+Then open `http://localhost:3000` (or `:8080`), resize the viewport to a phone width (~375px), and
+with the OS/browser set to dark mode confirm: the page stays light (no dark background anywhere), the
+explorer (`Handbook`) is reachable by tapping its `<summary>` with the browser's own JS disabled, the
+front page's table doesn't force the whole page to scroll sideways, and nothing needs a script to
+work. I did everything automatable (viewport meta, container overflow, `color-scheme: light`, the
+no-dark-media-query check) and tested it above — the "does it actually look right" half is the Product
+Owner's per the brief. **Not claiming `5.7` verified; needs human confirmation.**
+
+**Gates:** `BUILD_EXIT:0`, `TEST_EXIT:0` (176 tests, 16 files — 3 new: `styles.test.ts`,
+`no-client-js.test.ts`, plus additions to `writer.test.ts` and `index.test.ts`), `FORMAT_EXIT:0`
+(after `make format-fix` on this post), `LINT_EXIT:0`, `VALIDATE_EXIT:0`. `GATES_EXIT:0` overall.
+
+Tasks completed: `5.6` (gate-verified). `5.7` implemented and self-tested for everything automatable;
+the visual half needs the Product Owner's confirmation per the recipe above before it's tickable.
+
+→ @reviewer
+
+**[reviewer]** Block C (5.6–5.7) audited — working tree diff against `0d73dac`
+(`src/styles.ts`, `test/styles.test.ts`, `test/no-client-js.test.ts` new; `src/writer.ts`,
+`test/writer.test.ts`, `test/index.test.ts`, `.gitignore` modified).
+
+**Verdict: Approve with nits.**
+
+Re-ran `make gates` cold: `BUILD_EXIT:0`, `TEST_EXIT:0` (176 tests, 16 files, matches the worker's
+count), `FORMAT_EXIT:0`, `LINT_EXIT:0`, `VALIDATE_EXIT:0`, `GATES_EXIT:0`. No new dependency
+(`package.json`/`package-lock.json` untouched). No `any`, `as`, `!`, `@ts-ignore`, or
+`eslint-disable` in any of the new or touched files.
+
+**Independently re-ran the worker's ablations and added two of my own, all confirmed:**
+
+- Removed the `styles.css` write from `writeSite` → both `writer.test.ts` "5.6 the stylesheet
+  actually lands" tests and `index.test.ts`'s styles.css test went red as reported, restored clean.
+- Injected `javascript:alert(1)` **inside the `STYLESHEET` template string itself** (i.e. into the
+  emitted asset, not a page) — `no-client-js.test.ts` went red:
+  `{ 'styles.css': [ 'javascript: URL' ] }`. This is the variant the brief specifically flagged
+  (JS landing in `styles.css` rather than a page) and the worker's own DEVLOG post only ablated a
+  `<script>` in `page.ts`; I've now separately confirmed the asset-scan half. Restored clean.
+- Stripped `color:` from the standalone `body {}` rule in `src/styles.ts` (leaving `background:`
+  in place, and leaving the earlier `html,\nbody {}` selector-list rule untouched) →
+  `styles.test.ts`'s "sets an explicit background and foreground colour on body" went red as
+  expected. Restored clean; `diff` against backup matched after each restore.
+
+**Per the checklist:**
+
+1. `no-client-js.test.ts` scans the whole output directory (walked by hand, not
+   `readdir(..., {recursive:true})`, per the sync/async symlink-divergence note already in this
+   project's memory) from a real `spawnSync` CLI run against the integration-vault fixture — not
+   source strings. `scanForClientJs` is unit-proven against synthetic bad content first (one `it()`
+   per guarantee, guarantee before/separate from the walk). Confirmed by ablation above that it
+   catches JS landing in `styles.css`, not only in a page.
+2. `styles.css` landing on disk is asserted by content equality against `STYLESHEET` read back off
+   the filesystem (`writer.test.ts`), plus a CLI-level check in `index.test.ts`. Ablation confirms.
+3. Dark-mode scenario: `color-scheme: light` plus no `prefers-color-scheme: dark` block, both
+   asserted and both ablation-proven (mine and the worker's). One nit below.
+4. Confirmed independently — `git status` shows no changes to `src/page.ts` or `src/explorer.ts`;
+   `.explorer`/`.content`/`.layout` class names in the new CSS match the class names those two
+   modules already emit (`explorer.ts:19`, `page.ts`'s `buildDocument`), and DOM order already puts
+   the explorer before `main.content`, which combined with `flex-direction: column` under the 40em
+   breakpoint is what makes it stack above the content with no markup change. `explorer.test.ts` and
+   `site.test.ts` genuinely pass unmodified.
+5. **`html, body { overflow-x: hidden }` — mostly fitting, with one real gap.** For `table` and
+   `pre`, the CSS gives the overflowing content its own `overflow-x: auto` scroll box first, so the
+   page-level `hidden` never has to hide anything real for those two cases — that part fits rather
+   than merely suppresses. But **no rule in `src/styles.ts` sets `overflow-wrap`/`word-break`
+   anywhere**, including on `body`, `.content`, or inline `code`. An unbreakable long token in
+   ordinary prose — a bare URL, a long filename, inline code with no spaces — that isn't inside
+   `<table>`/`<pre>` has no wrap point and no scroll container of its own; the ancestor `overflow-x:
+hidden` would then clip it silently, with no scrollbar and no visual indication anything is
+   missing. That's a stronger failure than "doesn't fit" — it's "fits by deleting the tail of the
+   content" — and it isn't implausible content for real vault notes (an inline URL in prose is
+   common). Nothing in `styles.test.ts` exercises this case. Not a confidentiality leak, but it can
+   silently truncate readable content on a phone, which is exactly what the "readable on a phone"
+   requirement is about.
+6. `.gitignore`'s `rendered-preview/` is an untracked, ignored preview artifact (`git status
+--ignored` confirms), regenerated from the integration-vault fixture (invented content) per the
+   recipe in the worker's post. No rendered output is committed.
+7. Fixture/test content checked (`Confidential Client`, `Handbook`, etc.) — all pre-existing
+   invented fixtures from earlier blocks, no real note titles or client-derived content introduced
+   here.
+
+**Nits (non-blocking):**
+
+- `src/styles.ts:24` — the explicit-colour dark-mode test only checks the standalone `body {}`
+  rule. The stylesheet itself sets explicit colours much more broadly (headings, links, callouts,
+  table cells, code), which is good, but the test only proves the minimum the brief asked for. Worth
+  broadening once there's a natural place to (e.g. alongside a fix for the nit above), not worth a
+  respin on its own.
+- Consider `overflow-wrap: anywhere` (or `break-word`) on `body`/`.content` and a
+  `styles.test.ts` assertion for it, mirroring the pattern already used for the other 5.7
+  properties (presence-in-source as the testable proxy, since full-layout viewport testing isn't
+  available here). This closes the gap in point 5 above.
+
+**5.7's visual half** — correctly left unticked, correctly not automated further than it can be
+(viewport meta, container overflow, `color-scheme`, no-dark-media-query all covered by gates above);
+the rendered-preview recipe is reproducible and self-contained. Deferring to the Product Owner per
+the brief, not treating its absence as a finding.
+
+No blockers. The `overflow-wrap` gap is real but narrow (prose only, not table/pre/code-block, and
+not a confidentiality issue) — flagging it as a nit rather than gating the block on it, since 5.7's
+"readable on a phone" is still going to the Product Owner for visual sign-off regardless, and they
+can catch it there if it's visible in the fixture. Worker's call whether to fold it in now or park
+it for that sign-off.
+
+→ @architect
+
+**[architect]** Taking the reviewer's nit now rather than parking it. `overflow-wrap` is absent, so an
+unbreakable token in ordinary prose — a bare URL, a long filename — has no wrap point and is silently
+clipped by `html, body { overflow-x: hidden }`: no scrollbar, no truncation cue, text simply gone.
+
+Two reasons it does not wait. First, it is precisely the failure I asked the reviewer to look for —
+whether `overflow-x: hidden` suppresses a scrollbar or actually fits the screen. Table and `pre` fit;
+prose does not, and that half was answered "no". Second, **`5.7` goes to the Product Owner for visual
+sign-off next**, and handing them a preview with a known clipping bug wastes the one verification
+this section cannot automate. Fix it, then hand over.
+
+→ @worker: add the wrap point and a presence test matching the existing pattern in
+`test/styles.test.ts`. Ablate it like the rest. Nothing else in block C is reopened.
+
+**[worker]** Added `overflow-wrap: anywhere;` to the standalone `body {}` rule in `src/styles.ts`
+(alongside `background`/`color`/`font-family`) and a matching presence test in
+`test/styles.test.ts`, in the "5.7 wide content scrolls inside its own container" `describe` block,
+using the same `bodyRule` extraction regex as the existing "explicit background and foreground
+colour" test.
+
+Ablation: removed the `overflow-wrap: anywhere;` line, ran `test/styles.test.ts` — the new test went
+red (`expected 'body {...}' to match /overflow-wrap:\s*anywhere/`), all 7 others stayed green.
+Restored from backup, `diff` matched, full suite green again.
+
+Nothing else in block C touched. Gates: `BUILD_EXIT:0 TEST_EXIT:0`.
+
+→ @reviewer
+
 ## NEXT
 
 **Sections 1–4 are closed** (supervisor `Approve` on each; §2, §3 and §4 each took one remediation

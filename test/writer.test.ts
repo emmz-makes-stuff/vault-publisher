@@ -8,6 +8,7 @@ import {
   resolveOutputFilePath,
   writeSite,
 } from "../src/writer.js";
+import { STYLESHEET } from "../src/styles.js";
 
 describe("resolveOutputFilePath — derives from outputPathForNote, not its own path logic", () => {
   it("joins the note's outputPathForNote path onto the output directory", () => {
@@ -136,5 +137,30 @@ describe("writeSite", () => {
     await expect(
       writeSite(outputDir, [{ notePath: "../escape.md", html: "<p>Nope</p>" }]),
     ).rejects.toThrow();
+  });
+});
+
+describe("writeSite — 5.6 the stylesheet actually lands in the output directory", () => {
+  let outputDir: string;
+
+  beforeEach(async () => {
+    outputDir = await mkdtemp(path.join(tmpdir(), "vault-publisher-writer-styles-"));
+  });
+
+  afterEach(async () => {
+    await rm(outputDir, { recursive: true, force: true });
+  });
+
+  it("writes styles.css at the output root, matching STYLESHEET byte for byte", async () => {
+    await writeSite(outputDir, [{ notePath: "Index.md", html: "<p>Home</p>" }]);
+
+    const written = await readFile(path.join(outputDir, "styles.css"), "utf8");
+    expect(written).toBe(STYLESHEET);
+  });
+
+  it("writes styles.css even when no page is published", async () => {
+    await writeSite(outputDir, []);
+
+    await expect(readFile(path.join(outputDir, "styles.css"), "utf8")).resolves.toBe(STYLESHEET);
   });
 });
