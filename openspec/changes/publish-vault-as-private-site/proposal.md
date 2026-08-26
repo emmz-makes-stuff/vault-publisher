@@ -10,7 +10,7 @@ This is a greenfield project. Everything below is new.
 
 - **Explicit selection.** A configuration file names the folders and individual notes that publish. It is the only source of truth. The `audience:` frontmatter key stays in the vault for the owner's own use in Obsidian and is ignored here.
 - **An exclusion floor that overrides configuration.** A fixed set of paths can never publish, whatever the configuration says, so that a typo cannot leak them.
-- **Obsidian-faithful rendering.** Wikilinks (including aliased and heading forms), callouts, tables, task checkboxes and images render as published pages. Links to unselected or nonexistent notes degrade to plain text rather than breaking. Obsidian Bases query blocks are dropped in this version. Attachments are not published.
+- **Obsidian-faithful rendering.** Wikilinks (including aliased and heading forms), callouts, tables and task checkboxes render as published pages. Links to unselected or nonexistent notes degrade to plain text rather than breaking. Obsidian Bases query blocks are dropped in this version. Attachments are not published, images included: the published set is Markdown notes only, so an image embed degrades to plain text with a warning like any other unpublishable target.
 - **Non-fatal warnings.** Every degraded link and dropped block is reported to the build output. A degraded page still ships; warnings never fail a publish.
 - **A navigable site.** A left-hand explorer mirroring the vault's folder structure, the vault's own index note as the front page, a per-page frontmatter table, one light theme, readable on a phone.
 - **Publishing driven from the vault repository**, triggered by a push to its main branch.
@@ -21,7 +21,7 @@ This is a greenfield project. Everything below is new.
 ### New Capabilities
 
 - `note-selection`: which notes publish, expressed as configuration, and the fixed exclusion floor that configuration cannot override.
-- `note-rendering`: how Obsidian-flavoured Markdown becomes a published page — link resolution and degradation, callouts, tables, checkboxes, images, frontmatter presentation, and what is deliberately not rendered.
+- `note-rendering`: how Obsidian-flavoured Markdown becomes a published page — link resolution and degradation, callouts, tables, checkboxes, frontmatter presentation, and what is deliberately not rendered.
 - `site-navigation`: the explorer control, the front page, page labelling and ordering, and mobile readability.
 - `publish-pipeline`: what triggers a publish, and how warnings are reported without failing it.
 - `reader-access`: the guarantee that no unauthenticated request reaches published content, magic-link authentication, and allow-list management.
