@@ -4127,66 +4127,158 @@ No ablation left the suite green — all three land exactly where the brief pred
 
 → @reviewer
 
+**[supervisor]** Section 4 re-audit (round 2) — scope `git diff 5e59698..HEAD`, four commits
+(`f4adb19`, `50df805`, `60486a6`, `b2bb448`).
+
+**Verdict: Approve.** Section 4 is closed.
+
+**The three claimed fixes were re-proved here, not read.** I copied the tree to a scratch directory
+(node_modules symlinked, working tree untouched), reproduced the baseline — 117/117, `tsc -p
+tsconfig.check.json` clean — and ablated each guarantee:
+
+1. **B2 (required context).** Made `wikilinks` optional again and stripped the argument from a call
+   site: `tsc` clean, the omission compiles. Restored the parameter to required with the same
+   stripped call site: `test/pipeline.test.ts(36,24): error TS2554: Expected 2-3 arguments, but got
+1.` Proved in both directions — the guarantee is carried by the required parameter, not by
+   something incidental.
+2. **B3 (exclusion floor, not merely selection).** Deleted the
+   `.filter((notePath) => !isExcluded(notePath))` from `src/selection.ts:74`. **17 tests red across
+   2 files**, including the named integration test `publishes a selected note, resolves a link to a
+published sibling, and degrades links to a never-selected note and a floor-withheld note, both
+with no route`. The reviewer's nit was real and the second fixture note fixes it: the test now
+   fails when the floor is disabled, which the first version did not. Restored byte-identical.
+3. **B1 (embed degradation).** Routed embeds instead of degrading them (`if (!isEmbed)` →
+   `if (!isEmbed || isEmbed)`, making the whole embed branch unreachable). **6 named tests red**, all
+   in `renderMarkdown embeds — no attachment, image or otherwise, is ever published`, including
+   `emits no route for a non-image attachment` and the warnings-list test. Restored byte-identical;
+   pristine copy re-verified 117/117, `tsc` clean.
+
+**The deletion is complete and reachable code survived it.** `grep -rniE
+'IMAGE_EXTENSIONS|isImagePath|assetPathToSrc' src test` exits 1 — nothing left. No `<img>`, no `src=`
+anywhere in `src/`. Every exported symbol in `src/` has consumers; §4 added no orphan and removed
+the one it had (`assetPathToSrc`). `src/index.ts:27`'s discarded `published` is §3's carried note,
+unchanged.
+
+**The amended spec and the shipped code now genuinely agree.** `note-rendering`'s Image embed
+scenario ("degrades to plain text with a warning ... no `<img>`, `src`, or path") is exactly what
+`src/wikilinks.ts:221-231` does, on the same branch for every attachment kind, with the `.md` split
+only choosing between the transclusion message and the attachment one. "Unsupported constructs are
+dropped" now states the published set is Markdown notes only, which is what `listVaultNotes`
+enforces. Every requirement in `note-rendering` and in `publish-pipeline`'s degradation/warning half
+is satisfied by code an ablation can falsify.
+
+**First-pass "what held" re-checked against the remediated code — all still hold.** One publish
+decision (`resolveSelection`'s return filter; `buildNoteIndex` consumes it, the integration test
+proves the join). One resolver — `resolveWikilink` is still the only place answering "is this
+published", shared by links and embeds. One rendering path — no HTML string building anywhere in
+`src/`; every node is mdast/hast serialised by `rehype-stringify`. One warning reporter — all ten
+`collector.push` sites route through `WarningCollector`, and `grep` for
+`console.`/`process.stderr`/`process.stdout`/`process.exitCode` outside `warnings.ts`/`index.ts`
+exits 1. Gate coverage intact: `vitest.config.ts`'s `test/**/*.test.ts` picks up the new
+`pipeline-integration.test.ts` (9 files, confirmed), `tsconfig.check.json` includes `test`, and the
+new fixture notes are not in `.prettierignore`, so they stay in the format gate's view.
+
+**One finding of record, not a blocker — `proposal.md` still says images publish.**
+`openspec/changes/publish-vault-as-private-site/proposal.md:13` reads "callouts, tables, task
+checkboxes **and images** render as published pages", and `:24` lists "images" among what
+`note-rendering` covers. Both now contradict the amended spec and the shipped code. It binds nothing
+(`openspec validate` is green, no task or spec depends on it) so it does not hold the section — but
+it is the artifact that goes to the archive as the change's stated intent, and a future reader would
+take it as delivered. **@architect: one edit, before §5 opens.** I checked the rest: §5's tasks
+(5.1–5.7) never mention images; §8's do not either; `reader-access:18`'s "an image or other published
+asset" is still satisfiable and correct — it is about Access gating the hostname, and 2.6 already
+proved it with a deployed placeholder image, not a vault image. `tasks.md` 4.9 carries the amendment
+note and is correctly still ticked. §4 has no human-in-the-loop task.
+
+**Architectural notes for `## NEXT` — what §5 inherits.**
+
+- **`notePathToHref` is a one-way scheme with no inverse yet, and that is §5's first drift risk.**
+  `src/wikilinks.ts:42-46` maps a note path to `/<path minus .md, each segment
+percent-encoded>.html`. §5 adds the writer that decides where the file actually lands. If it
+  computes that path independently, hrefs and files disagree and every link 404s behind
+  authentication — the failure mode no test in §4 can see. Brief §5 to derive the output path from
+  `notePathToHref` (or a shared function it and the writer both call), and to assert the round trip.
+- **`renderMarkdown(markdown, wikilinks, frontmatter?)` — the context is now required.** §5's page
+  renderer must build one `WikilinkContext` per note (`noteId` = vault-relative path, one
+  `noteIndex` built once from `published`, one `collector` per run). It must not build a second
+  index, and must not re-walk the vault for the explorer: **5.1 takes the same `published` array
+  `buildNoteIndex` takes**, or the site grows a second model of "published".
+- **The warning contract is `collector.push(noteId, message)` and `reportWarnings` is the only
+  writer.** Anything §5 degrades (an unlabelled explorer entry, a missing front page) goes through
+  the collector, never `console`.
+- **The nested-anchor degrade is silent, and that is the one degradation §4 does not report.** A
+  wikilink inside a Markdown link resolves fine but renders as plain text with no warning
+  (`src/wikilinks.ts:210-213`). It does not violate `publish-pipeline` — the requirement covers links
+  "it could not resolve", and this one resolved — and there is no confidentiality consequence, since
+  no anchor is emitted at all. But 8.5 reviews the `[WARNING]` lines to confirm every degraded link
+  is expected, and this class will never appear there. Either add the `collector.push` (one line,
+  same branch) or record in the §5 brief that this degradation is deliberately silent so 8.5 is not
+  read as complete coverage. **@architect — your call; I would take the one line.**
+- **B4's lesson is now load-bearing for §5's goldens**: any assertion that a confidential name is
+  absent must grep the percent-encoded form too. `test/pipeline-integration.test.ts:57-62` is the
+  shape to copy.
+- **The integration vault is narrower than B3 asked for** — it carries wikilinks only, no `base`
+  block, callout or frontmatter in the same render. That is fine for what B3 existed to prove (the
+  §3→§4 join and the floor, both ablation-verified). Worth widening when §5 writes its first
+  whole-page golden, so one fixture exercises the full page end to end.
+
 ## NEXT
 
-**Sections 1, 2 and 3 are closed** (supervisor `Approve` on each, one remediation round apiece).
-23/58 tasks. Next is **section 4 — the markdown pipeline**.
+**Sections 1–4 are closed** (supervisor `Approve` on each; §2, §3 and §4 each took one remediation
+round). 33/59 tasks. Next is **section 5 — site assembly**.
 
-**Two things need the Product Owner before §4 is briefed.** Both are named below; neither is a thing
-to improvise around.
+**§4 delivered the pipeline.** `src/pipeline.ts` is the single `unified()` processor;
+`src/wikilinks.ts` holds the one resolver and the one note index; `src/warnings.ts` the one reporter;
+`src/callouts.ts`, `src/bases.ts`, `src/frontmatter.ts`, `src/tree.ts` the rest. `resolveSelection`'s
+return filter is still the only thing that decides what publishes, and there is no HTML string
+building anywhere in `src/`. The supervisor re-verified all of that after the remediation rather than
+carrying its first-pass conclusions forward.
 
-**Section 3 delivered the published-set model.** `src/config.ts` validates and never returns a
-partial config; `src/selection.ts` resolves selection, applies the exclusion floor last and
-unconditionally, and refuses any path that leaves the vault; `src/index.ts` reports. There is exactly
-one place that says a note publishes — `resolveSelection`'s return filter — and §4 must not add a
-second.
+**Ten for ten.** Every protection this project has written was, on first attempt, verified by
+something that could not have failed. §4 added three: the guarantee assertions that never executed
+because a golden `toBe` aborted the `it()` first; a whole requirement (`note-rendering`'s Image
+scenario) that four block reviews and 116 tests passed over because the code could not satisfy it;
+and — inside the fix for that — an integration test that stayed green with the exclusion floor
+disabled. **The eighth was caught before its commit; the tenth was caught inside the fix for the
+ninth.** Assume the eleventh is already written. Running the code with the protection removed is
+still the only thing that has ever surfaced one.
 
-**Six for six.** Every protection this project has written has, on first attempt, been verified by
-something that could not have failed: the `.prettierignore` that made `--check` read nothing; the
-gate that type-checked no tests; the `workers.dev` 404 indistinguishable from a typo; the `grep` run
-in the wrong directory; the publishability check that named the address it called absent; and now
-B1's four boundary tests, which passed identically with the boundary check deleted. **The last one
-appeared inside the block carved to fix that exact class of finding**, one function over. Assume the
-next one is already written and not yet found; the only thing that has ever surfaced them is running
-the code with the protection removed.
+**Two rules §4 paid for, now standing:**
 
-**Carried into §4 — the sequencing problem, flagged by the supervisor:**
+- **A golden-file compare and a guarantee assertion never share an `it()`, the compare first.** Vitest
+  aborts at the compare and the guarantee never runs. One `it()` per guarantee.
+- **Any assertion grepping for a confidential name must also grep its percent-encoded form.**
+  `Confidential%20Target` is a different string, and §5 emits real hrefs everywhere.
 
-- **`reportWarnings` is trapped in the CLI entry point and §4 needs it first.** Tasks 4.5 and 4.6
-  both emit warnings, but the reporter is 6.1 — two sections later. Either extract `src/warnings.ts`
-  as the opening task of §4 or move 6.1 to the front of it. **Product Owner's call**, since it
-  reorders the change's tasks.
-- **`6.3` changes the contract behind the vault root.** It takes vault path and config path
-  separately, so the root stops being `path.dirname(configPath)`; `realpath(vaultRoot)` and the
-  boundary check must be re-pointed at the supplied root when it lands. Put this in the §6 brief.
-- **Hardlinks defeat `isWithinVaultBoundary`** — `realpath` returns the link itself, so
-  `ln Private/Secret.md Handbook/HardAlias.md` publishes excluded content under an unexcluded path.
-  Verified by the supervisor. It needs a deliberate non-symlink `ln`, no Obsidian workflow creates
-  one, and detecting it means inode comparison across the vault. **A threat-model decision for the
-  Product Owner**, parked for §6/§8 hardening rather than treated as an oversight.
-- **`❓` `publish-pipeline`'s "Nothing degraded" scenario says the build output contains _no_ warning
-  lines**, while `note-selection` mandates a `[WARNING]` for unmatched config entries — both can be
-  true at once. The scenario is too absolute as written; the likely fix is narrowing its wording to
-  degradation warnings, changing no behaviour. **Product Owner's call, and it must be settled before
-  4.5/4.6 are written**, because those are the tasks that will assert against it.
+**Carried into §5 — what the supervisor says it inherits:**
 
-**Carried architectural notes:**
+- **`notePathToHref` has no inverse yet** (`src/wikilinks.ts:42-46`). §5 adds the writer that decides
+  where files actually land. If it computes output paths independently, hrefs and files disagree and
+  every link 404s behind authentication — **a failure no §4 test can see.** §5 must share the
+  function and assert the round trip. This is the single most important thing in §5's first brief.
+- **The nested-anchor degrade is silent** (`src/wikilinks.ts:210-213`). Not a spec violation and no
+  confidentiality consequence, but `8.5` reviews `[WARNING]` lines with the Product Owner to confirm
+  every degraded link is expected, and this class will never appear there. **Architect's call taken:
+  add the `collector.push`** — one line plus a test, folded into §5's first block.
+- **`src/index.ts` still computes `published` and discards it.** §6 is meant to give it a consumer;
+  §5 will want it too. It has now survived two sections as an orphan.
+- **The format gate still fails on the DEVLOG at every block boundary** (four for four in §4), because
+  every agent formats before writing its post. `make format-fix` then `make format` is the sequence.
 
-- `listVaultNotes` is effectively a second gate above `resolveSelection` — safe, but say so in code.
-- `published` is computed and discarded at `src/index.ts`; §6 gives it a consumer.
-- Import-extension drift: `index.ts` imports `.ts`, everything else `.js`.
-- `.prettierignore`'s unanchored `CLAUDE.md` silently skips two fixtures — same class as the
-  `.gitignore` `vault/` trap that swallowed a fixture directory in 3.3–3.5.
-- **The format gate is the last thing everyone runs, so it is provisionally green for all of them.**
-  `FORMAT_EXIT:1` hit my pre-commit run on three of four §3 blocks, always the DEVLOG alone, because
-  every agent formats before writing its post. `make format-fix` now exists as the write half. If §4
-  repeats it, fix the sequence rather than rediscovering it per block.
-- `eslint.config.js`'s `ignores` and `tsconfig.check.json`'s `include` must move together.
-- `test/**` is bound by `strict`, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`; vitest
-  globals are off; `verbatimModuleSyntax` means `import type`.
+**Settled during §4, for the record:**
+
+- **B1 — images do not publish in v1** (Product Owner). `note-rendering` amended, `proposal.md`
+  amended, task 4.9's wording amended in place with a note, dead image code deleted.
+- **`publish-pipeline`'s "Nothing degraded" scenario** narrowed to degradation warnings.
+- **Nested anchors removed** — a wikilink inside a Markdown link renders as plain text, so §5's page
+  goldens cannot assert markup browsers repair.
+
+**Still open, unchanged from §3:**
+
+- **Hardlinks defeat `isWithinVaultBoundary`** — a threat-model decision parked for §6/§8 hardening.
 - **Unobserved claims in `reader-access`**: removal's "can no longer authenticate" half, and the
   non-disclosure scenario's timing.
-- **Access one-time code expiry: observed lapsing correctly at 10 minutes, 2026-08-25** — 8.6's
-  verification, witnessed, not yet ticked because §8 is not open.
-- **Committer identity**: the Product Owner's personal address is the git author on every commit and
+- **Access one-time code expiry: observed lapsing at 10 minutes, 2026-08-25** — `8.6`'s verification,
+  witnessed, untickable until §8 opens.
+- **Committer identity** — the Product Owner's personal address is the git author on every commit and
   would go public with the repository. Decide before publishing, not after.
