@@ -4,6 +4,7 @@ import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import rehypeStringify from "rehype-stringify";
 import { unified } from "unified";
+import { remarkWikilinks, type WikilinkContext } from "./wikilinks.js";
 
 /**
  * The unified pipeline shared by every note. Frozen at module load and
@@ -19,6 +20,7 @@ const processor = unified()
   .use(remarkParse)
   .use(remarkFrontmatter, ["yaml"])
   .use(remarkGfm)
+  .use(remarkWikilinks)
   .use(remarkRehype)
   .use(rehypeStringify);
 
@@ -27,8 +29,15 @@ const processor = unified()
  * frontmatter block is parsed separately by `frontmatter.ts`; here it is
  * only ever recognised and discarded by `remark-frontmatter` so it does not
  * leak into the body as a literal `---` block.
+ *
+ * `wikilinks` is optional so 4.1's plain-rendering tests are unaffected —
+ * with it omitted, `remarkWikilinks` is a no-op and `[[...]]` text passes
+ * through untouched. Callers that render published notes always supply it.
  */
-export async function renderMarkdown(markdown: string): Promise<string> {
-  const file = await processor.process(markdown);
+export async function renderMarkdown(
+  markdown: string,
+  wikilinks?: WikilinkContext,
+): Promise<string> {
+  const file = await processor.process({ value: markdown, data: { wikilinkContext: wikilinks } });
   return String(file);
 }
