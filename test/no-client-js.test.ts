@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { hrefToOutputPath } from "../src/wikilinks.ts";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const entryPoint = path.join(repoRoot, "src", "index.ts");
@@ -116,5 +117,71 @@ describe("whole rendered output — 5.6 zero client-side JavaScript anywhere", (
     }
 
     expect(violationsByFile).toStrictEqual({});
+  });
+});
+
+const ROOT_ABSOLUTE_HREF = /href="(\/[^"]*)"/g;
+
+/**
+ * Every root-absolute `href` attribute value in `html`, verbatim — still
+ * percent-encoded, exactly as written to the page.
+ */
+function internalHrefsIn(html: string): string[] {
+  return [...html.matchAll(ROOT_ABSOLUTE_HREF)]
+    .map((match) => match[1])
+    .filter((href): href is string => href !== undefined);
+}
+
+/**
+ * §5's headline guarantee — every href resolves to a file the run actually
+ * emitted — closed by construction (the writer and `notePathToHref` share
+ * `outputPathForNote`) and never by observation until now: the round-trip
+ * test in `wikilinks.test.ts` proves the two path functions agree with each
+ * other, and `writer.test.ts` proves the writer calls the shared function,
+ * but nothing walks a rendered site and checks a page's own links against
+ * what was actually written to disk. Reuses this file's CLI-run-and-walk
+ * pattern rather than a second one.
+ */
+describe("whole rendered output — every internal href resolves to an emitted file", () => {
+  let outputDir: string;
+
+  beforeEach(async () => {
+    outputDir = await mkdtemp(path.join(tmpdir(), "vault-publisher-link-integrity-"));
+  });
+
+  afterEach(async () => {
+    await rm(outputDir, { recursive: true, force: true });
+  });
+
+  it("has no page whose href names a file the run did not write", async () => {
+    const result = spawnSync(
+      process.execPath,
+      [entryPoint, integrationVaultConfigPath, outputDir],
+      {
+        encoding: "utf8",
+      },
+    );
+    expect(result.status).toBe(0);
+
+    const files = await allFiles(outputDir);
+    const emittedPaths = new Set(
+      files.map((file) => path.relative(outputDir, file).split(path.sep).join("/")),
+    );
+
+    const htmlFiles = files.filter((file) => file.endsWith(".html"));
+    expect(htmlFiles.length).toBeGreaterThan(1);
+
+    const brokenLinksByFile: Record<string, string[]> = {};
+    for (const file of htmlFiles) {
+      const content = await readFile(file, "utf8");
+      const broken = internalHrefsIn(content).filter(
+        (href) => !emittedPaths.has(hrefToOutputPath(href)),
+      );
+      if (broken.length > 0) {
+        brokenLinksByFile[path.relative(outputDir, file)] = broken;
+      }
+    }
+
+    expect(brokenLinksByFile).toStrictEqual({});
   });
 });

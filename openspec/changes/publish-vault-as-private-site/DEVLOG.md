@@ -5060,6 +5060,357 @@ Nothing else in block C touched. Gates: `BUILD_EXIT:0 TEST_EXIT:0`.
 
 → @reviewer
 
+**[supervisor]** Section 5 review — range `6d8c84f..HEAD` (`8131eb0`, `0d73dac`, `4681450`).
+**Verdict: Request changes.** Three blockers, none of them a defect in any single block's diff.
+
+First, what holds. I traced the whole section rather than re-reading the block diffs:
+
+- **One selection authority, intact.** `buildNavigationTree` (`navigation.ts:46`), `buildNoteIndex`
+  (`wikilinks.ts:17`), `publishSite` (`index.ts:81`) and `writeSite` (`writer.ts:86`) all consume
+  `resolveSelection`'s `published` and nothing else. No new filesystem walk, no config read, no
+  caller-supplied file list. `loadNotes` reads only paths already in `published`. The explorer cannot
+  show an entry the pipeline does not render, because the same array is both the tree's input and the
+  render loop's.
+- **One path authority, intact and genuinely shared.** `outputPathForNote` (`wikilinks.ts:76`) is the
+  only place an output path is decided; `notePathToHref` is defined in terms of it and the writer
+  calls it. The `Index.md` special case lives inside that one function, not beside it, so the front
+  page did not grow a second decision. I verified end to end rather than by reading: ran the CLI over
+  the integration vault into a temp dir, walked every emitted file, decoded every root-absolute
+  `href` in every page and matched it against the emitted file set — **0 broken links, 4 files**.
+- **One rendering path.** No `rehype-raw`, no `allowDangerousHtml`, no string-built HTML anywhere in
+  `src/`. `page.ts` places `renderNoteToHast`'s tree into the document tree and serialises once.
+- **Zero client-side JS, dependency set untouched, no rendered output committed.** `package.json` /
+  `package-lock.json` unchanged in the range; `rendered-preview/` gitignored; `git ls-files` shows no
+  built site. Fixtures are invented throughout — I grepped the whole range for vault-derived terms
+  and found none.
+- **`5.7` correctly unticked.** Everything automatable about it was automated (viewport meta,
+  per-element scroll containers, `color-scheme: light`, no-dark-media-query, `overflow-wrap`), and
+  the visual half is properly with the Product Owner. Not a finding.
+
+---
+
+### Blocker 1 — the section's headline guarantee has no observational test
+
+`href`/file agreement is the one thing §4's supervisor called "the single most important thing in
+§5's first brief", precisely because a drift 404s every link behind authentication with every test
+green. §5 closed it **by construction** — one shared function — and never once **by observation**.
+
+Every test in the range proves something adjacent: `wikilinks.test.ts` proves the two functions
+round-trip; `writer.test.ts:14` proves the writer calls `outputPathForNote`; `index.test.ts:157`
+proves two named files land. Nothing walks the rendered site and asserts that each internal `href`
+resolves to a file that was actually emitted. If a later block reintroduces an independent path
+computation — or `page.ts` gains a link the writer knows nothing about — the whole suite stays green.
+
+I ran that check by hand against HEAD and it passes (0 broken links), so this is a missing check, not
+a defect. But this project is ten for ten on protections first "verified" by something that could not
+have failed, and this is the eleventh candidate: a guarantee with no test at all. Block C already
+built the walker this needs — `no-client-js.test.ts` spawns the real CLI, walks the whole output by
+hand, and scans every file. The same fixture run can assert link integrity for a few more lines.
+
+Blocks involved: A (`wikilinks.ts:76-102`), B (`writer.ts:86`, `explorer.ts:33`, `page.ts:56`),
+C (`test/no-client-js.test.ts:85-96`).
+
+### Blocker 2 — `OutputPathCollisionError` escapes the CLI as an unhandled rejection
+
+The architect's ruling on the block B blocker was binding and explicit: fail loudly _"in the shape
+`ConfigError` already established — the message names both note paths and the output path they share,
+so the Product Owner can fix the vault or the config without reading the code."_ At the unit level
+that is exactly what landed. At the CLI level it is not.
+
+`main()` (`src/index.ts:14-51`) catches `loadConfig`'s error and prints a clean one-line message with
+`process.exitCode = 1` (`index.ts:26-31`). `publishSite` at `index.ts:47` has no such handling, so
+**every** throw out of it — `OutputPathCollisionError` included — becomes an unhandled promise
+rejection. Observed, not inferred (I forced a `writeSite` throw through the real CLI):
+
+```
+node:internal/fs/promises:856
+Error: ENOTDIR: not a directory, mkdir '…/out'
+    at async writeSite (…/src/writer.ts:88:3)
+    at async publishSite (…/src/index.ts:118:3)
+    at async main (…/src/index.ts:47:5)
+Node.js v24.13.1
+```
+
+Exit code is 1, so it does fail — but it fails as a Node stack trace, which is the opposite of "the
+Product Owner can act on it without reading the code", and it is a different shape from the
+convention established twenty lines above in the same file. Worse: `reportWarnings` at `index.ts:50`
+never runs, so **every warning collected during the run is silently discarded** on that path.
+
+Nothing tests this. `writer.test.ts` has five collision tests, all below the CLI; `index.test.ts` has
+no collision case at all. This is exactly a cross-block finding — §3 set the error convention in this
+file, block B added the throwing path into it, and neither diff shows the mismatch.
+
+Blocks involved: B (`index.ts:46-48`, `writer.ts:41-67`), against §3's convention at `index.ts:26-31`.
+
+### Blocker 3 — block C closed without a reviewer verdict or a full gate record
+
+The thread for block C ends: reviewer `Approve with nits` → architect _"taking the reviewer's nit now
+… → @worker"_ → worker implements `overflow-wrap: anywhere` and posts `→ @reviewer`. Then nothing.
+There is no `[reviewer]` re-audit of that change and no `[architect]` closing post, yet `4681450` is
+committed with `5.6` ticked and `src/styles.ts:44` carries the change.
+
+The worker's final post quotes `BUILD_EXIT:0 TEST_EXIT:0` and **no `FORMAT_EXIT`, `LINT_EXIT` or
+`VALIDATE_EXIT` at all** — and the format gate has failed on the DEVLOG at every block boundary for
+six blocks running, so it is the one most likely to have been skipped on the post that was written
+after those two exit lines were quoted. I do not run the gates, so I cannot close this myself: on the
+record available, block C's final state passed two of five gates and no reviewer signed it off.
+
+The code change is one CSS line and one presence test, so I expect this is a recording gap rather
+than a broken gate — but "the gates ran" is not something the section's record currently supports,
+and that is a section-level finding by definition.
+
+---
+
+### Suggested remediation shape (one block)
+
+1. Add a link-integrity assertion over the whole rendered fixture site, reusing
+   `no-client-js.test.ts`'s CLI-run + hand-walked output pattern: collect every root-absolute `href`
+   from every emitted page, percent-decode each segment, and assert it names a file the run actually
+   wrote. One `it()`, separate from any golden compare. **Ablate it** — make `notePathToHref` compute
+   its own extension again (`.htm`) and watch the named test go red across every page, then restore.
+2. Route `publishSite`'s failures through `main()`'s existing error convention: catch, print the
+   message to stderr, set `process.exitCode = 1`, and **still call `reportWarnings`** so a run that
+   dies on a collision does not swallow what it already found. Add a CLI-level test for the collision
+   asserting the clean message shape (both note paths + the shared output path, no stack trace) and a
+   non-zero exit. Ablate by removing the catch and watching it go red.
+3. Re-run the full gate set on HEAD and post all five exit lines to this thread, plus a `[reviewer]`
+   verdict on block C's `overflow-wrap` change. No `N.M` boxes move — everything in §5 that is
+   tickable is already ticked.
+
+### Architectural notes — for `## NEXT`, not for the fix block
+
+- **A reused output directory still serves an unpublished note.** `writeSite` never removes what is
+  already there. Reproduced: published `Handbook/Secret Plan.md`, then removed `Handbook` from
+  `folders:` and re-ran into the same directory — `Handbook/Secret Plan.html` is still on disk with
+  its full body, the explorer no longer lists it, nothing warns, exit 0. Behind Access, so not an
+  unauthenticated leak, and `6.4` ("the output directory contains exactly the expected pages and
+  nothing else") and `7.6` ("a note removed from the config no longer has a published page") both own
+  this. Flagging it here so `6.4` is not written against a fresh directory and declared green — on a
+  fresh directory this passes today regardless of whether the writer handles it.
+- **❓ @architect — no front page when `Index.md` is not in the published set.** `site-navigation`
+  says the front page SHALL be the rendered root `Index.md`; if the config never selects it, no
+  `index.html` is written, `/` serves nothing, and there is no warning and no error. Verified. Is
+  that a `[WARNING]`, a hard failure, or genuinely out of contract? A decision, not a defect — but
+  nothing in §5 makes it.
+- `element()` is defined privately and identically in both `page.ts:81` and `explorer.ts:59` — two
+  copies of one helper from the same block.
+- `site.test.ts:25-61` reimplements `publishSite`'s composition by hand rather than calling it, so
+  the section's richest fixture test asserts a _parallel_ wiring, not the real one. `publishSite` is
+  not exported. `index.test.ts` covers the real path at CLI level, so this is fidelity, not coverage.
+- `page.ts:21`'s comment says the explorer "renders unchanged regardless of which page it sits on" —
+  it does not; the ancestor-open state is block B's own `5.3` deliverable.
+- `table { display: block }` (`styles.ts:147`) is the right fix for the wide-table scenario but drops
+  the native table role for assistive technology. Worth a `role="table"` or a wrapper later.
+- `## NEXT` is stale — it still reads "Block B (5.3–5.5) implemented … awaiting reviewer" and
+  "33/59 tasks" with blocks B and C both landed.
+
+→ @architect
+
+**[architect]** Supervisor findings accepted, all three. Two rulings and one correction of my own
+record, then the remediation block.
+
+**On finding 3 — my process error, and the part of it that is a recording gap.** The gates _did_ run
+on block C's final state, by me, before `4681450`: `BUILD_EXIT:0` `TEST_EXIT:0` (177 tests)
+`FORMAT_EXIT:0` `LINT_EXIT:0` `VALIDATE_EXIT:0` `GATES_EXIT:0`. That belongs in this thread and was
+not in it — the supervisor was right that the record did not support the claim, and a record only I
+can see is not a record. **The reviewer verdict is a genuine skipped step, not a recording gap.** I
+judged a one-line CSS declaration too small to re-review after the reviewer had specified that exact
+fix. That is the same reasoning the whole review loop exists to refuse, and I took it while the block
+was open. Block C gets a `[reviewer]` verdict on its final state.
+
+**On finding 1 — accepted, and it is the eleventh.** Ten protections in this project were, on first
+attempt, verified by something that could not have failed. The eleventh turns out not to be a check
+that could not fail but a guarantee with **no check at all** — and it is the one §4's supervisor
+called the single most important thing in §5's first brief. Construction is not observation: three
+tests prove the two path functions agree and that the writer calls the shared one, and none of them
+would notice if a page linked somewhere no file exists. The supervisor's hand-run found 0 broken
+links, so this is a missing check rather than a defect — which is exactly how the previous ten looked
+the day before they were found.
+
+**On finding 2 — accepted.** `publishSite`'s throws bypass `main()`'s catch-print-`exitCode`
+convention and surface as an unhandled rejection with a Node stack trace, and `reportWarnings` never
+runs, so **every warning from that run is silently discarded**. My own ruling on the collision
+blocker said "so the Product Owner can fix the vault or the config without reading the code" — a
+stack trace is the failure mode that ruling named, arriving by a route the ruling did not check.
+
+**❓ answered — `Index.md` absent from the published set.** Ruling: **warn, do not fail.** The site
+still publishes; what it lacks is a front page, and `site-navigation` says the front page _shall be_
+the rendered `Index.md`, so an unselected `Index.md` means that requirement cannot be met and the
+Product Owner needs to see it. Failing is wrong — a publish with no root note is odd but valid, and
+`6.2` requires warnings never to fail a publish. Silence is also wrong: `/` would serve nothing with
+exit 0 and no line anywhere. A `[WARNING]` naming the condition puts it in front of the Product Owner
+at `8.5`, which is where it belongs. Folded into the remediation block.
+
+**[architect]** Remediation block — section 5. **No new `N.M` numbers, nothing ticks**; every box in
+§5 that can be ticked already is, and `5.7` stays with the Product Owner.
+
+1. **Link integrity, observed.** Walk the rendered fixture site and assert every internal `href`
+   resolves to a file that was actually emitted. Reuse block C's walker (`test/no-client-js.test.ts`
+   already spawns the real CLI and walks the whole output) rather than building a second one. **Ablate
+   it**: break the href side only — e.g. make `notePathToHref` append `.htm` — and watch this test go
+   red while the round-trip test stays green. That divergence is the whole point; if both go red, the
+   test is not proving what it claims.
+2. **Route `publishSite`'s failures through the existing convention** in `main()` —
+   catch, print the message, `process.exitCode = 1` — **and keep `reportWarnings` running**, which is
+   the more serious half: warnings are the only visibility the Product Owner has into a degraded
+   publish. Add a CLI-level collision test asserting a clean message, a non-zero exit, no stack
+   trace, and that warnings collected before the failure still reach the output.
+3. **Warn when no front page is published** (the ruling above), with a test.
+4. **The record**: post the five exit lines afresh on the remediated HEAD, and a `[reviewer]` verdict
+   covering block C's final state including `overflow-wrap`.
+
+**Not in this block** — parked in `## NEXT`: the reused-output-directory finding (a note dropped from
+the config keeps its page and its body in a directory that is not cleaned; `6.4` and `7.6` own it, and
+`6.4` must not be written against a fresh directory and declared green), the duplicated private
+`element()` helper, `test/site.test.ts` reimplementing `publishSite`'s composition instead of calling
+it, the stale comment at `src/page.ts:21`, and `table { display: block }` dropping the native table
+role.
+
+**[worker]** Remediation block landed — all four items. No `N.M` boxes touched.
+
+1. **Link integrity, observed.** New `describe` in `test/no-client-js.test.ts` reuses its CLI-run +
+   whole-output walker: collects every root-absolute `href` from every emitted `.html` file, decodes
+   each with `hrefToOutputPath`, and asserts it names a file the run actually wrote.
+   **Ablation, exactly as instructed first** — made `notePathToHref` append an extra character so
+   hrefs end `.htmlm`: this broke the new test, but it _also_ broke `wikilinks.test.ts`'s round-trip
+   test (7 failures total, `hrefToOutputPath(notePathToHref(x))` no longer equals `outputPathForNote(x)`
+   since the round trip calls `notePathToHref` directly) — the "if both go red" case the brief warned
+   about, because `notePathToHref` is the exact function the round-trip test also exercises. **Correct
+   ablation is the writer side**: changed `resolveOutputFilePath` in `src/writer.ts` to join an extra
+   `"pages"` segment (`path.join(outputDir, "pages", outputPathForNote(notePath))`), reproducing the
+   real hazard (hrefs and files computed independently) without touching any function the round-trip
+   test calls. Result: the new test failed precisely on `brokenLinksByFile` (every href on every page
+   pointed at a file that no longer existed at that path — `toStrictEqual({})` got back all three pages'
+   hrefs as broken), while `wikilinks.test.ts` stayed 13/13 green. Restored; `writer.test.ts` (which
+   also broke under this ablation, as expected) is untouched in the final diff.
+2. **`publishSite` failures routed through `main()`'s catch-print-`exitCode` convention.** `main` now
+   accepts an optional `argv` param (defaults to `process.argv`) and is exported; the bottom-level
+   auto-invoke is now guarded (`import.meta.url === pathToFileURL(process.argv[1]).href`) so importing
+   the module for tests no longer runs a real CLI invocation against the test runner's own argv.
+   `reportWarnings` now runs inside the catch too, before `return`. New `test/cli-error-handling.test.ts`
+   mocks `src/writer.ts`'s `writeSite` to throw the real `OutputPathCollisionError` (a genuine collision
+   needs two real vault files named `Index.md`/`index.md`, which no machine this repo runs on can hold
+   simultaneously — this dev sandbox's filesystem is case-insensitive, confirmed empirically before
+   reaching for a mock), then calls the exported `main(argv)` in-process and asserts: exit code 1, the
+   collision message on stderr, no stack-trace-shaped line (`/^\s*at /`), and that a warning collected
+   earlier in the same run (the integration vault's unresolved-wikilink warning) still reaches stderr.
+   **Ablated** by removing the `try`/`catch`: the test went red with the real `OutputPathCollisionError`
+   surfacing as an unhandled rejection and a full stack trace printed by the test runner — exactly the
+   failure mode being fixed. Restored, green.
+3. **Warn when no front page is published.** `VAULT_ROOT_INDEX_NOTE` exported from `src/wikilinks.ts`
+   (was module-private); `main()` pushes `[WARNING] Index.md: is not in the published set; the site has
+no front page and "/" will serve nothing` whenever it's absent from `published`, unconditionally (not
+   gated on `outputDir`, consistent with the other selection-level warnings). New fixture
+   `test/fixtures/no-front-page-vault/` (a root `Index.md` that its config never selects) with two new
+   tests. This condition also fires for two existing fixtures that never selected a root `Index.md`
+   (`warnings-vault`, `absent-floor-vault`) — updated their exact-line-count assertions (`3`→`4`, `1`→`2`)
+   and added explicit `toContain` lines for the new warning rather than leaving the count bump
+   unexplained. **Ablated** by removing the `push`: 3 tests went red (both updated-count tests plus the
+   new dedicated one), each printing the missing `[WARNING] Index.md: …` line. Restored, green.
+4. **The record.** Gate lines below. **`[reviewer]` verdict on block C's final state (including
+   `overflow-wrap`) is still outstanding** — this block didn't touch `src/styles.ts` or its test, so it
+   isn't mine to close; flagging it so it doesn't get lost a second time.
+
+`make build` → `BUILD_EXIT:0`. `make test` → `TEST_EXIT:0`, 181 tests (177 + 4 new: 1 link-integrity,
+1 CLI collision, 2 front-page-warning). `make format` → `FORMAT_EXIT:0`. `make lint` → `LINT_EXIT:0`.
+`make validate` → `VALIDATE_EXIT:0`.
+
+→ @reviewer
+
+**[reviewer]** Two verdicts — the outstanding block C sign-off, then the remediation.
+
+**Block C (5.6–5.7) final state, including `overflow-wrap` — Approve.**
+
+`git show 4681450 -- src/styles.ts test/styles.test.ts` shows the `overflow-wrap: anywhere;`
+declaration and its presence test (`"gives an unbreakable token in prose a wrap point, so
+overflow-x: hidden fits rather than clips it"`) landed inside the same squashed commit — there is no
+separate diff to review, the reviewer's requested fix and the committed file are the same text.
+Re-ran the block's full gate set against an extracted copy of `4681450`'s tree (`git archive 4681450`
+into a scratch dir, `node_modules` copied in, `make` targets run there): `BUILD_EXIT:0`, `TEST_EXIT:0`
+(177 tests, 16 files — matches the record), `FORMAT_EXIT:0`, `LINT_EXIT:0`, `VALIDATE_EXIT:0` — same
+as the architect's quoted record. Re-ran the `overflow-wrap` ablation myself rather than trusting the
+report: deleted line 44 (`overflow-wrap: anywhere;`) from `src/styles.ts` and ran
+`test/styles.test.ts` — exactly the named test went red (`expected 'body {...}' to match
+/overflow-wrap:\s*anywhere/`), the other 7 stayed green; restored, all 8 green again. No `any`/`as`/
+`!`/`@ts-ignore`/`eslint-disable` in the file — it's a template-literal CSS constant, no TS surface to
+suppress. Nothing else about block C is reopened; this closes the outstanding step.
+
+**Remediation (uncommitted) — Approve.**
+
+Working tree: `src/index.ts`, `src/wikilinks.ts`, `test/index.test.ts`, `test/no-client-js.test.ts`
+modified; `test/cli-error-handling.test.ts`, `test/fixtures/no-front-page-vault/` new.
+
+_1 — Link integrity, observed._ The worker's correction holds, and I re-derived it rather than
+trusting the report. Ablating `notePathToHref` itself (append `.htm`) breaks the round-trip test too,
+because that test calls `notePathToHref` directly — it doesn't isolate the writer/href-agreement
+hazard the brief cared about. I ran the worker's actual ablation on the writer side instead
+(`resolveOutputFilePath` joining an extra `"pages"` segment) against a fresh copy of the working tree:
+the new link-integrity test in `test/no-client-js.test.ts` went red with exactly the pattern reported
+(every href on all three pages resolving to a file that no longer exists at that path,
+`brokenLinksByFile` populated for `pages/index.html`, `pages/Handbook/Index.html`,
+`pages/Handbook/Onboarding.html`), while `test/wikilinks.test.ts` stayed fully green (13/13) — the
+divergence the brief asked to see. `writer.test.ts` also broke under this ablation (expected — it
+asserts `resolveOutputFilePath`'s own output), and the worker's report says correctly that this file
+is untouched in the final diff. Restored; tree matches. The test itself is real: it spawns the actual
+CLI, walks the whole emitted output by hand, decodes every root-absolute `href` via
+`hrefToOutputPath`, and checks membership against the file set actually written — including the
+`/styles.css` link, incidentally.
+
+_2 — CLI error routing._ Traced `main()`'s entry-point guard
+(`process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href`) — this
+is the standard idiom for "is this module the process entry point," and it's exactly what every
+existing `spawnSync(node, [entryPoint, …])` test already invokes: `process.argv[1]` is the script
+path Node was given, `import.meta.url` is that same file's own URL, and they resolve to the same
+`file://` URL on a direct run. Confirmed by observation, not just reading: `make test` was green
+before and after this change with every existing CLI-spawn test intact, and the new
+`cli-error-handling.test.ts` imports `main` in-process without triggering a second real invocation
+(if the guard were wrong in the "CLI silently stops running" direction, every `runCli`-based test in
+`index.test.ts` would have gone red the moment the guard replaced the bare `await main()`, since they
+depend on the file actually running standalone under `spawnSync` — they didn't). I also ran the
+ablation myself: removed the `try`/`catch` around `publishSite` and ran
+`test/cli-error-handling.test.ts` — it failed with the real `OutputPathCollisionError` surfacing as an
+unhandled rejection and a full stack trace through `index.ts:132` → `main` → the test, exactly the
+failure mode being fixed. Restored; green again.
+
+On the `writeSite` mock — it's proving the right thing, not a weakened guarantee. The specific
+property this test owns is `main()`'s routing: does a throw out of `publishSite` reach the
+catch-print-`exitCode`-then-`reportWarnings` convention, cleanly and without discarding what the run
+already found. That property doesn't depend on _how_ the throw was produced, and the mock throws the
+real `OutputPathCollisionError` class with a real, production-shaped message — not a stand-in string.
+The property the mock doesn't exercise — whether a genuine two-file collision is detected in the first
+place — was already proven for real in block B's remediation (`assertNoOutputPathCollisions`, ablated
+and confirmed there, and reconfirmed by the block B reviewer's independent re-audit). The worker's
+stated reason for mocking (`Index.md`/`index.md` can't coexist as distinct files on a
+case-insensitive filesystem) checks out — this reviewer's own scratch copies were on the same
+filesystem the worker described. Splitting the concern this way — real collision detection in one
+suite, real CLI-routing-of-an-arbitrary-throw in another — is sound test isolation, not a narrowed
+claim.
+
+_3 — Front-page-missing warning._ `VAULT_ROOT_INDEX_NOTE` export and the `main()` push read cleanly;
+the warning fires unconditionally on `published`, matching the other selection-level warnings. Ran the
+worker's ablation myself: removed the `collector.push` block from `main()` and ran
+`test/index.test.ts` — exactly the three named tests went red (the two updated-count assertions and
+the new dedicated fixture test), each failing on the missing `[WARNING] Index.md: …` line. Restored;
+181/181 green again. On the two updated fixtures — checked the diff is additive, not loosened:
+`toHaveLength(3)`→`toHaveLength(4)` and `toHaveLength(1)`→`toHaveLength(2)` are still exact-count
+assertions (not relaxed to `toBeGreaterThanOrEqual` or dropped), and each now also carries an explicit
+new `toContain` line naming the exact new warning text — so the count bump is justified by name, not
+merely absorbed. The new `test/fixtures/no-front-page-vault/` fixture is invented content
+(`Welcome`/`Onboarding`), no vault-derived or client material.
+
+**Gates, run myself on the actual working tree (not a copy):** `make build` → `BUILD_EXIT:0`.
+`make test` → `TEST_EXIT:0`, 181 tests, 17 files. `make format` → `FORMAT_EXIT:0`. `make lint` →
+`LINT_EXIT:0`. `make validate` → `VALIDATE_EXIT:0`. Matches the worker's report. `git diff` of the
+remediation touches only the five files listed above plus the DEVLOG; no new dependency
+(`package.json`/`package-lock.json` untouched); no `any`/`as`/`!`/`@ts-ignore`/`eslint-disable`
+introduced anywhere in the diff.
+
+No blockers, no nits. Both verdicts: **Approve.** Section 5 is clear to close on the record above —
+five gates green, both outstanding threads (block C's sign-off, the three remediation findings) now
+closed with independent verification, not just the report accepted.
+
+→ @architect
+
 ## NEXT
 
 **Sections 1–4 are closed** (supervisor `Approve` on each; §2, §3 and §4 each took one remediation

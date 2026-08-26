@@ -40,8 +40,12 @@ function noteNameKey(notePath: string): string {
  * Obsidian note names are, and a `folders`/`notes` config entry naming
  * anything else at root (`index.md`, lowercase) is a different note that
  * happens to collide on a case-insensitive filesystem, not this one.
+ *
+ * Exported so `index.ts` can warn when this exact note is absent from the
+ * published set — the one condition under which the site has no front
+ * page — without hard-coding the note name a second time.
  */
-const VAULT_ROOT_INDEX_NOTE = "Index.md";
+export const VAULT_ROOT_INDEX_NOTE = "Index.md";
 
 /**
  * The output file path a note path writes to, relative to the site root —

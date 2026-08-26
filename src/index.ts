@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import type { PublishConfig } from "./config.ts";
 import { loadConfig } from "./config.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
@@ -8,12 +9,19 @@ import { renderPage } from "./page.ts";
 import { renderNoteToHast } from "./pipeline.ts";
 import { isEntryWithheldByFloor, listVaultNotes, resolveSelection } from "./selection.ts";
 import { reportWarnings, WarningCollector } from "./warnings.ts";
-import { buildNoteIndex } from "./wikilinks.ts";
+import { buildNoteIndex, VAULT_ROOT_INDEX_NOTE } from "./wikilinks.ts";
 import { writeSite, type RenderedPage } from "./writer.ts";
 
-async function main(): Promise<void> {
-  const configPath = process.argv[2];
-  const outputDir = process.argv[3];
+/**
+ * `argv` defaults to `process.argv` for the real CLI and is only ever
+ * overridden in tests, so `publishSite`'s failure path can be exercised
+ * in-process — a real `Index.md`/`index.md` output-path collision can't be
+ * reproduced with two actual vault files on a case-insensitive filesystem,
+ * which is what every other machine this repo runs on happens to be.
+ */
+export async function main(argv: readonly string[] = process.argv): Promise<void> {
+  const configPath = argv[2];
+  const outputDir = argv[3];
   if (configPath === undefined) {
     process.stderr.write("usage: vault-publisher <config-path> [output-dir]\n");
     process.exitCode = 1;
@@ -36,6 +44,12 @@ async function main(): Promise<void> {
 
   const collector = new WarningCollector();
   collectSelectionWarnings(config, unmatched, path.basename(configPath), collector);
+  if (!published.includes(VAULT_ROOT_INDEX_NOTE)) {
+    collector.push(
+      VAULT_ROOT_INDEX_NOTE,
+      'is not in the published set; the site has no front page and "/" will serve nothing',
+    );
+  }
 
   // `output-dir` is a stopgap positional argument, not the CLI surface —
   // `6.3` owns `util.parseArgs`, flags, and `--help`. Its only job here is
@@ -44,7 +58,21 @@ async function main(): Promise<void> {
   // behaviour, since site generation is skipped entirely when a third is
   // absent.
   if (outputDir !== undefined) {
-    await publishSite(vaultRoot, published, outputDir, collector);
+    try {
+      await publishSite(vaultRoot, published, outputDir, collector);
+    } catch (error) {
+      // Same convention `loadConfig`'s catch above uses: a clean message on
+      // stderr and a non-zero exit code, never an unhandled rejection with a
+      // Node stack trace. `reportWarnings` still runs here — a run that dies
+      // partway through must not silently discard what it already found,
+      // since warnings are the Product Owner's only visibility into a
+      // degraded publish.
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`${message}\n`);
+      process.exitCode = 1;
+      reportWarnings(collector.all());
+      return;
+    }
   }
 
   reportWarnings(collector.all());
@@ -162,4 +190,9 @@ function collectSelectionWarnings(
   }
 }
 
-await main();
+// Runs only when this file is the process entry point — `node src/index.ts
+// …`, exactly what every existing spawnSync-based test already does — and
+// not merely when a test imports `main` for in-process invocation.
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
+}
