@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { STYLESHEET } from "./styles.ts";
 import { outputPathForNote } from "./wikilinks.ts";
 
 export interface RenderedPage {
@@ -77,10 +78,15 @@ export function assertNoOutputPathCollisions(pages: readonly RenderedPage[]): vo
  *
  * Collisions are checked across the whole set before the first `writeFile`
  * — see `assertNoOutputPathCollisions` — so a run never leaves a partial
- * output directory behind.
+ * output directory behind. Also writes the site's one stylesheet
+ * (`styles.css`, `styles.ts`) to the output root — every page links it
+ * root-absolute (`page.ts`), and a missing file here is what turns every
+ * page's link into a 404 while every other test stays green.
  */
 export async function writeSite(outputDir: string, pages: readonly RenderedPage[]): Promise<void> {
   assertNoOutputPathCollisions(pages);
+  await mkdir(outputDir, { recursive: true });
+  await writeFile(path.join(outputDir, "styles.css"), STYLESHEET, "utf8");
   for (const page of pages) {
     const filePath = resolveOutputFilePath(outputDir, page.notePath);
     await mkdir(path.dirname(filePath), { recursive: true });

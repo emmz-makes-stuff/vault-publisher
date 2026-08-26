@@ -186,4 +186,13 @@ describe("CLI entry point — block B: published wired through to a written site
       '[WARNING] Index.md: wikilink to "Confidential Client" could not be resolved and was rendered as plain text',
     );
   });
+
+  it("writes styles.css to the output root, the same file every page links", async () => {
+    const result = runCliWithOutput(integrationVaultConfigPath, outputDir);
+
+    expect(result.status).toBe(0);
+
+    const stylesheet = await readFile(path.join(outputDir, "styles.css"), "utf8");
+    expect(stylesheet).toContain(".explorer");
+  });
 });
