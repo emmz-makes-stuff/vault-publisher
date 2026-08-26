@@ -5591,6 +5591,108 @@ self-hosted runner with a symlinked workspace each revert the publish to a no-op
 job. And it compounds with the reused-output-directory hazard parked for `6.4`/`7.6`: a silent no-op
 into a directory nothing cleans is what `wrangler deploy` then uploads, stale pages included.
 
+**[worker]** Remediation block 2 (section 5, round 3) implemented — `src/cli.ts` is new, `src/index.ts`
+and `test/cli-error-handling.test.ts` are edited, `test/cli-symlink-invocation.test.ts` is new.
+
+- **Item 1** — `main` (and its private helpers `loadNotes`, `publishSite`,
+  `collectSelectionWarnings`, `LoadedNote`) moved verbatim to `src/cli.ts`, exported, never
+  self-invoking — no `process.argv`/`import.meta.url` comparison anywhere in the file.
+  `src/index.ts` is now two lines: `import { main } from "./cli.ts"; await main();`. The predicate
+  is gone, not repaired — there's no branch left that can decide silently not to run.
+  `test/cli-error-handling.test.ts` imported `main` from `../src/index.ts`; updated to import it from
+  `../src/cli.ts`, unchanged otherwise.
+- **Item 2** — `test/cli-symlink-invocation.test.ts`: symlinks a temp file to `src/index.ts`, spawns
+  the real CLI (`node <symlink> <config> <outputDir>`) against the integration vault fixture, and
+  asserts `index.html` landed with the expected title. Ran it against the pre-fix `src/index.ts`
+  first (temporarily restored the guard, `src/cli.ts` untouched) — it failed exactly as the
+  supervisor described: `ENOENT: no such file or directory, open
+'.../vault-publisher-symlink-out-.../index.html'`, i.e. exit 0, nothing written, nothing thrown.
+  Restored the fix; the same test then passed. This test is its own ablation per the brief, so no
+  separate remove-then-restore step for it.
+- **Item 3** — searched all of `src/*.ts` for `process.argv`, `import.meta.url`,
+  `import.meta.filename`, `realpathSync`, `pathToFileURL`. The only remaining hit is `src/cli.ts`'s
+  `main(argv: readonly string[] = process.argv)` — an ordinary parameter default, not a path-identity
+  comparison with a false branch; it's exactly what lets `cli-error-handling.test.ts` invoke `main`
+  in-process with a synthetic `argv`. No sibling of this hazard found.
+
+Existing CLI tests (`test/index.test.ts`, `test/no-client-js.test.ts`) still spawn `src/index.ts` by
+real path and are unchanged and green.
+
+Gates: `BUILD_EXIT:0`, `TEST_EXIT:0` (182 tests, 18 files — 1 new file
+`cli-symlink-invocation.test.ts`), `FORMAT_EXIT:0`, `LINT_EXIT:0`, `VALIDATE_EXIT:0`.
+
+→ @reviewer
+
+**[reviewer]** Remediation block 2 (section 5, round 3) audited. **Verdict: Approve.**
+
+**1. No path-identity comparison survives anywhere in `src/`.** Confirmed independently, not from the
+worker's report: `grep -rn "process.argv\|import.meta.url\|import.meta.filename\|realpathSync\|
+pathToFileURL" src/` returns exactly one hit — `src/cli.ts:21`'s `main(argv: readonly string[] =
+process.argv)`, an ordinary parameter default with no comparison and no false branch. `src/index.ts`
+is now the two lines described: `import { main } from "./cli.ts"; await main();` — nothing left to
+decide whether to run.
+
+**2. The new test genuinely exercises a symlink and asserts real output, not just an exit code.**
+`test/cli-symlink-invocation.test.ts` symlinks a temp file to the real `src/index.ts`
+(`src/fs/promises.symlink`), spawns it with `node <symlink> <config> <outputDir>` via `spawnSync` —
+a real child process through the real entry point, not an in-process import of `main` — and reads
+`outputDir/index.html` off disk, asserting it contains `<title>Welcome</title>`. `result.status` is
+also checked, but only as one of two assertions; the file read is what the broken guard cannot fake,
+since its failure mode is exit 0 with nothing written. Good test.
+
+**3. Ablation reproduced independently.** Built a scratch copy (`git archive HEAD`, symlinked
+`node_modules` in), replaced `src/cli.ts`/`src/index.ts` with a reconstruction of the pre-fix single
+file (old guard: `process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href`)
+and reran `test/cli-symlink-invocation.test.ts` unmodified. It failed exactly as the worker and
+supervisor described:
+
+```
+ENOENT: no such file or directory, open '.../vault-publisher-symlink-out-.../index.html'
+```
+
+with `result.status` still `0` — confirming the failure mode is silent success, not a thrown error.
+Restoring the fixed `src/cli.ts`/`src/index.ts` made the same test pass. This is a real ablation, not
+a restated claim.
+
+**4. Coupling to `6.3`'s rewrite.** The test invokes the CLI with two bare positional arguments
+(`node <entry> <config> <outputDir>`) — the exact shape `6.3` is going to replace with
+`util.parseArgs`, flags, and `--help`. When `6.3` lands, this test's invocation line will need
+updating to the new argument surface, but nothing about it is coupled to _how_ the entry point decides
+whether to run — that decision no longer exists, which is the point. The part that must outlive `6.3`
+(spawn through a symlink, assert files landed on disk) is independent of argument parsing and will
+keep testing the right thing as long as whoever does `6.3` updates the invocation line rather than
+deleting the test. Worth a one-line pointer in `6.3`'s brief so it isn't dropped as "the old CLI
+test" during that rewrite — parking that as a note, not a blocker on this block.
+
+**5. Nothing regressed.** `test/index.test.ts` and `test/no-client-js.test.ts` still spawn
+`src/index.ts` by real path (unchanged, both green). `test/cli-error-handling.test.ts` is otherwise
+unchanged apart from the import moving to `../src/cli.ts` — same mock of `writeSite`, same assertions
+on stderr message, exit code, absence of a stack-trace frame, and `reportWarnings` still running on
+the failure path before `return`; all four still hold. The front-page warning
+(`VAULT_ROOT_INDEX_NOTE`) logic in `main` is untouched, only relocated.
+
+**6. Gates**, reproduced myself on the actual working tree:
+
+```
+BUILD_EXIT:0
+TEST_EXIT:0   (182 tests, 18 files — test/cli-symlink-invocation.test.ts included, all green)
+FORMAT_EXIT:0
+LINT_EXIT:0
+VALIDATE_EXIT:0
+GATES_EXIT:0
+```
+
+**Scope check.** `git status --short` shows only `src/index.ts`, `test/cli-error-handling.test.ts`
+modified, `src/cli.ts` and `test/cli-symlink-invocation.test.ts` new, `DEVLOG.md` modified — matches
+the brief exactly. `Makefile` and `tasks.md` untouched. No new dependency, no `any`/`as`/`@ts-ignore`/
+`eslint-disable` anywhere in the diff. `main`'s helpers (`loadNotes`, `publishSite`,
+`collectSelectionWarnings`, `LoadedNote`) moved to `src/cli.ts` verbatim and stay unexported — no
+scope creep.
+
+No blockers, no nits.
+
+→ @architect
+
 ## NEXT
 
 **Sections 1–4 are closed** (supervisor `Approve` on each; §2, §3 and §4 each took one remediation
