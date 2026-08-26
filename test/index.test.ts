@@ -29,6 +29,13 @@ const absentFloorConfigPath = path.join(
   "absent-floor-vault",
   "publish.config.yaml",
 );
+const noFrontPageConfigPath = path.join(
+  repoRoot,
+  "test",
+  "fixtures",
+  "no-front-page-vault",
+  "publish.config.yaml",
+);
 
 function runCli(configPath: string): { status: number | null; stdout: string; stderr: string } {
   // Node 24 strips TypeScript syntax natively, so the source runs directly —
@@ -99,8 +106,11 @@ describe("CLI entry point — 3.6 unmatched and floor-withheld warnings", () => 
     expect(lines).toContain(
       '[WARNING] publish.config.yaml: "CLAUDE.md" is excluded and will not publish',
     );
-    // Exactly these three — a matched, non-excluded entry (Handbook) earns no line.
-    expect(lines).toHaveLength(3);
+    expect(lines).toContain(
+      '[WARNING] Index.md: is not in the published set; the site has no front page and "/" will serve nothing',
+    );
+    // Exactly these four — a matched, non-excluded entry (Handbook) earns no line.
+    expect(lines).toHaveLength(4);
   });
 
   it("covers a notes: entry naming a directly-excluded file, not just a folders: entry", async () => {
@@ -133,7 +143,10 @@ describe("CLI entry point — B4 floored entry absent from the vault", () => {
     expect(lines).not.toContain(
       '[WARNING] publish.config.yaml: no path in the vault matches "Private"',
     );
-    expect(lines).toHaveLength(1);
+    expect(lines).toContain(
+      '[WARNING] Index.md: is not in the published set; the site has no front page and "/" will serve nothing',
+    );
+    expect(lines).toHaveLength(2);
   });
 });
 
@@ -194,5 +207,35 @@ describe("CLI entry point — block B: published wired through to a written site
 
     const stylesheet = await readFile(path.join(outputDir, "styles.css"), "utf8");
     expect(stylesheet).toContain(".explorer");
+  });
+});
+
+describe("CLI entry point — warns when the vault's own Index.md is not published", () => {
+  let outputDir: string;
+
+  beforeEach(async () => {
+    outputDir = await mkdtemp(path.join(tmpdir(), "vault-publisher-no-front-page-"));
+  });
+
+  afterEach(async () => {
+    await rm(outputDir, { recursive: true, force: true });
+  });
+
+  it("warns and still exits 0 — a publish with no root note is odd but valid", () => {
+    const result = runCli(noFrontPageConfigPath);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain(
+      '[WARNING] Index.md: is not in the published set; the site has no front page and "/" will serve nothing',
+    );
+  });
+
+  it("writes no index.html when Index.md is not published, even though the site otherwise writes", async () => {
+    const result = runCliWithOutput(noFrontPageConfigPath, outputDir);
+
+    expect(result.status).toBe(0);
+    await expect(readFile(path.join(outputDir, "index.html"), "utf8")).rejects.toThrow();
+    const onboarding = await readFile(path.join(outputDir, "Handbook", "Onboarding.html"), "utf8");
+    expect(onboarding).toContain("Welcome to the handbook.");
   });
 });
