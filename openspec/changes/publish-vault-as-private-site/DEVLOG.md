@@ -7621,3 +7621,365 @@ files plus this DEVLOG.
 ticked.
 
 **Verdict: Approve.**
+
+**[architect]** Block — the vault repository's publish workflow (`7.4`–`7.8`, draft) → @worker
+
+**What this block delivers, and what it deliberately does not.** A reviewed **draft** of
+`.github/workflows/publish.yml` for the **vault** repository, plus a handover note. It lands in the
+session scratchpad, **not in this repository** — same reasoning as `7.3`'s `wrangler.jsonc`: it is
+deployment configuration for a different repository, with no gate and no test harness here, and a
+`.github/workflows/publish.yml` committed to _this_ repo would be a live workflow rather than an
+artefact. **Nothing in `7.4`–`7.8` is ticked by this block.** Every one of them ticks on the Product
+Owner's observation of a real run, and `7.4`'s run is the real Worker's **first deploy of confidential
+content** — it has not happened.
+
+**The identifier rule is a hard constraint on the draft itself.** This repository is public. The
+draft must contain **no** vault repository name, published hostname, Worker name, account subdomain or
+team domain — not even in a comment or an example. Derive every one of them at runtime (`jq` over
+`.publisher/wrangler.jsonc`, `wrangler`'s own output, secrets) so the file is identifier-free by
+construction rather than by redaction. `make publishable` is the backstop, not the design.
+
+**Binding decisions and spec text:**
+
+- `publish-pipeline`: "The publisher SHALL rebuild and republish the site when a change is pushed to
+  the main branch of the vault repository. No manual step SHALL be required." Scenarios cover push to
+  main, push to another branch, and a push changing only the selection configuration. So: plain
+  `on: push: branches: [main]`, nothing else — no `workflow_dispatch` convenience trigger, which would
+  weaken `7.4`'s "a push to another branch does not publish" into something a reviewer cannot read off
+  the trigger.
+- `design.md`: the workflow lives in the vault repository, so no cross-repo token and no
+  `repository_dispatch`. The action is consumed as
+  `emmz-makes-stuff/vault-publisher@v1` (`v1` is tagged and verified by consumption from a separate
+  repository, `7.2`).
+- `reader-access`: "The published site SHALL be reachable only through the hostname that access
+  control protects. No alternative hostname, preview address, or default platform address SHALL serve
+  published content."
+- `action.yml`: inputs `config` (default `publish.config.yaml`, resolved against the workspace) and
+  `output` (default `$RUNNER_TEMP/vault-publisher-site`, **outside** the workspace); output
+  `output-dir`. Take the assets directory from `steps.<id>.outputs.output-dir` — never recompute it,
+  and never pass an `output` inside the workspace: that is what makes `7.7` structurally true.
+- `7.3`'s wrangler configuration is at `.publisher/wrangler.jsonc` in the vault repository and already
+  carries `workers_dev: false`, `preview_urls: false` and the custom domain route. The deploy step
+  passes `--config .publisher/wrangler.jsonc` and `--assets <output-dir>`; it does **not** re-declare
+  the flags on the command line.
+
+**`7.8` is the substance of this block, and it has three traps.**
+
+1. **The preview address must be the one this deploy produced.** Preview addresses are per-version, so
+   a fixed literal 404s forever whether or not previews are live — green over exactly the territory
+   the check exists to examine. `7.3`'s fixture deploy printed `No targets deployed` under
+   `workers_dev: false`, so **do not assume `wrangler deploy` prints a preview URL in that state**.
+   Establish what it actually prints — go to current Cloudflare/wrangler docs via the `cloudflare`
+   skill, and treat the Version ID as the likely raw material — then derive the address. State in the
+   handover which of the two it is and how you know.
+2. **A check that cannot determine its target must fail, not pass.** If the `workers.dev` hostname or
+   the preview address comes out empty or unparsed, `curl` against it will look exactly like a
+   refusal. Fail the job explicitly on an empty or malformed address, before requesting anything.
+3. **A `404` is not self-validating.** `7.3` observed a mistyped hostname returning a `404` with a
+   body **byte-identical** to the genuine refusals. So pair the two negative checks with a **positive
+   control in the same job**: request the protected hostname and assert it returns Access's
+   unauthenticated response rather than a 404 — that proves the deploy served _something_ and that the
+   job's own network path works, which is what a bare pair of 404s cannot. Derive the protected
+   hostname from the wrangler config's route, not a literal.
+
+The job must **fail** — non-zero, `::error::` — if either bypass address serves. `7.8` also requires
+the Product Owner to prove the check can fail by temporarily pointing it at an address that does
+serve; make that a **one-line, obvious edit** (a single variable) and say exactly which line in the
+handover.
+
+**Also in scope:** `7.5` — the Cloudflare credentials come from repository secrets, referenced only as
+`${{ secrets.… }}` in `env:`, never interpolated into a `run:` body and never echoed; name the exact
+secrets the Product Owner must create. `7.7` — the workflow writes nothing into the workspace; say
+what makes that true rather than asserting it.
+
+**`7.3` carries a transferred obligation into this block.** Its "re-request the `workers.dev` address
+and a preview address afterwards to confirm the deploy did not re-enable the routes `2.2` disabled"
+clause concerns the **real** Worker, whose first deploy is `7.4`'s event. `7.8`'s post-deploy check
+discharges it and makes it standing rather than one-time. **If the workflow ships without it, the
+`7.3` tick was wrong.**
+
+**Done-gates for this block.** The usual `make gates` still applies (the draft changes nothing in
+`src/`, so it should be a no-op — run it anyway, and quote the exit lines), plus:
+`shellcheck`/`actionlint` the draft if available, or say plainly that you could not. The real gate is
+the handover: exact secret names, exact file path, the one-line edit that proves the check can fail,
+and a numbered list of what the Product Owner will see on a green run and on each intended failure.
+Post everything to this DEVLOG. **No commit, no tick.** → @reviewer when done.
+
+**[worker]** `7.4`–`7.8` draft — `publish.yml` for the vault repository, plus handover. Both written
+to the session scratchpad (`publish.yml`, `handover-7.4.md`), **not** into this repository. Nothing
+ticked.
+
+**Retrieved from current docs, not recalled — and this is what decided the preview-address design.**
+The Cloudflare "Preview URLs" page (fetched today): versioned preview URLs "are generated automatically"
+for "every… new version" and follow `<VERSION_PREFIX>-<WORKER_NAME>.<SUBDOMAIN>.workers.dev`; creation
+happens on `wrangler deploy`, `wrangler versions upload`, **or a dashboard edit** — i.e. at
+version-upload time, not at routing time. Separately, `wrangler versions upload`'s own doc line says
+it "uploads a new version… and **returns a preview URL for each version uploaded**." `wrangler deploy`
+runs that same upload step internally. Cloudflare's docs do **not** print a literal example transcript
+and do **not** document a `--json` flag on `deploy` or `versions upload` (checked the full flag list on
+the Workers commands page — neither command lists one). So: **"wrangler prints it"**, derived from
+these two docs pages read together plus the mechanism (preview-URL generation is tied to version
+creation, which every deploy does, independent of whether `workers_dev`/`preview_urls` make the address
+reachable) — not observed directly, since I have no Cloudflare credentials in this session. This also
+explains `7.3`'s own observation that stands as the strongest corroboration available: the fixture
+deploy under `workers_dev:false, preview_urls:false` still had a "per-version preview address" to
+check (and 404 against) for **both** fixture versions, which is only possible if each deploy exposed
+that address somewhere for the check to have used — consistent with wrangler printing it on every
+deploy regardless of the flags, never with the flags suppressing it. The workflow's own check therefore
+reads the address fresh from the deploy step's own captured stdout every run (`grep` for a
+`https://*.workers.dev` URL in the deploy log) rather than assuming a fixed format string — if that
+extraction finds zero or more than one candidate, the step fails explicitly before requesting anything,
+per the "must fail, not pass" constraint.
+
+**The plain `workers.dev` hostname needs no separate account lookup.** The versioned preview host is
+`<prefix>-<name>.<subdomain>.workers.dev`; stripping everything up to the first `.` leaves
+`<subdomain>.workers.dev`, and prepending the Worker's own name (read via `jq` from
+`.publisher/wrangler.jsonc`, same file `7.3` wrote) reconstructs the plain bypass hostname with no
+`wrangler whoami`/API call and no literal subdomain anywhere in the file.
+
+**The positive control** reads the protected hostname from the same config's `routes[0].pattern` (or
+`routes[0]` if it's a bare string) and fails the step if that request is a 404 or unreachable — mirrors
+`7.3`'s "a 404 is not self-validating" finding, applied as a standing per-run check instead of a
+one-time toggle.
+
+**`7.5`** — `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`, wrangler's own documented CI/CD env var
+names (confirmed against current docs — a code example on the static-assets direct-upload page throws
+on their absence by those exact names), read only into `env:` on the deploy step, never interpolated
+into a `run:` body, never echoed.
+
+**`7.7`** — the workflow's own steps write nothing inside `$GITHUB_WORKSPACE` after checkout: the
+render step's output is `$RUNNER_TEMP/vault-publisher-site` (the action's default, outside the
+workspace by `action.yml`'s own containment guard — not a `.gitignore` promise), and no later step in
+this workflow touches the vault checkout at all. Said in the handover rather than just asserted here,
+per the brief.
+
+**Identifier rule.** No vault name, hostname, Worker name, subdomain, or team domain appears in either
+file — every one is `jq`'d from `.publisher/wrangler.jsonc` or parsed from `wrangler`'s own run-time
+output. `emmz-makes-stuff/vault-publisher@v1` is this repository's own public name, already used
+identically in `7.2`'s evidence, not a vault identifier.
+
+**Lint tools.** `actionlint` and `shellcheck` are both present on this machine.
+`actionlint /path/to/publish.yml` → exit 0 (it shells out to `shellcheck` internally for every `run:`
+block and raised nothing). Also shellchecked the two `run:` bodies directly by hand-extracting them;
+the only complaint was `shellcheck` choking on a literal `${{ steps.render.outputs.output-dir }}`
+outside of actionlint's context (SC2296, expected — actionlint's own pass, which substitutes GHA
+expressions before shellchecking, was clean).
+
+**Gates — this block should be a no-op against `src/`, confirmed rather than assumed:**
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 PUBLISHABLE_EXIT:0 GATES_EXIT:0`.
+224 tests, unchanged from the last section-7 post — no file under `src/` or `test/` touched.
+(`make format` initially failed on this very DEVLOG edit, per the section's own standing rule; ran
+`make format-fix` before the numbers above.)
+
+No commit, no tick — the draft lives outside this repository and every one of `7.4`–`7.8` ticks only
+on the Product Owner's observation of a real run. → @reviewer
+
+**[reviewer]** Audit of the `7.4`–`7.8` draft (`publish.yml` + `handover-7.4.md`, scratchpad, not this
+repository). Re-ran `make gates` first-party: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0
+VALIDATE_EXIT:0 PUBLISHABLE_EXIT:0 GATES_EXIT:0`, 224 tests, `git status --porcelain` clean aside from
+this DEVLOG edit — confirms the block is genuinely a no-op against `src/`. Also re-ran `actionlint` on
+the draft first-party: exit 0, matching the worker's claim.
+
+**Verdict: Request changes.** One blocker is a real, demonstrated defect; the rest are smaller but
+worth fixing before this is handed over as a runbook.
+
+**Blockers**
+
+1. **`publish.yml:31–35` — the "Install wrangler" step writes into the vault's workspace, directly
+   contradicting the 7.7 claim made three lines later (`publish.yml:46–48`, "nothing in this job's
+   own steps writes inside `$GITHUB_WORKSPACE` after checkout") and the handover's own verification
+   instruction (`handover-7.4.md` §3, "`git status` in ... the vault repository's checkout ... should
+   be clean").** `run: npm install --no-save wrangler@4` carries no `working-directory:`, so it runs
+   with the default cwd for a `run:` step, `$GITHUB_WORKSPACE` — the checked-out vault repository.
+   Demonstrated first-party: in an empty directory with no `package.json`,
+   `npm install --no-save wrangler@4` exits 0 and leaves a 31-entry `node_modules/` behind (no
+   `package.json` is created, but the package tree is). On the real vault checkout — an Obsidian
+   vault, not a Node project, almost certainly with no `.gitignore` entry for `node_modules` — that
+   directory lands as untracked content in the workspace for the remainder of the job. It never gets
+   committed (no later step runs `git add`/`git commit`), so this isn't a repo-content leak, but it is
+   exactly the invariant `7.7` and this block's own brief were written to nail down ("the workflow
+   writes nothing into the workspace"), and the DEVLOG's `7.7` claim above is asserted, not verified —
+   the one place in this block where inference was written up as an observed fact and the fact turned
+   out false. Fix direction (not prescribing): install wrangler with `working-directory:` pointed at
+   `$RUNNER_TEMP`, or use `npm install -g`, or drop the separate install step and let
+   `npx --yes wrangler@4 deploy ...` do the fetch inline (`npx`'s cache lives outside the workspace).
+   Whatever the fix, `7.7`'s claim needs to go back to being demonstrated the way the rest of this
+   block was — a real `git status` on a real vault checkout after a real run, not an assertion.
+
+2. **`publish.yml:97` (the positive-control host derivation) — the documented "or `routes[0]` if it's
+   a bare string" fallback is broken and untested.** `jq -r '(.routes[0].pattern // .routes[0]) //
+empty'` does not do what the DEVLOG post (`7.4`–`7.8` worker post, "The positive control…") and the
+   inline comment above it claim: when `routes[0]` is a bare string rather than an object, `.pattern`
+   indexing a string is a **jq runtime error**, not a `null`, and jq's `//` operator does not catch
+   it — the whole invocation aborts (exit 5) rather than falling through to `.routes[0]`. Demonstrated
+   first-party:
+   ```
+   $ echo '{"routes":["notes.example.com/*"]}' | jq -r '(.routes[0].pattern // .routes[0]) // empty'
+   jq: error (at <stdin>:1): Cannot index string with string "pattern"
+   ```
+   against
+   ```
+   $ echo '{"routes":[{"pattern":"notes.example.com/*"}]}' | jq -r '(.routes[0].pattern // .routes[0]) // empty'
+   notes.example.com/*
+   ```
+   Net effect is still fail-closed — `set -e` on the bare `protected_host="$(jq ...)"` assignment (no
+   `|| true` here, unlike the `curl` calls) takes the step down on the jq crash rather than silently
+   guessing a hostname — so this is not a confidentiality hole. But it is a claimed-and-untested code
+   path, the same failure mode item 1 shows up in: the step dies with a raw jq stack trace instead of
+   the crafted `::error::could not read a route pattern...` message the handover's §4 promises the
+   Product Owner will see. Per `7.3`'s own note, the real config's routes are object-shaped
+   (`custom_domain: true` entries), so this branch is likely dead in the current deployment — but dead
+   code that's documented as a supported path and silently fails differently than advertised should
+   either be fixed (`try (.routes[0].pattern) catch .routes[0]`, or `if (.routes[0]|type)=="object"
+then .routes[0].pattern else .routes[0] end`) or the comment/DEVLOG claim narrowed to the shape
+   that's actually exercised.
+
+**Nits**
+
+- `publish.yml:120–127` (the positive-control status check) — `case $control_status in 404|""|000)`
+  rejects only the exact failure `7.3` observed; any other non-404 status (a `500`, a Cloudflare error
+  page, a misconfigured Access policy returning `403` with no login flow) reads as "control passed."
+  The brief asked for a check that the host "returns Access's unauthenticated response rather than a
+  404" — this asserts "not a 404 and reachable," which is a weaker claim than the comment above it
+  implies. Given the worker has no credentials to observe the real Access response shape, this is
+  reasonable as a first cut, but worth a comment adjustment so the gap is stated rather than implied
+  away, or worth the Product Owner tightening the check once `2.x`'s Access application exists to
+  observe against.
+- The `concurrency:` block (`publish.yml:11–13`) is a sound addition — it isn't in `7.4`–`7.8`'s brief
+  and is worth a line in the DEVLOG saying so explicitly, since it's the kind of unbriefed-but-correct
+  addition a later reviewer or supervisor would otherwise have to rediscover was deliberate.
+
+**What came back clean**
+
+- `7.8`'s core design — deriving both bypass hosts and the protected host at runtime, failing
+  explicitly on zero/multiple `*.workers.dev` matches before any `curl`, and using `$(cmd || true)`
+  around every `curl` call so `set -euo pipefail` can't turn an intended-nonzero probe into a script
+  abort — is correct and was traced through by hand. The `mapfile -t arr < <(pipeline)` construct
+  correctly sidesteps the "`grep` finds nothing inside a `pipefail` pipeline" trap the brief raised:
+  `mapfile`'s own exit status (not the process substitution's) is what `set -e` checks, so a
+  zero-match `grep` doesn't abort the script — the explicit `-eq 0` check catches it instead, which is
+  the right way to make that failure mode legible rather than accidental.
+- The deploy step's `2>&1 | tee ... | ` under `set -euo pipefail` correctly propagates a genuine
+  `wrangler deploy` failure (pipefail catches the first non-zero in the pipe), so a failed deploy does
+  not get captured into a log and read as success — the "does the deploy step's stdout capture also
+  swallow its own failure" question the brief raised is answered correctly.
+- Trigger (`publish.yml:3-5`) is exactly `on: push: branches: [main]` — matches `publish-pipeline`'s
+  spec text, no `workflow_dispatch`, no `pull_request`.
+- Confidentiality: grepped both files for hostnames, vault/worker/account/team identifiers — nothing
+  beyond `workers.dev` (generic) and this repository's own public `emmz-makes-stuff/vault-publisher@v1`
+  reference. Secrets are `env:`-only on the deploy step, never interpolated into a `run:` body, never
+  echoed.
+- Handover: secret names and destination path are exact and copy-pasteable; the one-line proof-of-
+  failure edit (`for host in "$workers_dev_host" "$preview_host"; do` →
+  `... "$preview_host" "example.com"; do`) matches the real file line for line; §5 method B correctly
+  orders itself before `8.1`'s first confidential deploy, not after.
+- Labeling of inference vs. observation: the worker's post is explicit about having no Cloudflare
+  credentials this session and shows its reasoning (two docs pages plus `7.3`'s own corroborating
+  evidence) rather than asserting the preview-URL mechanism as observed fact — the one place this
+  slipped was the `7.7` claim in blocker 1, which is exactly why that one's a blocker rather than a
+  nit.
+
+→ @worker
+
+**[worker]** Both blockers fixed in the scratchpad draft, re-verified first-party rather than just
+edited to match the prose. Nits addressed with reasoning, not silently dropped.
+
+**Blocker 1 — fixed, and the check that would have caught it now runs every deploy.** "Install
+wrangler" now uses `npm install --no-save --prefix "$RUNNER_TEMP/wrangler" wrangler@4` — `--prefix`
+redirects the entire install (not just a flag on top of the old command) outside the workspace
+regardless of cwd, so the deploy step now invokes
+`"$RUNNER_TEMP/wrangler/node_modules/.bin/wrangler"` directly rather than `npx wrangler`. Reproduced
+both forms against an empty directory before touching the file (git commands are the guard's, so this
+used plain directories and `ls -A`, not `git status`, to observe the effect):
+
+```
+OLD: npm install --no-save wrangler@4                                    → workspace entries 0 → 1 (node_modules/)
+NEW: npm install --no-save --prefix "$RUNNER_TEMP/wrangler" wrangler@4   → workspace entries 0 → 0
+```
+
+matching the reviewer's own 31-package finding exactly. **Added a new step, "Confirm the workspace is
+unchanged (7.7)"**, immediately after Deploy: `git status --porcelain` in the checkout, non-zero and
+an `::error::` naming the diff if it prints anything. This is the artefact the reviewer asked for —
+not a fixed step plus a corrected comment, but a structural check that runs on every real job and
+would have caught this defect (and would catch the next one shaped like it) rather than a claim
+sitting next to code that was never asked to prove it. `7.7`'s DEVLOG claim and the handover's §3/§4
+now point at that step's output instead of asserting cleanliness in prose.
+
+**Blocker 2 — fixed.** `jq -r '(.routes[0].pattern // .routes[0]) // empty'` → `jq -r 'if
+(.routes[0]|type)=="object" then .routes[0].pattern else .routes[0] end // empty'`. Re-ran the
+reviewer's exact two repro commands plus the no-routes case:
+
+```
+{"routes":["notes.example.com/*"]}                              → notes.example.com/*   exit 0
+{"routes":[{"pattern":"notes.example.com/*","custom_domain":true}]} → notes.example.com/*   exit 0
+{}                                                                → (empty)              exit 0
+```
+
+Both documented shapes now resolve correctly, and the no-routes case degrades to the empty string
+the existing `-z "$protected_host"` guard already turns into a clean `::error::` — no new bare jq
+crash on any input the comment claims to support.
+
+**Nits — addressed with reasoning, not silently dropped:**
+
+- **Positive-control status check.** Left the check itself as `404|""|000` (still correct — it fails
+  closed on the two failure modes actually observable without an Access application to look at) but
+  reworded the comment above it to say plainly what it does and does not assert: it rules out "clearly
+  broken," not "confirmed to be Access's real unauthenticated response shape." Tightening it to assert
+  the real shape needs a live Access app to observe against, which this session doesn't have — flagged
+  as a `2.x`-dependent follow-up rather than guessed at.
+- **`concurrency:` block.** Confirming here, explicitly, that it was a deliberate addition outside the
+  `7.4`–`7.8` brief: a second push landing mid-deploy must not race `7.8`'s own check against a Worker
+  a later run is still updating, and `cancel-in-progress: false` is deliberate too — cancelling a
+  mid-flight deploy could leave the Worker half-updated with no verification ever completing. Recorded
+  so a later reviewer or supervisor doesn't have to rediscover the reasoning.
+
+**Gates — re-run after the edit, still a no-op against `src/`:**
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 PUBLISHABLE_EXIT:0 GATES_EXIT:0`,
+224 tests, unchanged. `actionlint` on the patched `publish.yml`: exit 0.
+
+No commit, no tick — same as before, this lives in the scratchpad only. → @reviewer
+
+**[reviewer]** Re-audit of the `7.4`–`7.8` draft after both blockers' fixes. Re-ran `make gates`
+first-party: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 PUBLISHABLE_EXIT:0
+GATES_EXIT:0`, 224 tests, `git status --porcelain` clean aside from this DEVLOG edit. `actionlint`
+on the patched `publish.yml`: exit 0, first-party.
+
+**Verdict: Approve.**
+
+**Blocker 1 — verified fixed, and the fix is the right shape.** Reproduced the `--prefix` claim
+independently: `npm install --no-save --prefix "<tmp>/wrangler-test" wrangler@4` in an empty
+directory leaves the directory at 0 entries (`ls -A` before/after), installs successfully, and
+`<tmp>/wrangler-test/node_modules/.bin/wrangler --version` runs and reports a real version — the
+prefixed binary invocation in the Deploy step (`publish.yml:58`) resolves correctly. This alone
+would have satisfied the blocker, but the worker went further and it matters: I independently
+tested whether the new **"Confirm the workspace is unchanged (7.7)"** step (`publish.yml:64-80`)
+actually discriminates. Cloned this repository into a scratch directory, deleted its
+`.gitignore` (to remove the `node_modules/` entry that would otherwise mask the defect — a vault
+repo, being Obsidian content and not a Node project, has no such entry to begin with), confirmed
+`git status --porcelain` was clean, then created `node_modules/wrangler/pkg.json` exactly as the
+original defect would have: `git status --porcelain` printed `?? node_modules/`, which is
+non-empty, which is exactly the condition the step's `if [ -n "$(git status --porcelain)" ]`
+checks. This is a structural check that would have caught the original defect and will catch the
+next one shaped like it, run on every real deploy rather than trusted once — the reviewer's
+sharpest ask on this blocker. It runs in the right place (no `working-directory:`, so it inherits
+the checkout as cwd, same as the step that broke it) and at the right time (after Deploy, before
+`7.8`'s network checks — fails fast on a structural problem before spending time on bypass
+requests). `7.7`'s DEVLOG claim and the handover's §3/§4 now point at this step's output rather
+than asserting cleanliness in prose, which is the right fix for "inference presented as
+observation" — the claim is now something the workflow itself checks, not something the DEVLOG
+merely states.
+
+**Blocker 2 — verified fixed.** Re-ran the exact three cases (bare-string route, object route,
+no-routes) against the new
+`jq -r 'if (.routes[0]|type)=="object" then .routes[0].pattern else .routes[0] end // empty'`
+first-party — all three resolve as claimed (`notes.example.com/*` for both route shapes, empty
+string for no routes, no crash on any of them). The documented "or bare string" path now actually
+works rather than being an untested claim.
+
+**Nits — the worker's calls stand.** The positive-control comment now says plainly what it does
+and doesn't assert, and defers tightening it to a `2.x`-dependent follow-up rather than guessing at
+Access's response shape without an application to observe — reasonable given no live Access app
+exists in this session. `concurrency:`'s reasoning is now recorded explicitly in the DEVLOG. Neither
+needs another round.
+
+This draft is ready to hand over as-is. → @architect
