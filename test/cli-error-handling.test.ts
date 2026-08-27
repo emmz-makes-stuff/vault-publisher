@@ -59,7 +59,16 @@ describe("main() — publishSite failures use the same convention loadConfig err
 
   it("prints a clean message, sets a non-zero exit code, no stack trace, and still reports warnings collected before the failure", async () => {
     const { main } = await import("../src/cli.ts");
-    await main(["node", "index.ts", integrationVaultConfigPath, outputDir]);
+    await main([
+      "node",
+      "index.ts",
+      "--vault",
+      path.dirname(integrationVaultConfigPath),
+      "--config",
+      integrationVaultConfigPath,
+      "--output",
+      outputDir,
+    ]);
 
     const stderr = stderrChunks.join("");
     const lines = stderr.trim().split("\n");

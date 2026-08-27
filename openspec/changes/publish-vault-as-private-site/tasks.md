@@ -60,7 +60,7 @@ These come first deliberately: the guarantee must be in place and proven before 
 
 - [x] 6.1 Implement the warning reporter emitting `[WARNING]` lines that name the containing note and the specific problem; verify tests cover an unresolved link and a dropped Bases block
 - [x] 6.2 Ensure warnings never fail a publish — the degraded page ships and the process exits 0; verify a test runs a vault producing many warnings and asserts a zero exit with all warnings reported
-- [ ] 6.3 Implement the CLI with `util.parseArgs` taking the vault path, config path and output directory; verify `--help` exits 0 and a missing required argument exits non-zero
+- [x] 6.3 Implement the CLI with `util.parseArgs` taking the vault path, config path and output directory; verify `--help` exits 0 and a missing required argument exits non-zero
 - [ ] 6.4 Verify end to end against a fixture vault that the output directory contains exactly the expected pages and nothing else
 
 ## 7. Distribution and deployment

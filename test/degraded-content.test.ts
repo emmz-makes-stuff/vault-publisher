@@ -31,10 +31,17 @@ const cleanConfigPath = path.join(
 
 function runCli(
   configPath: string,
-  outputDir?: string,
+  outputDir: string,
 ): { status: number | null; stdout: string; stderr: string } {
-  const args =
-    outputDir === undefined ? [entryPoint, configPath] : [entryPoint, configPath, outputDir];
+  const args = [
+    entryPoint,
+    "--vault",
+    path.dirname(configPath),
+    "--config",
+    configPath,
+    "--output",
+    outputDir,
+  ];
   const result = spawnSync(process.execPath, args, { encoding: "utf8" });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
