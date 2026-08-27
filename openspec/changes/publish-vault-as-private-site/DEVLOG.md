@@ -6754,6 +6754,335 @@ not just the job's tick.
   never asks for the floored entry, they cannot fail the way they appear to — allow-list selection
   alone would keep it out. That is the eleventh instance's shape and it is worth one pass.
 
+**[architect]** Block A remediation brief — the real Actions run failed → @worker
+
+Emmz pushed and opened the PR. **The job failed at the first step**, and the failure is a real defect
+in `action.yml`:
+
+```
+Error: The specified node version file at:
+/home/runner/work/vault-publisher/vault-publisher/home/runner/work/vault-publisher/vault-publisher/publisher/.nvmrc
+does not exist
+```
+
+**Cause.** `actions/setup-node` resolves `node-version-file` **relative to `$GITHUB_WORKSPACE`**.
+`action.yml` passes `${{ github.action_path }}/.nvmrc`, which is **absolute**, so setup-node joins the
+workspace onto it and produces the doubled path above. It is not a checkout problem and not a missing
+file — `.nvmrc` is there, at `publisher/.nvmrc`; the input simply cannot take an absolute path.
+
+**The fix.** Read the pinned version in a composite shell step, where `$GITHUB_ACTION_PATH` works
+normally, and pass `node-version` instead:
+
+```yaml
+- name: Read the pinned Node version
+  id: nvmrc
+  shell: bash
+  run: echo "version=$(cat "$GITHUB_ACTION_PATH/.nvmrc")" >> "$GITHUB_OUTPUT"
+
+- name: Set up Node
+  uses: actions/setup-node@v4
+  with:
+    node-version: ${{ steps.nvmrc.outputs.version }}
+```
+
+`.nvmrc` holds `24`, which `node-version` accepts directly. Do not hardcode the version — the point of
+reading `.nvmrc` is that the pin lives in one place.
+
+**Sweep for the same class while you are in there.** Any input of any action, in `action.yml` or in
+`.github/workflows/test-action.yml`, that receives a path: state in your post whether it is resolved
+by the receiving action relative to the workspace, relative to the step's `working-directory`, or
+taken verbatim — and whether what we pass matches. `${{ github.action_path }}` interpolated into a
+`run:` block is fine; interpolated into another action's `with:` is where this bites. I want the list,
+not just the one fix.
+
+**Do not touch** the `--config` string-concatenation note or the §6 `EXCLUSION_FLOOR` test question —
+both are parked for the section supervisor and are out of this block.
+
+**What you cannot do, and must not pretend to.** You still cannot run GitHub Actions. This defect was
+invisible to every local check, to the reviewer's audit, and to me reading the file — it lives
+entirely in another action's argument-resolution rule. So: make the fix, re-run the full gate set and
+quote every `LABEL_EXIT:<n>`, and say plainly that the fix is **unverified against a real runner**.
+Emmz re-runs the PR job. No ticking, no commits.
+
+**The lesson, recorded here because it is the point of the whole exercise.** Section 6 closed with the
+standing rule that a hand-executed reproduction is evidence a mechanism is sound and is **not** the
+verification. This is that rule paying out in under an hour: the reproduction ran the same `node`
+invocation with the same arguments and passed, because it never went through `actions/setup-node` at
+all. **The step the reproduction skipped is exactly the step that failed.** When you hand-execute a
+sequence, name the steps you did not execute — that list is where the next failure is.
+
+**[worker]** Block A remediation done — `action.yml` fixed, sweep posted below → @reviewer
+
+**The fix**, exactly as briefed. `action.yml`'s `Set up Node` step no longer passes
+`node-version-file: ${{ github.action_path }}/.nvmrc` to `actions/setup-node` (that input is resolved
+relative to `$GITHUB_WORKSPACE`, and `github.action_path` is absolute, so the workspace got joined onto
+it — the doubled path in the failure). Added a preceding `Read the pinned Node version` composite
+shell step (`shell: bash`, no `uses:`) that does `cat "$GITHUB_ACTION_PATH/.nvmrc"` — a `run:` context,
+where `$GITHUB_ACTION_PATH` resolves correctly — and writes it to `$GITHUB_OUTPUT` as `version`; the
+`Set up Node` step now passes `node-version: ${{ steps.nvmrc.outputs.version }}`. Nothing hardcoded —
+`.nvmrc` stays the single place the pin lives.
+
+**The sweep — every `with:`/`working-directory:` in `action.yml` and `.github/workflows/test-action.yml`
+that carries a path**, checked by `grep -n "uses:\|with:\|working-directory:"` over both files (three
+hits total, confirmed exhaustive):
+
+| File                                | Step                                                            | Path passed                                        | Receiving action resolves it                                                                                                                                  | Matches?                                                              |
+| ----------------------------------- | --------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `action.yml`                        | `Set up Node` → `actions/setup-node@v4`                         | `node-version: ${{ steps.nvmrc.outputs.version }}` | a version string, not a path — no resolution rule applies                                                                                                     | n/a, this was the bug and is now fixed                                |
+| `action.yml`                        | `Install publisher dependencies`                                | `working-directory: ${{ github.action_path }}`     | this is a composite step's own `working-directory:`, evaluated by the runner directly against the absolute value — not another action's input-resolution rule | matches; absolute paths are exactly what `working-directory:` accepts |
+| `.github/workflows/test-action.yml` | `Check out the publisher` → `actions/checkout@v4`               | `path: publisher`                                  | checkout's `path` input is documented as relative to `$GITHUB_WORKSPACE`                                                                                      | matches; we pass a bare relative segment intending exactly that       |
+| `.github/workflows/test-action.yml` | `Run the action against the staged vault` → `uses: ./publisher` | no `with:` block (defaults used)                   | n/a — this is our own action being invoked, not a third-party input                                                                                           | n/a                                                                   |
+
+Only the `setup-node` row was the defect class: an **absolute** path (`github.action_path`/
+`github.workspace` interpolations are always absolute) handed to an input that resolves **relative to
+the workspace**. The `working-directory:` and `checkout`'s `path` rows both pass what their consumer
+actually expects, so no other change was needed. `${{ github.action_path }}` interpolated into `run:`
+blocks elsewhere in `action.yml` (the `Publish` step) is fine, per the brief — those are shell contexts,
+not another action's `with:`.
+
+**Gates, full set, after the fix:**
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. 210 tests, all
+green, no DEVLOG-format trip this time.
+
+**Still unverified against a real runner — unchanged.** I cannot run GitHub Actions from here, so this
+fix is untested against `actions/setup-node`'s actual behaviour; it is the corrected shape per the
+brief's cause analysis and the sweep found no sibling defect, not a confirmed-green job. Copy-pasteable
+check: push, let the PR job run `.github/workflows/test-action.yml` again, confirm `Set up Node`
+succeeds and the job goes green end to end. No commit, no box ticked, `--config` string-concatenation
+and the §6 `EXCLUSION_FLOOR` question untouched as instructed.
+
+**[reviewer]** Block A remediation audit → **Request changes**
+
+Scope: `git diff 244a18b -- action.yml`, plus the brief and reply above. Nothing else touched — confirmed
+by diff.
+
+**The fix is the right shape and correct for the stated cause.** `actions/setup-node`'s
+`node-version-file` is documented as resolved relative to `$GITHUB_WORKSPACE`; handing it an absolute
+`${{ github.action_path }}/.nvmrc` produces exactly the doubled-path failure quoted in the brief. Moving
+the read into a composite `run:` step (where `$GITHUB_ACTION_PATH` is just an env var, resolved by the
+shell, not by another action's input-resolution rule) and passing the value through `node-version`
+sidesteps the defective input entirely. `.nvmrc` (`action.yml:31-34` old / `36-39` new) stays the only
+place the pin lives — nothing hardcoded, confirmed by reading `.nvmrc` (`24`) and the new step.
+
+**Blocker — the new step can read a broken `.nvmrc` and never fail.**
+`action.yml:32`: `echo "version=$(cat "$GITHUB_ACTION_PATH/.nvmrc")" >> "$GITHUB_OUTPUT"`, with no
+`set -e`/validation in the step (unlike the `Publish` step, which opens with `set -euo pipefail`).
+Composite `shell: bash` steps do run under GitHub's default `bash -e -o pipefail {0}`, but that does
+**not** help here: a failed command substitution embedded inside another command's arguments (`echo
+"version=$(cat ...)"`) does not itself trip `-e` — only the exit status of the enclosing `echo` does,
+and `echo` always succeeds. Concretely:
+
+- **Missing/unreadable `.nvmrc`**: `cat` fails, prints to stderr, contributes empty output; `echo`
+  still exits 0. The step reports success and writes `version=` (empty) to `$GITHUB_OUTPUT`. Whether
+  `actions/setup-node` then errors, or silently falls through to whatever Node happens to be
+  preinstalled on the runner, an empty `node-version` is not caught at the point that actually knows
+  the read failed — this is precisely "a bad read silently produces a broken/empty
+  `node-version`," not a loud failure at the point of the actual defect.
+- **Empty `.nvmrc`** (zero bytes): same outcome — `version=` written, no error raised by this step.
+- **Multi-line `.nvmrc`**: `$(...)` preserves internal newlines while only stripping trailing ones, so
+  a two-line file produces a literal embedded newline in the value written to `$GITHUB_OUTPUT` —
+  `version=24\nsecondline`. `$GITHUB_OUTPUT` is a `key=value`-per-line file; an unescaped embedded
+  newline corrupts the format (the second line is parsed as an unrelated `key=value` pair, or worse,
+  silently mangles the `version` output) rather than failing the step that produced it.
+- **Trailing CRLF**: `$(...)` strips trailing `\n` but not a lone trailing `\r`, so a CRLF-terminated
+  file yields `version="24\r"` — likely a loud failure downstream in `setup-node` (a version string
+  `setup-node` can't resolve), so lower risk than the two above, but still ungated at the step that
+  could catch and explain it.
+- **Leading `v`** (e.g. `v24`): not a hazard — `node-version` accepts a `v`-prefixed value the same as
+  `.nvmrc`/`node-version-file` would, so this one is fine as-is.
+
+None of these apply to the `.nvmrc` committed today (`24`, single line, LF-terminated, no `v` prefix),
+so the fix is correct for the current repository state. But this is exactly the defect class the
+architect's brief called out by name in the same breath as this remediation (`## NEXT`, "a step that
+cannot fail" — fifteen recorded instances) and the read step as written is another one: it cannot fail
+on the one thing it's supposed to be reading correctly. Ask: trim the read and assert it's non-empty
+and single-line before writing to `$GITHUB_OUTPUT`, failing loudly otherwise — e.g.
+`version="$(cat "$GITHUB_ACTION_PATH/.nvmrc")"; version="${version%%$'\r'}"; version="${version%%$'\n'*}"`
+then `[ -n "$version" ] || { echo "::error::.nvmrc is empty or unreadable" >&2; exit 1; }` before the
+`echo ... >> "$GITHUB_OUTPUT"`, plus `set -euo pipefail` on the step for consistency with `Publish`.
+
+**Sweep table — verified independently, correct and exhaustive.** Re-ran
+`grep -n "uses:\|with:\|working-directory:\|github.action_path\|github.workspace" action.yml
+.github/workflows/test-action.yml` myself: the same three `with:`/`working-directory:` sites the
+worker lists (`Set up Node`'s `node-version`, `Install publisher dependencies`'s `working-directory:
+${{ github.action_path }}`, `checkout`'s `path: publisher`) plus the two `${{ github.action_path
+}}`/`${{ github.workspace }}` interpolations inside the `Publish` step's `run:` block, and nothing
+else. Each row's resolution claim checks out:
+
+- `working-directory:` on a composite `run:` step is the runner's own field, evaluated directly against
+  the absolute value — accepts absolute paths, matches.
+- `actions/checkout@v4`'s `path` input is documented relative to `$GITHUB_WORKSPACE`; `path: publisher`
+  is a bare relative segment — matches.
+- The `${{ github.action_path }}` / `${{ github.workspace }}` interpolations inside `Publish`'s `run:`
+  are shell-context, not another action's `with:` — out of the defect class per the brief, correctly
+  left alone.
+  Only the `setup-node` row was defective, and it's now fixed for today's `.nvmrc` (with the robustness
+  gap above still open).
+
+**S6-3 confirmed still holding.** `action.yml:69`: `--vault "${{ github.workspace }}"` — unchanged by
+this diff, no input of any spelling feeds it. `inputs.output` (only other user-facing path input,
+besides `config`, out of scope here) still resolved verbatim, never joined against the workspace.
+
+**Gates reproduced independently**: `make gates` →
+`TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, 210/210 tests green. Matches the
+worker's report.
+
+**Verdict: Request changes** — one blocker (the ungated `.nvmrc` read), everything else in scope holds.
+→ @worker
+
+**[worker]** Blocker fixed — `.nvmrc` read now gated, proven with real failure cases → @reviewer
+
+**The fix, exactly as instructed.** `Read the pinned Node version` now:
+
+```yaml
+run: |
+  set -euo pipefail
+  version="$(cat "$GITHUB_ACTION_PATH/.nvmrc")"
+  version="${version%$'\r'}"
+  if [ -z "$version" ] || [[ "$version" == *$'\n'* ]]; then
+    echo "::error::.nvmrc at $GITHUB_ACTION_PATH is empty, unreadable, or not a single line" >&2
+    exit 1
+  fi
+  echo "version=$version" >> "$GITHUB_OUTPUT"
+```
+
+`set -euo pipefail` for consistency with `Publish`. The read is now its own statement
+(`version="$(cat ...)"`), not nested inside `echo`'s argument list — an assignment whose only command
+substitution fails takes that command's exit status as its own, so `set -e` now actually trips on a
+missing or unreadable file. A trailing `
+` is stripped (CRLF-terminated `.nvmrc` now yields a clean
+`version=24` rather than an embedded-`
+` value or a downstream `setup-node` failure). Empty and
+multi-line are both rejected explicitly, before anything reaches `$GITHUB_OUTPUT` — the check happens
+at the point that knows the read failed, not three steps downstream where the cause is invisible.
+
+**Proof it can fail — hand-run, not asserted.** Extracted the step's script verbatim, ran it with
+`GITHUB_ACTION_PATH` pointed at a scratch directory and `GITHUB_OUTPUT` at a scratch file, four cases:
+
+| Case      | `.nvmrc` content   | Exit status | `$GITHUB_OUTPUT` contents                                                                                |
+| --------- | ------------------ | ----------- | -------------------------------------------------------------------------------------------------------- |
+| normal    | `24\n`             | `0`         | `version=24`                                                                                             |
+| absent    | (no file)          | `1`         | (empty — nothing written; `cat`'s stderr `No such file or directory` surfaced before the guard even ran) |
+| empty     | (zero bytes)       | `1`         | (empty — `::error::...empty, unreadable, or not a single line` on stderr)                                |
+| multiline | `24\nsecondline\n` | `1`         | (empty — same `::error::` message)                                                                       |
+
+All three failure cases: nonzero exit, nothing written to `$GITHUB_OUTPUT`. The normal case: exit 0,
+exactly `version=24`. Then ran the same script against this repository's real `.nvmrc`
+(`GITHUB_ACTION_PATH` = repo root): exit `0`, `$GITHUB_OUTPUT` contains exactly `version=24` — unchanged
+from before the fix, confirming nothing regressed for the case that matters today.
+
+**Gates, full set, after the fix:**
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. 210 tests, all
+green (one `make format-fix` pass needed on this DEVLOG post, as every block boundary in this change
+has needed).
+
+**Still unverified against a real runner — unchanged.** Everything above is a hand-executed
+reproduction of the step's script against scratch directories, not a real `actions/setup-node`
+invocation reading a real `steps.nvmrc.outputs.version`. Copy-pasteable check: push, let the PR job
+run again, confirm `Read the pinned Node version` and `Set up Node` both succeed and the job goes green
+end to end. No commit, no box ticked, `--config` string-concatenation and the §6 `EXCLUSION_FLOOR`
+question still untouched, still out of scope.
+
+**[reviewer]** Block A remediation re-audit → **Approve**
+
+Scope: `git diff -- action.yml` only, against the fix posted above.
+
+**The blocker is closed.** `action.yml:32-44`, new `Read the pinned Node version` step:
+
+```
+run: |
+  set -euo pipefail
+  version="$(cat "$GITHUB_ACTION_PATH/.nvmrc")"
+  version="${version%$'\r'}"
+  if [ -z "$version" ] || [[ "$version" == *$'\n'* ]]; then
+    echo "::error::.nvmrc at $GITHUB_ACTION_PATH is empty, unreadable, or not a single line" >&2
+    exit 1
+  fi
+  echo "version=$version" >> "$GITHUB_OUTPUT"
+```
+
+This is the correct shape. The failure mode from the previous round was specifically that `$(cat …)`
+embedded inside another command's arguments (`echo "version=$(cat ...)"`) doesn't trip `-e` — only the
+enclosing command's own exit status does. Reading into `version="$(cat ...)"` as its own statement
+fixes exactly that: under `set -e`, a failed command substitution in a plain assignment does terminate
+the script. `set -euo pipefail` is now on the step, matching `Publish`.
+
+**Independently reproduced every claimed case**, not just read the diff — extracted the step's script
+verbatim into scratch fixtures at absent/empty/multi-line/CRLF/normal/`v`-prefixed `.nvmrc` paths and
+ran it directly (not trusting the worker's hand-run, per the brief):
+
+| `.nvmrc` content         | exit                      | `version=` output |
+| ------------------------ | ------------------------- | ----------------- |
+| absent                   | 1 (`cat` error to stderr) | none              |
+| empty                    | 1 (`::error::` printed)   | none              |
+| `24\nfoo\n` (multi-line) | 1 (`::error::` printed)   | none              |
+| `24\r\n` (CRLF)          | 0                         | `version=24`      |
+| `24\n` (normal)          | 0                         | `version=24`      |
+| `v24\n` (leading v)      | 0                         | `version=v24`     |
+
+Matches the worker's reported table exactly, and additionally confirms the CRLF case I flagged last
+round is now handled cleanly (stripped, not left dangling as `24\r`). No case reaches
+`$GITHUB_OUTPUT` with an empty or corrupted value; every rejected case fails loudly with an `::error::`
+before the file is written. `.nvmrc` stays the single source of the pin — nothing hardcoded, nothing
+new added to the value beyond trimming a trailing `\r`.
+
+**Diff stayed in scope** — `git diff -- action.yml` touches only this step's `run:` block; the
+`setup-node` `with:` line, the sweep from the prior round, and S6-3's `--vault "${{ github.workspace
+}}"` are all unchanged and were re-confirmed unchanged by inspection.
+
+**Gates reproduced independently**: `make gates` → `TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0
+VALIDATE_EXIT:0 GATES_EXIT:0`, 210/210 tests green.
+
+**Verdict: Approve.** Not re-auditing the rest of block A (unchanged since the last round) or the
+parked `--config`/`EXCLUSION_FLOOR` items, per scope. Still genuinely unverified against a real
+`actions/setup-node` invocation, as both the brief and the worker's post already say — that's the
+Product Owner's PR re-run to confirm, not a reviewer finding. → @architect
+
+**[architect]** Remediation closed — committed. `7.1` still **not ticked**.
+
+Reviewer `Approve`, and it re-ran the worker's four-case demonstration itself in scratch fixtures
+rather than reading the table — plus two cases the worker did not run (CRLF, and a `v`-prefixed
+version). That is the right instinct: this was the second attempt at a step whose first version could
+not fail, and the first version also passed a review.
+
+Gates first-party: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`,
+210 tests.
+
+**The sixteenth instance, and what it cost.** `action.yml` shipped at `244a18b` with a hand-run of
+"the exact command sequence the composite action's steps run" behind it — same `node` invocation, same
+arguments, exit 0, correct output, gates green, reviewer `Approve`. The first real Actions run failed
+on its **first step**. The reproduction passed because it never went through `actions/setup-node` at
+all, and `setup-node` resolves `node-version-file` relative to `$GITHUB_WORKSPACE`, so the absolute
+`${{ github.action_path }}/.nvmrc` had the workspace joined onto it. Invisible to the gates, to the
+reviewer's audit, and to reading the file, because it lives entirely in another action's
+argument-resolution rule.
+
+**Standing rule §7 adds: when you hand-execute a sequence, name the steps you did not execute.** That
+list is where the next failure is. The corollary is what made this survivable rather than shipped —
+`7.1` stayed open and the block committed with the box unticked _because_ no real run had been
+observed. Refusing to tick on a reproduction is the whole reason this was caught rather than
+discovered later against real content.
+
+**And the fix reproduced the defect class it was fixing.** The first correction was
+`echo "version=$(cat …)" >> "$GITHUB_OUTPUT"` — a step that cannot fail, because a nested command
+substitution's failure does not trip `bash -e`; only the enclosing `echo`'s status counts, and `echo`
+always succeeds. A missing or empty `.nvmrc` would have written `version=` and reported success. That
+is the **fifth** time in this change a remediation has introduced an instance of the class it was
+carved to fix. Knowing about the failure mode still does not prevent it; only running the check
+against an input that should redden it does.
+
+**Still open for the Product Owner** — `7.1`'s verify clause, unchanged:
+
+```
+gh pr checks --watch
+```
+
+Confirm `Set up Node` now succeeds, and that the job reaches **and runs** both assertion steps —
+`Assert the output holds exactly the expected pages, nothing else` and `Assert no floor or
+unselected-note marker leaked into the output`. The second prints `scanning N files under …`; a
+skipped step prints nothing and would leave the job green over an assertion that never happened.
+Everything after `Set up Node` is still unobserved: the previous run never got that far.
+
 ## NEXT
 
 **Sections 1–6 are closed** (supervisor `Approve` on each). **45/59 tasks.** Next is **section 7 —
