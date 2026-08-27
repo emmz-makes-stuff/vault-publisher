@@ -7214,6 +7214,52 @@ rendered by the CLI — the same seven files CI produces — so nothing confiden
 
 Handover with exact commands going to Emmz. `7.3` ticks on the observed result, not on this post.
 
+**[architect]** `7.3` **verified and ticked** — fixture deploy run end to end, with a control.
+
+The Product Owner supplied a throwaway vault repository and asked for the steps to be run here rather
+than handed over. Its contents were read in full before anything was uploaded — Obsidian's default
+welcome note and nothing else. Publishing distributes whatever is in the directory, so "there's
+nothing sensitive in there" is a thing to confirm, not to accept.
+
+**The site.** The publisher rendered the throwaway vault to three files, with two correct warnings: no
+`Index.md` in the published set, so the site has no front page; and `[[create a link]]` unresolved and
+degraded to plain text.
+
+**Serve-then-refuse, because a 404 is not self-validating.** A deploy carrying the flags would have
+produced a `workers.dev` address that refuses — and that would have proved nothing, because instance 3
+of this change's near-miss list is exactly a `404` accepted as evidence when a mistyped hostname
+returns the same `404`. So the fixture was deployed **twice**:
+
+1. `workers_dev: true`. `/Welcome` → **200, 591 bytes, `text/html`, containing the note's text.** The
+   address demonstrably serves.
+2. `workers_dev: false, preview_urls: false`, same assets. Wrangler reported **`No targets deployed`**.
+   The same `/Welcome` → **404**. So did `/styles.css`, and so did the per-version preview addresses
+   for **both** versions.
+
+And the check that shows the check discriminates: a **deliberately mistyped hostname** returns `404`
+with a body of **19,984 bytes — byte-identical to the four refusals above**. The refusal and the
+typo are indistinguishable from the response alone. What carries the verification is the transition:
+that exact URL served 591 bytes of the note six minutes earlier and does not now.
+
+**Two observations worth keeping, both from the live site rather than reasoning:**
+
+- **The marker file is served.** `/.vault-publisher-output` returned **200**. `## NEXT` parked "decide
+  whether it is excluded from what is served" as an open question; it is now answered — it is served,
+  it is a zero-byte file carrying no vault-derived content, and behind Access it is unreachable
+  unauthenticated like everything else. Still worth an explicit decision rather than an accident.
+- **`/` returns 404 when no front page is selected**, matching the warning exactly. Worth knowing
+  before the real deploy: the real config must select a front page or the site's root is a 404.
+
+**The Worker was deleted afterwards.** It existed for about ten minutes and only ever served Obsidian
+boilerplate.
+
+**On the tick.** `7.3` asks for the configuration and a verified fixture deploy: both done. Its
+"re-request the addresses **afterwards** to confirm the deploy did not re-enable the routes `2.2`
+disabled" clause concerns the **real** Worker's first deploy, which has not happened — that is `7.4`'s
+event, and `7.8` makes the check standing rather than one-time. Ticking `7.3` on the fixture evidence
+and transferring that clause to `7.4` is an Architect judgement, recorded here so it is auditable
+rather than assumed. If the real Worker's first deploy does not get that check, this tick was wrong.
+
 ## NEXT
 
 **Sections 1–6 are closed** (supervisor `Approve` on each). **45/59 tasks.** Next is **section 7 —
