@@ -11,3 +11,7 @@ vault/
 # rendered site output, regenerated on demand for visual verification —
 # never committed, see the 5.7 verification recipe in the block C DEVLOG post
 rendered-preview/
+
+# Local pointer to the identifier list used by `make publishable`. The list names
+# client identifiers, so it lives in the vault repository; this is a symlink to it.
+.publishable-identifiers

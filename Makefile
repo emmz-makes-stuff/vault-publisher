@@ -17,7 +17,7 @@ SHELL := /bin/bash
 
 CHANGES := $(notdir $(patsubst %/,%,$(filter-out %/archive/,$(wildcard openspec/changes/*/))))
 
-.PHONY: build test format format-fix lint validate changes gates clean
+.PHONY: build test format format-fix lint validate changes publishable gates clean
 
 # --- TypeScript ----------------------------------------------------------------
 
@@ -55,10 +55,31 @@ validate:
 changes:
 	@echo "$(CHANGES)"
 
+# --- publishability ------------------------------------------------------------
+
+# This repository is public and the vault it publishes is client-confidential, so
+# a client identifier reaching a commit here is a disclosure. No other gate can
+# see it: build, test, format, lint and validate would all pass over a leaked
+# hostname or vault name forever. One reached `main` on 2026-08-27.
+#
+# Two rule sets, deliberately. Generic patterns need no secrets and run anywhere,
+# including CI — they catch shapes (`*.workers.dev`, a bare email address). The
+# literal list catches names that match no shape, and it NAMES the things being
+# protected, so it cannot live in this repository: it is read from $$VP_IDENTIFIERS
+# or a gitignored `.publishable-identifiers`, with the canonical copy in the vault.
+#
+# A missing or empty list is an ERROR, never a pass. A gate that greps for nothing
+# reports clean, and reporting clean over territory it never examined is the exact
+# failure this target exists to prevent — see `validate` above for the same rule.
+# CI genuinely cannot hold the list, so it sets PUBLISHABLE_LIST_OPTIONAL=1 and the
+# script prints the skip loudly rather than passing in silence.
+publishable:
+	@scripts/check-publishable.sh; code=$$?; echo "PUBLISHABLE_EXIT:$$code"; exit $$code
+
 # --- gate sets -----------------------------------------------------------------
 
 gates:
-	@$(MAKE) --no-print-directory -k build test format lint validate; code=$$?; \
+	@$(MAKE) --no-print-directory -k build test format lint validate publishable; code=$$?; \
 	echo "GATES_EXIT:$$code"; exit $$code
 
 # --- release & housekeeping ----------------------------------------------------
