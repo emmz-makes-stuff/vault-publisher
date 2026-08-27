@@ -126,6 +126,22 @@ export function isEntryWithheldByFloor(entry: string, kind: "folder" | "note"): 
 }
 
 /**
+ * Whether `candidate` is `parent` itself, or resolves to a location inside
+ * it — pure path-string arithmetic, no filesystem access, so it works
+ * before either directory exists. The one containment primitive this
+ * project reuses wherever a boundary must hold, rather than each caller
+ * growing its own subtly different `..`/`isAbsolute` check: `writer.ts`
+ * uses it both to keep a rendered page inside the output directory and to
+ * refuse an output directory that is the vault root or sits inside it;
+ * `isWithinVaultBoundary` below layers real-path symlink resolution on top
+ * of it for read-side candidates that already exist on disk.
+ */
+export function isPathWithinOrEqual(parent: string, candidate: string): boolean {
+  const relative = path.relative(parent, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+/**
  * Whether a walked candidate resolves to where the walk found it, expressed
  * as a pair of paths relative to their own roots — not an absolute-path
  * prefix check, which would misfire the moment the vault root itself sits

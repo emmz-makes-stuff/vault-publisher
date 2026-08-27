@@ -6134,6 +6134,121 @@ Gates: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 GATES
 
 `6.3` complete, ready for review. No box ticked, no commit made. → @reviewer
 
+**[architect]** Brief — block C (`6.4`) → @worker
+
+**Task.** `6.4` Verify end to end against a fixture vault that the output directory contains exactly
+the expected pages and nothing else.
+
+This block also discharges the Product Owner's decision recorded at the top of this section: **the
+publisher makes the output directory reflect exactly the published set.** The two belong together —
+"exactly the expected pages and nothing else" is not a property you can verify without deciding what
+happens to what was already there.
+
+**The hazard, reproduced by §5's supervisor.** Publish, then drop a note from the config and publish
+again into the same directory: the dropped note keeps its page _and its full body_, the explorer
+hides it, nothing warns, exit 0. An unpublished note remains served at a working URL. That is a
+confidentiality failure, not a tidiness one, and `6.4` must not be written against a fresh directory
+and declared green — a fresh directory is the configuration in which this is invisible.
+
+**Binding decisions — the clearing and its guard:**
+
+- `writeSite` makes the output directory's contents match what this run produced. Anything it did not
+  write this run goes.
+- **The guard is a marker file.** `writeSite` writes `.vault-publisher-output` at the root of the
+  output directory, holding no vault-derived content. On a later run:
+  - directory absent → create it, write the marker, publish;
+  - directory present and **empty** → write the marker, publish;
+  - directory present, non-empty, **marker present** → clear its contents and publish;
+  - directory present, non-empty, **marker absent** → **fail the publish** with a clean message and a
+    non-zero exit, deleting nothing. A tool that empties directories must refuse to empty one it has
+    no evidence it created. This is the difference between a stale page and someone's home directory.
+- **Additionally refuse if the output directory is the vault root or inside it**, whatever the marker
+  says. Reuse the existing containment logic in `src/selection.ts` if it fits; do not write a second,
+  subtly different path-containment check — one authority per property is this project's standing
+  rule.
+- **This is a failure, not a warning.** Warnings are for degradation that still ships something
+  honest (`6.2`); refusing to delete an unrecognised directory ships nothing, so it exits non-zero.
+  The existing `publishSite` catch in `src/cli.ts` already gives you the convention.
+
+**Tests this block owns.**
+
+- **Exactly the expected pages and nothing else** — publish a fixture vault, then enumerate the
+  output directory _recursively_ and compare the whole set against an expected list. Not "the
+  expected files exist"; the set, both directions. The marker file is part of the expected set —
+  name it explicitly rather than filtering it out, or the filter will one day hide a real stray file.
+- **The reuse hazard** — publish, drop a note from the config, publish again into the **same**
+  directory, and assert the dropped note's file is gone **and its body text appears nowhere in the
+  output tree**. Absence of the file is the weaker claim; content-not-served is the one that matters.
+- **The guard** — point the publisher at a non-empty directory with no marker; assert a non-zero
+  exit, a clean message, and that **every pre-existing file is still there, byte-identical**.
+- **Refusal when the output directory is inside the vault** — non-zero, nothing written, nothing
+  deleted.
+
+**Prove each can fail.** Ablate and post evidence, then restore: disable the clearing → the reuse
+test reddens while the fresh-publish test stays green (that is the divergence, not the shared path);
+make the marker check always pass → the guard test reddens and the pre-existing files are shown to be
+destroyed; disable the vault-containment refusal → that test reddens. **The clearing ablation is the
+important one** — it is the exact defect the block exists to close, and it must be seen to redden a
+named test.
+
+**Scope limits.** Do not touch the CLI's argument surface (`6.3`, committed at `fed26a1`). Section 7
+owns `action.yml`, wrangler config and the vault workflow — including whether the marker file is
+excluded from what gets uploaded; note it for `7.3` in the DEVLOG rather than acting on it. No new
+dependencies.
+
+**Done-gates.** `make gates` → `GATES_EXIT:0`, quoting each `LABEL_EXIT:` line (`make format-fix`
+first if the DEVLOG trips format — it has at every block boundary so far, now nine for nine). Post
+progress and `→ @reviewer` here. **You do not commit and you do not tick boxes.** If the marker
+mechanism collides with something in `design.md` or the `publish-pipeline` spec, post
+`❓ @architect` and stop.
+
+**[worker]** `6.4` implemented.
+
+- `writeSite` now takes `(outputDir, vaultRoot, pages)`. Before touching the filesystem it refuses an
+  `outputDir` that is the vault root or inside it (`OutputDirectoryWithinVaultError`), reusing a new
+  `isPathWithinOrEqual(parent, candidate)` primitive added to `selection.ts` rather than a second
+  containment check — `resolveOutputFilePath` in `writer.ts` was refactored onto the same primitive
+  instead of its inline `..`/`isAbsolute` check, so there's now one containment authority for both the
+  read-side (`isWithinVaultBoundary`, symlink-aware) and write-side boundaries.
+- `ensureOutputDirectoryReadyForPublish` (`writer.ts`) implements the marker state machine exactly as
+  briefed: absent/empty → proceed; non-empty + `.vault-publisher-output` present → clear every entry;
+  non-empty + marker absent → `UnrecognisedOutputDirectoryError`, nothing deleted. The marker
+  (`OUTPUT_MARKER_FILENAME`, exported) is (re)written on every successful publish, content-free. Both
+  new error classes are plain `Error` subclasses `cli.ts`'s existing `publishSite` catch already
+  handles — no new failure convention needed.
+- New fixture `test/fixtures/end-to-end-vault/` (two configs: full and one with `Handbook` dropped) and
+  `test/end-to-end-output.test.ts`, all through the spawned CLI (`no-client-js.test.ts`'s hand-rolled
+  recursive `readdir` walk, not `{ recursive: true }`, for the same symlink-divergence reason that test
+  documents). Covers: exact file-set match both directions (marker named explicitly); the reuse
+  hazard — publish, drop `Handbook/Onboarding.md` from the config, republish into the same directory,
+  assert the file is gone **and** its body marker string appears in no remaining file; the guard, with
+  pre-existing files asserted byte-identical after refusal; and vault-containment refusal. The
+  containment tests turned out to need a third case beyond the brief's two: `--output` set to the vault
+  root or to a non-empty in-vault directory is _also_ refused by the marker guard on its own (no marker
+  exists there), so ablating containment alone didn't redden either — added a case pointing `--output`
+  at a freshly created, **empty** in-vault directory, which the marker guard waves through untouched,
+  to isolate the containment check. Existing `test/writer.test.ts` calls updated for the new arity via
+  an `unrelatedVaultRoot` constant; none of those exercise containment.
+- Ablations (each restored immediately after, diffed back to identical):
+  - Clearing disabled (`ensureOutputDirectoryReadyForPublish`'s `rm` loop short-circuited) → **the
+    reuse test reddens** (`Onboarding.html` still readable and still contains the body marker after the
+    republish) **while the fresh-publish exact-file-set test stays green** — the required divergence.
+  - Marker check forced to always pass (`if (false && !entries.includes(...))`) → the guard test
+    reddens: `runCli` on the seeded non-empty/no-marker directory now exits 0, and the pre-existing
+    `someone-elses-stuff/important.txt` is gone — the guard's own test catches its files being
+    destroyed.
+  - Containment check forced off (`if (false && isPathWithinOrEqual(...))`) → only the new isolated
+    empty-in-vault-directory test reddens; the vault-root and non-empty-in-vault-directory cases stay
+    green because the marker guard independently refuses them, confirming containment does real work
+    beyond what the guard already covers.
+- No new dependency. Didn't touch `src/cli.ts`'s argument surface beyond the one-line `writeSite` call
+  site update for the new `vaultRoot` argument. Noted for `7.3`, not acted on: whether the vault
+  workflow's upload step needs `.vault-publisher-output` excluded from what Cloudflare serves.
+
+Gates: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`.
+
+`6.4` complete, ready for review. No box ticked, no commit made. → @reviewer
+
 ## NEXT
 
 **Sections 1–5 are closed** (supervisor `Approve` on each). 41/59 tasks. Next is **section 6 —
@@ -6378,5 +6493,344 @@ LINT_EXIT:0 VALIDATE_EXIT:0` — `make gates` → `GATES_EXIT:0`.
   siblings it has no directory to assert stays empty. Not a real coverage gap for the reason above,
   but for symmetry a follow-up could give it `--vault` and `--output` and omit only `--config`, then
   check the given output directory stays empty — parallel to the other two.
+
+Nothing blocking. → @architect
+
+**[reviewer]** Audit of block C (`6.4`) — working tree diff against `fed26a1`.
+
+**Verdict: Request changes.**
+
+**Blocker — the vault-containment refusal is a string comparison, not a real-path one, and a
+symlinked `--output` bypasses it and reaches real vault content.**
+`assertOutputDirectoryOutsideVault` (`src/writer.ts:115-124`) compares `path.resolve(vaultRoot)`
+against `path.resolve(outputDir)` — pure string arithmetic, no `realpath`. If `--output` is a symlink
+whose _target_ sits inside the vault, the two resolved strings never share a prefix, the check passes,
+and `ensureOutputDirectoryReadyForPublish` proceeds — `readdir` follows the symlink to list the real
+target directory, and if it happens to already hold `.vault-publisher-output` (entirely plausible: any
+earlier run against that same physical location, through any alias, leaves one), the clearing loop
+deletes the real files there. Reproduced directly against the built entry point, independent of the
+worker's own tests:
+
+```
+/tmp/symtest/vault/                          — a real vault, publish.config.yaml selects Index.md
+/tmp/symtest/vault/inside-vault-output/      — inside the vault; contains .vault-publisher-output
+                                                 and secret-leftover.txt ("TOP_SECRET_CLIENT_DATA")
+/tmp/symtest/output-symlink -> /tmp/symtest/vault/inside-vault-output   (symlink lives outside the vault)
+
+$ node --experimental-strip-types src/index.ts \
+    --vault /tmp/symtest/vault --config /tmp/symtest/vault/publish.config.yaml \
+    --output /tmp/symtest/output-symlink
+exit: 0
+
+# after:
+/tmp/symtest/vault/inside-vault-output/.vault-publisher-output
+/tmp/symtest/vault/inside-vault-output/index.html
+/tmp/symtest/vault/inside-vault-output/styles.css
+# secret-leftover.txt is gone — real vault content, deleted, from a directory
+# physically inside the vault, via an --output argument that itself lives
+# outside it.
+```
+
+The exit code is 0 — this is not merely a missed refusal, it is a **silent success** while deleting
+real vault content and replacing it with rendered pages sitting inside the vault tree. This is the
+write-side mirror of the read-side hazard `isWithinVaultBoundary` already defends against (and
+already resolves symlinks for, in `selection.ts:158-166`) — `isPathWithinOrEqual`'s own docstring
+says it is "pure path-string arithmetic, no filesystem access, so it works before either directory
+exists," which is true and the right call for the _first_ run into a not-yet-created directory, but
+`assertOutputDirectoryOutsideVault` needs the real-path comparison too for the case this whole block
+exists to handle — a directory that already exists, from a prior run. A `realpath` attempt that falls
+back to the naive check on `ENOENT` (mirroring `listVaultNotes`'s own naive-vs-resolved pattern) closes
+this without disturbing the fresh-directory case.
+
+None of the block's own containment tests catch this — the third one (`empty-dir-inside-vault…`) is
+exactly the right idea (isolating containment from the marker guard) but reaches the vault directory by
+its literal path, never through an alias, so the string check happens to agree with reality every time
+it's exercised.
+
+**What I verified sound:**
+
+- **The clearing itself does not follow symlinks it encounters while deleting.** `fs.promises.rm(
+entry, { recursive: true, force: true })` on a path is asymmetric with `readdir`'s
+  `recursive: true` divergence this project has already been burned by — confirmed directly: a
+  directory containing a nested symlink to an external target, `rm`'d recursively, removes the
+  symlink entry and leaves the target's contents untouched (tested both a top-level symlink entry and
+  one nested inside a real subdirectory, using the exact `fs/promises` API `writer.ts` calls). This
+  part of the brief's concern is unfounded — the bug is one level up, in what's allowed to reach the
+  clearing at all, not in the clearing's own traversal.
+- **The marker check happens strictly before any unlink**, synchronously, not concurrently with the
+  `Promise.all` clearing — read the code directly. A mid-clear failure can't produce a false "success":
+  `ensureOutputDirectoryReadyForPublish`'s rejection propagates through `writeSite` before `mkdir`, the
+  marker rewrite, or any page write runs, so `cli.ts`'s existing catch reports it and exits non-zero
+  rather than the process claiming a complete publish over a partially-cleared directory.
+- **`isWithinVaultBoundary` and its existing test suite are untouched** — `git diff --stat` shows zero
+  change to `test/selection.test.ts`, and the function itself is byte-identical (the diff only _adds_
+  `isPathWithinOrEqual`). The refactor claim for `resolveOutputFilePath` is accurate and behaviour-
+  preserving: `isPathWithinOrEqual` uses the same `path.relative`/`startsWith("..")`/`isAbsolute` logic
+  the inline check used, confirmed by hand and by `test/writer.test.ts`'s unchanged escape-path test
+  staying green. Independently verified `isPathWithinOrEqual` avoids the classic prefix-string bug
+  (`/vault` vs `/vault-decoy` correctly evaluates as _not_ contained) — sound as a primitive, just not
+  sufficient alone for an already-existing, possibly-aliased directory.
+- **Exact-file-set test compares both directions** (`toStrictEqual` on two sorted arrays) and names
+  `.vault-publisher-output` explicitly rather than filtering it, per the brief.
+- **The reuse test's content check is genuinely stronger than a path check** — after the republish it
+  reads every remaining file in the tree and asserts none contain the dropped note's body marker, not
+  only that the note's old path 404s. Directly reddened this test myself (see ablation below).
+- **Ablated the clearing myself**, independently of the worker's report: short-circuited the `rm` loop
+  in `ensureOutputDirectoryReadyForPublish` to a bare `return`. `test/end-to-end-output.test.ts`'s
+  reuse test reddened (`Onboarding.html` still readable, still containing the body marker) while the
+  fresh-publish exact-file-set test stayed green — the required divergence. Restored `src/writer.ts`;
+  `git diff --stat` returned to exactly the block's own shape (122 insertions / 5 deletions); full
+  suite green afterward (`test/end-to-end-output.test.ts`, `test/writer.test.ts`).
+- Full gate set as delivered: `BUILD_EXIT:0 TEST_EXIT:0` (198 tests, 20 files) `FORMAT_EXIT:0
+LINT_EXIT:0 VALIDATE_EXIT:0` → `GATES_EXIT:0`.
+- No new dependency; `src/cli.ts`'s only change is the one-line `writeSite` call site passing
+  `vaultRoot` through — the argument surface `6.3` built is untouched.
+- Fixture content (`End to End Home`, `Onboarding`, `Confidential Client` as a generic invented note
+  name) is plainly invented, not vault-derived.
+
+**Nit**
+
+- `src/writer.ts:144` — `(error as NodeJS.ErrnoException).code === "ENOENT"` is a cast on the catch
+  variable with no runtime guard. It's safe in practice (`readdir`'s errors are always
+  `ErrnoException`s, and a non-matching shape just makes the comparison false rather than throwing,
+  falling through to the unconditional rethrow), but it's a new pattern in this codebase — nowhere
+  else uses `.code` — and a small `error instanceof Error && "code" in error` guard would remove the
+  cast entirely rather than assume the shape. Not blocking.
+
+→ @worker
+
+**[worker]** `6.4` remediation — closed the reviewer's blocker.
+
+- `assertOutputDirectoryOutsideVault` (`src/writer.ts`) is now `async` and resolves both `vaultRoot`
+  and `outputDir` through a new `resolveRealOrNaivePath` helper before the containment check: `realpath`
+  when the path exists (following every symlink on the way, so a `--output` symlink whose target sits
+  inside the vault resolves to that real, in-vault location), falling back to plain `path.resolve` on
+  `ENOENT` so a not-yet-created `--output` directory is still permitted — the exact naive-vs-resolved
+  pattern `listVaultNotes` (`selection.ts`) already uses. `writeSite`'s call site now `await`s it.
+  `isPathWithinOrEqual` itself is untouched — it's still pure path arithmetic, correctly used, just now
+  fed resolved paths on the write side the way `isWithinVaultBoundary` already is on the read side.
+  `resolveOutputFilePath` is likewise untouched.
+- Nit closed too: `src/writer.ts:144`'s unguarded `(error as NodeJS.ErrnoException)` cast is replaced
+  by a shared `isErrnoException(error): error is NodeJS.ErrnoException` type guard
+  (`error instanceof Error && "code" in error`), used at both `ENOENT` check sites in the file (the new
+  one in `resolveRealOrNaivePath` and the pre-existing one in `ensureOutputDirectoryReadyForPublish`).
+  No cast left in the file.
+- **New test** (`test/end-to-end-output.test.ts`, "a symlinked `--output` whose target sits inside the
+  vault"): creates a real subdirectory inside the fixture vault, pre-marks it with
+  `.vault-publisher-output` and a `secret-leftover.txt` standing in for real vault content, points
+  `--output` at a symlink (living outside the vault) to that directory, and asserts the publish exits
+  non-zero with a clean stderr message, `secret-leftover.txt` survives byte-identical, and no
+  `index.html` appears in the target. This is the reviewer's exact reproduction, reproduced as an
+  automated test rather than only a manual repro.
+- **Ablation** (reverted immediately after): reverted `assertOutputDirectoryOutsideVault`'s two
+  `resolveRealOrNaivePath` calls back to bare `path.resolve` (the pre-fix naive comparison). The new
+  symlink test reddened exactly as the reviewer described (`expected +0 not to be +0` — the publish
+  exited 0 instead of refusing) while all six other `end-to-end-output.test.ts` tests stayed green,
+  confirming the divergence is isolated to this hazard. Additionally ran the reviewer's manual repro
+  by hand against the ablated build (`node --experimental-strip-types src/index.ts --output <symlink
+into the vault>`): `exit: 0`, and `secret-leftover.txt` was gone from the real in-vault target,
+  replaced by rendered `index.html`/`styles.css`/`Handbook/` — the destructive write, reproduced and
+  confirmed, not just a red assertion. Restored the fix; test file diffed back to identical; fixture
+  scratch directories (`symlink-target-inside-vault` inside the vault fixture, the temp symlink) fully
+  removed after each run, no residue left in the tree.
+- No new dependency; only `node:fs/promises`'s `realpath`/`symlink` (both already-used built-ins in
+  this codebase) added to the import lists of `src/writer.ts` and the test file respectively.
+
+Gates: `BUILD_EXIT:0 TEST_EXIT:0` (199 tests, 20 files) `FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0` →
+`GATES_EXIT:0`.
+
+`6.4` remediation complete. No box ticked, no commit made. → @reviewer
+
+**[reviewer]** Re-audit of block C (`6.4`) after the containment remediation.
+
+**Verdict: Request changes.** The original bypass is closed; the fix opens an adjacent one at exactly
+the seam its own docstring names.
+
+**Re-ran my original reproduction against the current code — it now refuses, byte-identical.**
+
+```
+$ node --experimental-strip-types src/index.ts --vault /tmp/symtest/vault \
+    --config /tmp/symtest/vault/publish.config.yaml --output /tmp/symtest/output-symlink
+refusing to publish: output directory "/tmp/symtest/output-symlink" is the vault root or a
+directory inside it ("/tmp/symtest/vault"); point --output somewhere outside the vault
+exit: 1
+```
+
+`secret-leftover.txt` inside the real, symlink-targeted in-vault directory has the same md5 before and
+after (`75c72ef4f836053ca7ddbabd448e04bc`). Also independently reran the worker's own ablation
+(`resolveRealOrNaivePath` calls reverted to bare `path.resolve`): the new symlink test reddened exactly
+as reported (`expected +0 not to be +0`) while the other six `end-to-end-output.test.ts` tests stayed
+green; restored, `git diff --stat` returned to the reported shape (155 insertions / 5 deletions), full
+suite green.
+
+**New blocker — the `ENOENT` fallback resolves the leaf, not the chain, so a symlinked _ancestor_ of a
+not-yet-existing `--output` still reaches inside the vault.** `resolveRealOrNaivePath` catches `ENOENT`
+on the _whole_ target and falls back to `path.resolve(target)` — a pure string operation that does not
+resolve any symlink in the path, including one a parent directory happens to be. Reproduced directly,
+independent of anything in the diff, and confirmed reachable through the real CLI:
+
+```
+/tmp/symtest2/vault/                              — a real vault
+/tmp/symtest2/vault/real-parent-inside-vault/     — a real, empty directory inside the vault
+/tmp/symtest2/parent-symlink -> .../real-parent-inside-vault   (symlink lives outside the vault)
+
+$ node --experimental-strip-types src/index.ts --vault /tmp/symtest2/vault \
+    --config .../publish.config.yaml \
+    --output /tmp/symtest2/parent-symlink/not-yet-created-output
+exit: 0
+
+# after:
+/tmp/symtest2/vault/real-parent-inside-vault/not-yet-created-output/.vault-publisher-output
+/tmp/symtest2/vault/real-parent-inside-vault/not-yet-created-output/index.html
+/tmp/symtest2/vault/real-parent-inside-vault/not-yet-created-output/styles.css
+```
+
+`--output` itself doesn't exist yet, so `realpath` throws `ENOENT` on the full path and the fallback
+compares unresolved strings — the symlinked _parent_ is never dereferenced, so the check never sees
+that the resulting location is physically inside the vault. The publish then creates a real, marked
+directory inside the vault and writes rendered pages into it — the exact outcome the binding decision
+("additionally refuse if the output directory is the vault root or inside it, whatever the marker
+says") rules out unconditionally, reached through the one case that decision doesn't yet cover: a
+target that doesn't exist yet but whose ancestor does, and is aliased.
+
+This isn't hypothetical scope creep — it's the same class of hazard as the blocker just fixed, through
+the fallback branch the fix itself added, and the fix's own docstring names the exact tension without
+resolving it ("`--output` is legitimately allowed to name a directory that hasn't been created on this
+run yet, and `realpath` on a path that doesn't exist throws `ENOENT`"). A correct fallback needs to
+walk up to the nearest _existing_ ancestor, `realpath` that ancestor, and rejoin the remaining
+(non-existent) path segments onto it — resolving the chain, not just checking whether the leaf itself
+happens to exist. `path.dirname` recursion down to an ancestor `resolveRealOrNaivePath` can already
+resolve is the natural shape; no new primitive needed.
+
+**Checked and sound:**
+
+- **Other errno codes are not swallowed.** Read `resolveRealOrNaivePath`: only `code === "ENOENT"` gets
+  the fallback; anything else is rethrown unconditionally. Verified directly — a symlink loop
+  (`ELOOP`, confirmed via `realpath` on a two-node symlink cycle) propagates through `writeSite` and is
+  reported through `cli.ts`'s existing clean-message convention: `ELOOP: too many symbolic links
+encountered, realpath '...'`, exit 1, no stack trace. A permission or `ENOTDIR` error would take the
+  same path — nothing here degrades a real filesystem error into "assume it's fine."
+- **`isErrnoException` didn't change behaviour at the pre-existing `ENOENT` site**
+  (`ensureOutputDirectoryReadyForPublish`'s `readdir` catch). For every realistic Node fs error (always
+  an `Error` instance carrying `.code`) the guard and the old unchecked cast agree exactly. The guard is
+  strictly safer on a pathological input the cast wasn't: `(error as NodeJS.ErrnoException).code` on a
+  `null` rejection would throw trying to read a property of `null`; `error instanceof Error` on `null`
+  is simply `false`, falling through to the correct rethrow instead of crashing. No regression, one
+  latent crash removed.
+- The new symlinked-`--output` test (`test/end-to-end-output.test.ts:212-239`) is exactly my original
+  reproduction, automated: marker and pre-existing content seeded at the real in-vault target, `--output`
+  pointed at a symlink to it living outside the vault, asserts non-zero exit, clean stderr, the
+  pre-existing file byte-identical, and no `index.html` written into the target.
+- Full gate set as delivered: `BUILD_EXIT:0 TEST_EXIT:0` (199 tests, 20 files) `LINT_EXIT:0
+VALIDATE_EXIT:0` — `FORMAT_EXIT:1` on the DEVLOG alone, the same standing pattern every block
+  boundary has hit (`make format-fix` resolves it before commit; not itself a finding).
+
+→ @worker
+
+**[worker]** `6.4` remediation round 2 — closed the chain-walking hole the reviewer found.
+
+- `resolveRealOrNaivePath` (`src/writer.ts`) no longer treats `ENOENT` on the full target as license to
+  fall back to a bare `path.resolve`. On `ENOENT` it now resolves `path.dirname(target)` recursively
+  (through this same function, so a chain of several nonexistent segments unwinds one level at a time)
+  until it hits an ancestor `realpath` can actually resolve, then rejoins the nonexistent remainder with
+  `path.join`. A symlinked ancestor anywhere in the chain — immediate parent or several levels up — is
+  dereferenced by that recursive `realpath` call before the remainder is glued back on; only the
+  trailing not-yet-created segments are ever compared as plain strings. Recursion bottoms out at the
+  filesystem root (`path.dirname(x) === x`), trivially always resolvable, returning itself. This also
+  covers the vault root reached by an alias: `assertOutputDirectoryOutsideVault` resolves `vaultRoot`
+  through the same function, so a symlinked vault root is dereferenced the same way. `isErrnoException`
+  and the unconditional rethrow of every other errno are untouched — still exactly as the reviewer
+  verified them.
+- **New tests** (`test/end-to-end-output.test.ts`, "a not-yet-created --output reached through a
+  symlinked ancestor inside the vault"): (1) the reviewer's exact reproduction — a real empty directory
+  inside the vault, a symlink to it outside the vault, `--output` pointed at a not-yet-created leaf
+  directly under that symlink; (2) the same shape with the symlink several levels above a chain of
+  nonexistent segments (`symlink/deeply/nested/output`), covering an intermediate-segment case rather
+  than only the immediate-parent one. Both assert non-zero exit, a clean single-line stderr message, and
+  nothing written under the real in-vault directory.
+- **Ablation**: reverted `resolveRealOrNaivePath` to the leaf-only version (bare `path.resolve` on any
+  `ENOENT`). Both new tests reddened exactly as expected (`expected +0 not to be +0` — exit 0 instead of
+  refusing); the other 7 `end-to-end-output.test.ts` tests stayed green. Also reran the reviewer's manual
+  repro by hand against the ablated build, outside the test tree: `exit: 0`, and listing the real
+  in-vault directory afterward showed a marked output directory with rendered
+  `index.html`/`styles.css`/`Handbook/Onboarding.html` sitting inside the vault — the destructive write,
+  reproduced and confirmed, not just a red assertion. Restored the fix; `git diff --stat src/writer.ts`
+  back to the fix's own shape; full suite green after.
+- No new dependency; only the already-imported `realpath`/`path.dirname`/`path.join`/`path.basename`.
+
+Gates: `BUILD_EXIT:0 TEST_EXIT:0` (201 tests, 20 files) `FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0` →
+`GATES_EXIT:0` (ran `make format-fix` first on the DEVLOG, per the standing pattern).
+
+`6.4` remediation round 2 complete. No box ticked, no commit made. → @reviewer
+
+**[reviewer]** Third-round re-audit of block C (`6.4`) — the chain-walking remediation.
+
+**Verdict: Approve.** This is the right shape, not merely another instance patched. I probed it with
+five structurally distinct attacks beyond what the diff's own tests cover and found no bypass.
+
+**Re-ran both of my prior reproductions against the current code — both now refuse, nothing written.**
+
+```
+# repro 1 (leaf symlink, target already marked and non-empty):
+refusing to publish: ... exit 1, secret-leftover.txt md5 unchanged (75c72ef4f836053ca7ddbabd448e04bc
+before and after)
+
+# repro 2 (not-yet-existing leaf, symlinked immediate parent):
+refusing to publish: ... exit 1, nothing created under the real in-vault directory
+```
+
+**Independently re-ran the worker's ablation** (reverted `resolveRealOrNaivePath` to the leaf-only
+version: `ENOENT` → bare `path.resolve`, no chain-walk). Exactly the two new tests reddened
+(`expected +0 not to be +0`, both — immediate-parent and deep-chain), the other seven
+`end-to-end-output.test.ts` tests stayed green. Restored `src/writer.ts`; `git diff --stat` returned
+to exactly the reported shape (175 insertions / 5 deletions); full suite green after
+(`test/end-to-end-output.test.ts` 9/9, `test/writer.test.ts` 12/12).
+
+**Probed the shape, not just the two demonstrated instances — all four requested angles, plus the
+worker's own two shapes revisited:**
+
+1. **`--vault` as the aliased side, not `--output`.** `--vault` given as a symlink to the real vault,
+   `--output` a genuinely safe location outside both: succeeds normally (negative control). `--vault`
+   as the same alias, `--output` pointed at a real path reached _directly_ (not through the alias)
+   inside the actual vault: refused. `--output` set to the alias itself: refused, error message
+   correctly names the alias as "the vault root." `assertOutputDirectoryOutsideVault` resolves
+   `vaultRoot` through the same `resolveRealOrNaivePath`, so the alias is dereferenced before the
+   comparison on that side too — confirmed, not just read off the diff.
+2. **An intermediate segment is a symlink, later segments do not exist.** Built
+   `/mid-symlink -> vault/deep/target` (the symlink itself lives outside the vault, its target is a
+   real directory two levels inside it) and pointed `--output` at
+   `mid-symlink/does-not-exist-yet/also-does-not-exist` — two nonexistent trailing segments past the
+   symlink. Refused, nothing created. The recursion resolves `path.dirname` one level at a time until
+   it hits `mid-symlink` itself (which _does_ exist and _is_ the symlink), realpaths it there, and the
+   dereference happens regardless of how many nonexistent segments sit past it.
+3. **Recursion termination.** Direct unit-level check of the function's logic (bare name with no
+   separator, a `../`-relative path, `/` itself, and a path directly under `/` that doesn't exist) —
+   all resolve to sane absolute paths with no infinite recursion and no crash; `path.dirname(x) === x`
+   correctly bottoms the recursion out at the filesystem root exactly once.
+4. **TOCTOU.** The window is real: `assertOutputDirectoryOutsideVault` resolves a path that may not
+   exist yet, and nothing pins the filesystem between that resolution and the later `mkdir`/write —
+   if something replaced a not-yet-existing segment with a symlink into the vault in that gap, the
+   write would follow it. But nothing in this tool's own execution model creates that race: it's a
+   single-process, single-shot build invoked by a composite GitHub Action against a filesystem no
+   concurrent process is expected to be racing. This is the same class of gap as the parked
+   "hardlinks defeat `isWithinVaultBoundary`" note from §3/§4 — a real property of check-then-act path
+   safety in general, not something this block's tests can close with a passing/failing assertion, and
+   not something worth a fourth remediation round chasing. Recommend parking it in `## NEXT` next to
+   the hardlink note rather than treating it as an open blocker on `6.4`.
+
+**On whether the containment gate is the wrong shape:** no — say so plainly, since that was asked
+directly. The first fix compared unresolved strings (wrong: ignores every symlink). The second
+resolved only the leaf via `realpath`, falling back to a flat `path.resolve` on `ENOENT` (wrong:
+ignores every symlink in an ancestor of a not-yet-created path). This third version — walk up to the
+nearest ancestor that actually exists, `realpath` _that_ (dereferencing everything up to and including
+it), then rejoin only the genuinely nonexistent trailing segments as strings — is the general solution
+to "resolve as much of a path as reality allows," not a patch scoped to the reviewer's one
+reproduction. I went looking for the next shape deliberately (vault-side alias, mid-chain symlink,
+edge-case termination) rather than re-running the same two scenarios, and it held under all of them.
+
+**Also confirmed:** `isErrnoException` and the unconditional rethrow of every other errno are
+untouched from the previous round (already verified sound then). Full gate set as delivered:
+`BUILD_EXIT:0 TEST_EXIT:0` (201 tests, 20 files) `FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0` →
+`GATES_EXIT:0`.
 
 Nothing blocking. → @architect

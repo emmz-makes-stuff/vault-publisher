@@ -10,6 +10,12 @@ import {
 } from "../src/writer.js";
 import { STYLESHEET } from "../src/styles.js";
 
+// None of the tests below exercise the vault-boundary refusal (see
+// `end-to-end-output.test.ts`) — this is just an unrelated path so
+// `writeSite`'s required `vaultRoot` argument has something to check
+// containment against.
+const unrelatedVaultRoot = path.join(tmpdir(), "vault-publisher-writer-unrelated-vault");
+
 describe("resolveOutputFilePath — derives from outputPathForNote, not its own path logic", () => {
   it("joins the note's outputPathForNote path onto the output directory", () => {
     expect(resolveOutputFilePath("/site", "Handbook/Onboarding.md")).toBe(
@@ -90,7 +96,7 @@ describe("writeSite — refuses a collision before writing anything", () => {
 
   it("rejects with OutputPathCollisionError when Index.md and index.md are both published", async () => {
     await expect(
-      writeSite(outputDir, [
+      writeSite(outputDir, unrelatedVaultRoot, [
         { notePath: "Index.md", html: "<p>Home</p>" },
         { notePath: "index.md", html: "<p>Unrelated</p>" },
       ]),
@@ -99,7 +105,7 @@ describe("writeSite — refuses a collision before writing anything", () => {
 
   it("writes no file at all when a collision is present, even for the notes that don't collide", async () => {
     await expect(
-      writeSite(outputDir, [
+      writeSite(outputDir, unrelatedVaultRoot, [
         { notePath: "Handbook/Onboarding.md", html: "<p>Hi</p>" },
         { notePath: "Index.md", html: "<p>Home</p>" },
         { notePath: "index.md", html: "<p>Unrelated</p>" },
@@ -122,7 +128,7 @@ describe("writeSite", () => {
   });
 
   it("writes each page to the path outputPathForNote names, creating parent directories", async () => {
-    await writeSite(outputDir, [
+    await writeSite(outputDir, unrelatedVaultRoot, [
       { notePath: "Handbook/Onboarding.md", html: "<p>Hi</p>" },
       { notePath: "Index.md", html: "<p>Home</p>" },
     ]);
@@ -135,7 +141,7 @@ describe("writeSite", () => {
 
   it("refuses to write a page whose note path would escape the output directory", async () => {
     await expect(
-      writeSite(outputDir, [{ notePath: "../escape.md", html: "<p>Nope</p>" }]),
+      writeSite(outputDir, unrelatedVaultRoot, [{ notePath: "../escape.md", html: "<p>Nope</p>" }]),
     ).rejects.toThrow();
   });
 });
@@ -152,14 +158,14 @@ describe("writeSite — 5.6 the stylesheet actually lands in the output director
   });
 
   it("writes styles.css at the output root, matching STYLESHEET byte for byte", async () => {
-    await writeSite(outputDir, [{ notePath: "Index.md", html: "<p>Home</p>" }]);
+    await writeSite(outputDir, unrelatedVaultRoot, [{ notePath: "Index.md", html: "<p>Home</p>" }]);
 
     const written = await readFile(path.join(outputDir, "styles.css"), "utf8");
     expect(written).toBe(STYLESHEET);
   });
 
   it("writes styles.css even when no page is published", async () => {
-    await writeSite(outputDir, []);
+    await writeSite(outputDir, unrelatedVaultRoot, []);
 
     await expect(readFile(path.join(outputDir, "styles.css"), "utf8")).resolves.toBe(STYLESHEET);
   });

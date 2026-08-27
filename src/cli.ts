@@ -192,7 +192,7 @@ async function publishSite(
     });
   }
 
-  await writeSite(outputDir, pages);
+  await writeSite(outputDir, vaultRoot, pages);
 }
 
 /**
