@@ -1,0 +1,32 @@
+{
+  "name": "vault-publisher",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Renders selected notes from a private Obsidian vault into a static site served behind authentication.",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "build": "tsc --build && tsc -p tsconfig.check.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "unified": "^11.0.5",
+    "remark-parse": "^11.0.0",
+    "remark-gfm": "^4.0.1",
+    "remark-frontmatter": "^5.0.0",
+    "remark-rehype": "^11.1.2",
+    "rehype-stringify": "^10.0.1",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.38.0",
+    "@types/node": "^24.10.1",
+    "eslint": "^9.38.0",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.4",
+    "vitest": "^3.2.4"
+  }
+}

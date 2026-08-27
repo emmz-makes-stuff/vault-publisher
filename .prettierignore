@@ -1,0 +1,37 @@
+dist/
+node_modules/
+package-lock.json
+*.tsbuildinfo
+.claude/
+CLAUDE.md
+
+# local vault checkout used only for manual testing — never committed
+vault/
+.vault/
+
+# deliberately invalid YAML fixture exercising the config loader's fail-closed
+# parse-error path — prettier cannot format what it cannot parse
+test/fixtures/config/malformed.yaml
+
+# golden-file fixtures asserting rehype-stringify's exact byte output and the
+# Markdown that produces it — prettier reformatting either would break the
+# golden-file comparison in test/pipeline.test.ts
+test/fixtures/pipeline/table-and-tasks.md
+test/fixtures/pipeline/table-and-tasks.html
+test/fixtures/wikilinks/resolved.md
+test/fixtures/wikilinks/resolved.html
+test/fixtures/wikilinks/degraded.md
+test/fixtures/wikilinks/degraded.html
+test/fixtures/wikilinks/ambiguous.md
+test/fixtures/wikilinks/ambiguous.html
+test/fixtures/pipeline/callouts.md
+test/fixtures/pipeline/callouts.html
+test/fixtures/pipeline/bases.md
+test/fixtures/pipeline/bases.html
+test/fixtures/pipeline/frontmatter-table.md
+test/fixtures/pipeline/frontmatter-table.html
+test/fixtures/wikilinks/embeds.md
+test/fixtures/wikilinks/embeds.html
+test/fixtures/explorer/nested.html
+test/fixtures/site/index-page.html
+test/fixtures/integration-vault/Index.md

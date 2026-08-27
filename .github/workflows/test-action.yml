@@ -1,0 +1,94 @@
+name: Test composite action
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test-action:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the publisher
+        uses: actions/checkout@v4
+        with:
+          path: publisher
+
+      # action.yml pins --vault to $GITHUB_WORKSPACE (decision S6-3) — no
+      # input lets a caller reparent it — so this workflow cannot point the
+      # action at a subdirectory. Staging the committed fixture vault at the
+      # workspace root is the only way to exercise the action as a real
+      # caller would.
+      - name: Stage the committed test vault at the workspace root
+        run: cp -R publisher/test-vault/. .
+
+      # No `output` given: the action's default writes outside the
+      # workspace, since every path inside it is inside the vault and the
+      # publisher unconditionally refuses to write there (section 6). See
+      # the note on action.yml's `output` input.
+      - name: Run the action against the staged vault
+        id: publish
+        uses: ./publisher
+
+      # `publisher/` now sits inside what the action treats as the vault —
+      # deliberately (see the staging step above). Selection is allow-list
+      # only and publish.config.yaml names nothing under publisher/, so an
+      # exact match against the expected file set proves both halves at
+      # once: every selected page is present, and nothing else — from
+      # publisher/ or anywhere else — snuck in alongside it.
+      - name: Assert the output holds exactly the expected pages, nothing else
+        env:
+          OUTPUT_DIR: ${{ steps.publish.outputs.output-dir }}
+        run: |
+          set -euo pipefail
+
+          actual=$(cd "$OUTPUT_DIR" && find . -type f | sed 's|^\./||' | sort)
+          expected=$(printf '%s\n' \
+            ".vault-publisher-output" \
+            "styles.css" \
+            "index.html" \
+            "Handbook/Onboarding.html" \
+            "Handbook/Policies/Leave Policy.html" \
+            "Handbook/Extras/Duplicate Note.html" \
+            "Handbook/More/Duplicate Note.html" \
+            | sort)
+
+          if [ "$actual" != "$expected" ]; then
+            echo "output file set does not match expectation" >&2
+            echo "--- expected ---" >&2
+            echo "$expected" >&2
+            echo "--- actual ---" >&2
+            echo "$actual" >&2
+            exit 1
+          fi
+          echo "output file set matches exactly"
+
+      - name: Assert no floor or unselected-note marker leaked into the output
+        env:
+          OUTPUT_DIR: ${{ steps.publish.outputs.output-dir }}
+        run: |
+          set -euo pipefail
+
+          file_count=$(find "$OUTPUT_DIR" -type f | wc -l)
+          echo "scanning $file_count files under $OUTPUT_DIR"
+          if [ "$file_count" -eq 0 ]; then
+            echo "output directory is empty — nothing was actually scanned" >&2
+            exit 1
+          fi
+
+          markers=(
+            "VP-TESTVAULT-FLOOR-JOURNAL-5r9x"
+            "VP-TESTVAULT-FLOOR-PRIVATE-2w6t"
+            "VP-TESTVAULT-FLOOR-OBSIDIAN-7h1z"
+            "VP-TESTVAULT-FLOOR-ROOTCLAUDE-9f2k"
+            "VP-TESTVAULT-FLOOR-DOTCLAUDE-3m8q"
+            "VP-TESTVAULT-UNSELECTED-TEAM-4d7p"
+            "VP-TESTVAULT-UNSELECTED-ARCHIVE-8k3n"
+          )
+          for marker in "${markers[@]}"; do
+            if grep -r --include='*' -l -- "$marker" "$OUTPUT_DIR"; then
+              echo "leak: marker $marker found under $OUTPUT_DIR" >&2
+              exit 1
+            fi
+          done
+          echo "no marker leaked across $file_count files"

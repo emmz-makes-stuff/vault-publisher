@@ -1,0 +1,80 @@
+name: "Vault Publisher"
+description: >-
+  Renders the notes selected by the calling repository's publish.config.yaml into a static site.
+  Runs npm ci and the CLI straight from the checked-out action — no build step, no committed dist/.
+author: "emmz-makes-stuff"
+
+inputs:
+  config:
+    description: "Path to publish.config.yaml, resolved relative to the workspace root."
+    required: false
+    default: "publish.config.yaml"
+  output:
+    description: >-
+      Absolute path to the output directory. Given verbatim, never resolved against the workspace —
+      --vault is pinned to the workspace root (decision S6-3), so a workspace-relative path is always
+      inside the vault and the publisher unconditionally refuses to write there; resolving a supplied
+      value against the workspace would just build a second guaranteed failure. Left unset (the
+      default), the output goes to "$RUNNER_TEMP/vault-publisher-site", outside the workspace. This
+      also makes the vault repository's working tree structurally clean after a publish, without
+      relying on .gitignore discipline (see 7.7, DEVLOG section 7).
+    required: false
+    default: ""
+
+outputs:
+  output-dir:
+    description: "The absolute path the site was written to — the resolved value of the output input."
+    value: ${{ steps.publish.outputs.output-dir }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Read the pinned Node version
+      id: nvmrc
+      shell: bash
+      run: |
+        set -euo pipefail
+        version="$(cat "$GITHUB_ACTION_PATH/.nvmrc")"
+        version="${version%$'\r'}"
+        if [ -z "$version" ] || [[ "$version" == *$'\n'* ]]; then
+          echo "::error::.nvmrc at $GITHUB_ACTION_PATH is empty, unreadable, or not a single line" >&2
+          exit 1
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ steps.nvmrc.outputs.version }}
+
+    - name: Install publisher dependencies
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: npm ci
+
+    - name: Publish
+      id: publish
+      shell: bash
+      # --vault is pinned to the workspace root — the caller's checkout — and is
+      # never taken from an input, under any spelling. The exclusion floor is
+      # matched relative to whatever --vault resolves to, so an input that let a
+      # caller reparent it would defeat the floor without touching selection
+      # config at all (decision S6-3, DEVLOG section 6). config is the only
+      # caller-controlled path resolved inside the vault; output deliberately
+      # is not, per the note on the output input above.
+      run: |
+        set -euo pipefail
+        if [ -z "${{ inputs.output }}" ]; then
+          if [ -z "${RUNNER_TEMP:-}" ]; then
+            echo "RUNNER_TEMP is unset; cannot compute a default output directory outside the workspace" >&2
+            exit 1
+          fi
+          output_dir="${RUNNER_TEMP}/vault-publisher-site"
+        else
+          output_dir="${{ inputs.output }}"
+        fi
+        node "${{ github.action_path }}/src/index.ts" \
+          --vault "${{ github.workspace }}" \
+          --config "${{ github.workspace }}/${{ inputs.config }}" \
+          --output "$output_dir"
+        echo "output-dir=$output_dir" >> "$GITHUB_OUTPUT"

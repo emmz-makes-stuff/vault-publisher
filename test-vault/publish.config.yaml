@@ -1,0 +1,13 @@
+# Deliberately tries to select every one of the exclusion floor's own entries, alongside the ordinary
+# published subset — this is what proves the floor overrides configuration rather than merely
+# happening to agree with it. `Journal`, `Private`, `.obsidian`, `.claude` and `CLAUDE.md` here are
+# each refused unconditionally, regardless of being named — five of five floor entries covered.
+folders:
+  - Handbook
+  - Journal
+  - Private
+  - .obsidian
+  - .claude
+notes:
+  - Index.md
+  - CLAUDE.md

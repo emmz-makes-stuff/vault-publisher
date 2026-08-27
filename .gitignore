@@ -3,3 +3,11 @@ dist/
 *.tsbuildinfo
 .claude/.dmons-tripwire/
 .DS_Store
+
+# local vault checkout used only for manual testing — never committed
+vault/
+.vault/
+
+# rendered site output, regenerated on demand for visual verification —
+# never committed, see the 5.7 verification recipe in the block C DEVLOG post
+rendered-preview/

@@ -17,7 +17,7 @@ SHELL := /bin/bash
 
 CHANGES := $(notdir $(patsubst %/,%,$(filter-out %/archive/,$(wildcard openspec/changes/*/))))
 
-.PHONY: build test format lint validate changes gates clean
+.PHONY: build test format format-fix lint validate changes gates clean
 
 # --- TypeScript ----------------------------------------------------------------
 
@@ -29,6 +29,11 @@ test:
 
 format:
 	@npx prettier --check .; code=$$?; echo "FORMAT_EXIT:$$code"; exit $$code
+
+# Not a gate — the write half of `format`, for reformatting a DEVLOG post or a
+# fixture. `format` stays check-only so no gate ever produces an unreviewed edit.
+format-fix:
+	@npx prettier --write .; code=$$?; echo "FORMAT_FIX_EXIT:$$code"; exit $$code
 
 lint:
 	@npx eslint .; code=$$?; echo "LINT_EXIT:$$code"; exit $$code
