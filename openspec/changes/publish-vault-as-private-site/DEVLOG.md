@@ -7163,6 +7163,57 @@ deprecating — hence the warning on every run. It is emitted about `setup-node`
 today, a hard failure when node20 support is removed. No task covers it, so it is not being folded
 into `7.3`.
 
+**[architect]** `7.3` — the wrangler configuration is written, in the vault repository. **Not ticked**:
+the fixture deploy is the Product Owner's to run.
+
+**Where it lives, and why not here.** `.publisher/wrangler.jsonc` in the vault repository. The
+Product Owner's call, and it is the right one: the file names the Worker and the published hostname,
+both of which identify the client, and **this repository is now public**. `design.md` already required
+the hostname to be "a deployment parameter held in the vault repository's workflow configuration, not
+recorded here". The dot-prefixed folder keeps Obsidian from showing it in the file explorer.
+
+It also satisfies `7.3`'s "every wrangler configuration that deploys this Worker carries the flags"
+clause **by construction** rather than by keeping two files in sync — there is exactly one such
+configuration.
+
+**Architect wrote this file directly, and that is a deviation worth naming.** No worker was briefed.
+The reasons: it is deployment configuration in a different repository with no gate, no test harness
+and no Makefile target; and it carries identifiers that should propagate to as few places as possible.
+Recorded here rather than done quietly. Everything in this repository still goes through the
+worker/reviewer loop.
+
+**What the current Cloudflare docs settled** (retrieved today, not recalled):
+
+- `main` is optional for an assets-only Worker; the minimum keys are `name` and `compatibility_date`.
+- `preview_urls` defaults to whatever `workers_dev` is. It is set **explicitly** to `false` anyway —
+  an inherited default is one dashboard change away from shifting, and an explicit value is
+  re-asserted on every deploy.
+- **Routing is the same trap as the flags, and it is the sharper half.** "If you change your routes in
+  the dashboard, Wrangler will override them in the next deploy with the routes you have set in your
+  Wrangler configuration file. To manage routes via the Cloudflare dashboard only, remove any route
+  and routes keys from your configuration file. Then add `workers_dev = false`." So there are exactly
+  **two** coherent configurations — declare the routing here, or declare none of it and manage it in
+  the dashboard — and the halfway one **silently drops the custom domain on the next deploy**. The
+  configuration declares the custom domain, for the same reason it declares `workers_dev: false`:
+  applying "the config is the authority" to the bypass flags but not to the route the site is actually
+  served on would be incoherent.
+- `wrangler deploy --assets <dir>` exists, confirmed against `--help` rather than assumed, along with
+  `--name`, `--compatibility-date` and `--dry-run`.
+
+**One residual uncertainty, stated rather than papered over.** The custom domain was attached through
+the dashboard in `2.1`. Declaring the same pattern with `custom_domain: true` should adopt it rather
+than try to create it, but that is inference from the docs, not something observed. If the first real
+deploy errors on the route, the fix is to re-attach in the dashboard and switch to the routes-free
+form — it is recoverable, and `7.8`'s post-deploy checks are the net.
+
+**The fixture deploy — built and ready, Product Owner runs it.** A throwaway configuration naming a
+**different Worker** (`vault-publisher-fixture`) with no routes at all, carrying the same two flags. A
+fixture deploy that named the production Worker would overwrite the published site; a separate Worker
+removes that possibility rather than relying on care. The fixture site is the committed `test-vault`
+rendered by the CLI — the same seven files CI produces — so nothing confidential is uploaded.
+
+Handover with exact commands going to Emmz. `7.3` ticks on the observed result, not on this post.
+
 ## NEXT
 
 **Sections 1–6 are closed** (supervisor `Approve` on each). **45/59 tasks.** Next is **section 7 —
