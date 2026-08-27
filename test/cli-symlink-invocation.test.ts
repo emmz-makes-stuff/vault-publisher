@@ -46,7 +46,15 @@ describe("CLI entry point — invoked through a symlink", () => {
   it("still runs and writes the site when the entry point is reached through a symlink", async () => {
     const result = spawnSync(
       process.execPath,
-      [symlinkedEntryPoint, integrationVaultConfigPath, outputDir],
+      [
+        symlinkedEntryPoint,
+        "--vault",
+        path.dirname(integrationVaultConfigPath),
+        "--config",
+        integrationVaultConfigPath,
+        "--output",
+        outputDir,
+      ],
       { encoding: "utf8" },
     );
 

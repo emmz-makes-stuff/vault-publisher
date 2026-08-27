@@ -97,7 +97,15 @@ describe("whole rendered output — 5.6 zero client-side JavaScript anywhere", (
   it("contains no <script> tag, javascript: URL, or inline event handler in any emitted file", async () => {
     const result = spawnSync(
       process.execPath,
-      [entryPoint, integrationVaultConfigPath, outputDir],
+      [
+        entryPoint,
+        "--vault",
+        path.dirname(integrationVaultConfigPath),
+        "--config",
+        integrationVaultConfigPath,
+        "--output",
+        outputDir,
+      ],
       {
         encoding: "utf8",
       },
@@ -156,7 +164,15 @@ describe("whole rendered output — every internal href resolves to an emitted f
   it("has no page whose href names a file the run did not write", async () => {
     const result = spawnSync(
       process.execPath,
-      [entryPoint, integrationVaultConfigPath, outputDir],
+      [
+        entryPoint,
+        "--vault",
+        path.dirname(integrationVaultConfigPath),
+        "--config",
+        integrationVaultConfigPath,
+        "--output",
+        outputDir,
+      ],
       {
         encoding: "utf8",
       },

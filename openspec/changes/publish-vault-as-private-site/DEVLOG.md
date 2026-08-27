@@ -6025,6 +6025,115 @@ Working tree: `src/bases.ts` unchanged (ablation fully restored — `git diff --
 
 `6.1`, `6.2` — remediated, ready for re-review. → @reviewer
 
+**[architect]** Brief — block B (`6.3`) → @worker
+
+**Task.** `6.3` Implement the CLI with `util.parseArgs` taking the vault path, config path and output
+directory; verify `--help` exits 0 and a missing required argument exits non-zero.
+
+**Binding decisions — mine, not open for reinterpretation:**
+
+- **Named options, not positionals.** `--vault`, `--config`, `--output`, plus `--help`. Three
+  interchangeable-looking path arguments in a fixed order is a mistake waiting to happen, and the
+  failure it produces — publishing the wrong tree, or writing into the vault — is the expensive kind.
+  Use `parseArgs` with `allowPositionals: false`; an unexpected positional is an error, not silently
+  ignored.
+- **All three are required.** A missing one exits non-zero with a usage line on stderr. There is no
+  default vault path, no default output directory, and no mode in which the CLI does part of the job.
+- **`--help` prints usage to stdout and exits 0**, doing nothing else.
+- **The vault path becomes explicit and stops being derived.** `src/cli.ts` currently does
+  `path.dirname(configPath)`. That goes: `--vault` is the vault root, and the config file no longer
+  has to live inside the vault. `collectSelectionWarnings` keeps using the config's basename as the
+  warning identity.
+- **The stopgap goes with it.** Remove the positional `output-dir` at `src/cli.ts:24-30` **and the
+  branch that skips site generation when it is absent**. That branch is what made block A's
+  nothing-degraded test green over territory it never entered — it is the thirteenth instance of the
+  same failure this project keeps finding, and it dies here.
+- **An unknown or malformed flag exits non-zero with a clean message** — `parseArgs` throws; catch it
+  and use the same convention `loadConfig`'s catch already uses (message on stderr, no Node stack
+  trace).
+
+**Do not break the symlink test.** `test/cli-symlink-invocation.test.ts` is the only symlinked
+invocation in the suite and it exists because a previous entry-point guard made the CLI exit 0 having
+written nothing. **The only lines you may change are the `spawnSync` argument array at 49–51.** The
+`symlink()` in `beforeEach` stays; the `readFile` + `toContain("<title>Welcome</title>")` at 55–56
+stay and **must not** be reduced to an exit-code assertion; keep the docblock, or the symlink reads
+as incidental setup and someone deletes it later.
+
+**Mechanical argv updates, no behaviour change:** `test/index.test.ts`, `test/no-client-js.test.ts`,
+`test/degraded-content.test.ts`, `test/cli-error-handling.test.ts`. Where a test previously relied on
+the two-argument form to skip site generation, give it an output directory — that mode no longer
+exists.
+
+**Prove the checks can fail.** For each new protection, ablate and post the evidence:
+
+- give `--output` a silent default → the missing-required-argument test must redden;
+- make `--help` fall through into a publish → the `--help` test must redden;
+- and the standing §5 rule applies to every CLI test you touch: **never assert exit 0 alone for a
+  process whose job is to write files.** If a test's only claim is `status === 0`, it would pass on a
+  CLI that does nothing. Assert the artifact.
+
+Restore every ablation before handing off.
+
+**Scope limits.** `6.4` owns end-to-end output verification and the stale-output-directory clearing
+the Product Owner decided on — do not start it here. No new dependencies; `util.parseArgs` is
+built-in and `design.md:57` names it.
+
+**Done-gates.** `make gates` → `GATES_EXIT:0`, quoting each `LABEL_EXIT:` line (`make format-fix`
+first if the DEVLOG trips format, as it has at every block boundary so far). Post progress and
+`→ @reviewer` here. **You do not commit and you do not tick boxes.**
+
+**[worker]** Block B (`6.3`) implemented — `src/cli.ts` now takes `--vault`, `--config`, `--output`
+and `--help` via `util.parseArgs` (`allowPositionals: false`), all three paths required, and no
+default anywhere.
+
+- `parseCliArgs` wraps `parseArgs` in a try/catch: an unknown flag or an unexpected positional throws
+  from `parseArgs` itself and is caught into a one-line stderr message plus the usage block, exit 1 —
+  same convention `loadConfig`'s catch already used, no Node stack trace.
+- `--help` is checked before the required-argument check and returns `undefined` after writing usage
+  to stdout and leaving `process.exitCode` untouched (0), so it doesn't matter which other flags are
+  present or absent.
+- Missing one or more of `--vault`/`--config`/`--output` names exactly the missing flag(s) on stderr
+  (`missing required argument(s): --output`) plus the usage block, exit 1.
+- `path.dirname(configPath)` is gone — `vaultRoot` is `values.vault` directly. `collectSelectionWarnings`
+  still uses `path.basename(configPath)` for the warning identity, unchanged.
+- Removed the positional `output-dir` stopgap and its skip-generation branch entirely; `publishSite`
+  now runs unconditionally after config load and selection resolve.
+
+**Test updates — mechanical, per the brief.**
+
+- `test/cli-symlink-invocation.test.ts`: only the `spawnSync` argument array (now flags) changed;
+  docblock, `symlink()` setup, and the `readFile`/`toContain("<title>Welcome</title>")` assertions are
+  untouched.
+- `test/cli-error-handling.test.ts`, `test/no-client-js.test.ts`, `test/degraded-content.test.ts`:
+  argv arrays updated to `--vault <dir> --config <path> --output <dir>`; no assertion changed.
+- `test/index.test.ts`: `runCli`/`runCliWithOutput` now always pass `--vault` (defaulting to
+  `path.dirname(configPath)`, matching every fixture's layout) and a fresh `--output` temp dir
+  (previously-two-argument calls had nothing to give an output dir to, since skip-generation no longer
+  exists — `runCli` now creates one itself via `mkdtempSync`, tracked and cleaned in a top-level
+  `afterEach`). Removed the now-nonexistent "skips site generation entirely when no output directory
+  is given" test. Added a new `6.3` describe block: `--help` (usage to stdout, exit 0, twice — alone,
+  and alongside other missing flags), missing `--vault`/`--config`/`--output` individually (clean
+  stderr naming the flag, no stack-trace line, and for `--output`/`--vault` an artifact check that the
+  given output dir stays empty — proving the run never reached `publishSite`), an unknown flag, and an
+  unexpected positional — all asserting non-zero exit plus a non-empty, stack-trace-free stderr.
+
+**Ablation evidence** (each reverted after, confirmed green):
+
+- Silent `--output` default (`values.output ?? "/tmp/vault-publisher-default-output"`, required-check
+  narrowed to just `--vault`/`--config`) → "exits non-zero … when `--output` is missing" reddened
+  (`expected +0 not to be +0`, i.e. status came back 0). The other five `6.3` tests stayed green,
+  confirming the divergence was isolated to that one flag. Restored; suite green.
+- `--help` short-circuit disabled (`values.help === true && false`) → both `--help` tests reddened
+  (status 1 instead of 0, since the run then fell through to the missing-`--vault`/`--config`
+  required-argument path with no such flags given). Restored; suite green.
+- `test/cli-symlink-invocation.test.ts` needed no ablation of its own here — it's unmodified apart
+  from the argv array and continued passing through every check above with the real flag surface,
+  including its pre-existing content assertion.
+
+Gates: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`.
+
+`6.3` complete, ready for review. No box ticked, no commit made. → @reviewer
+
 ## NEXT
 
 **Sections 1–5 are closed** (supervisor `Approve` on each). 41/59 tasks. Next is **section 6 —
@@ -6212,3 +6321,62 @@ No blockers, no nits outstanding. Scope unchanged from the prior round (`src/cli
 `test/cli-symlink-invocation.test.ts` untouched).
 
 → @architect
+
+**[reviewer]** Audit of block B (`6.3`) — working tree diff against `b43f578`.
+
+**Verdict: Approve.**
+
+- **The named-flag surface matches the brief exactly.** `parseCliArgs` (`src/cli.ts:32-73`) uses
+  `parseArgs` with `allowPositionals: false`, all three of `--vault`/`--config`/`--output` required
+  with no default anywhere, `--help` checked before the required-argument check and printing usage to
+  stdout with `process.exitCode` left untouched (0), and a caught `parseArgs` throw (unknown flag,
+  unexpected positional) producing a one-line message plus usage on stderr, exit 1 — same convention
+  `loadConfig`'s catch already used. `vaultRoot` is now `values.vault` directly; `path.dirname(configPath)`
+  is gone.
+- **No remaining path completes having written nothing outside of an intentional early return.** Read
+  `main()` top to bottom (`src/cli.ts:82-128`): the only returns before `publishSite` are `--help`
+  (exits 0 by design, prints only usage), a parse/required-argument failure (exits 1, no write, per
+  spec malformed input must fail), and a `loadConfig` failure (exits 1, no write). Every other path —
+  including the collector setup and warning pushes — falls straight into an unconditional
+  `await publishSite(...)`. The positional stopgap and its skip-generation branch are gone entirely;
+  no guard, early return, or swallowed error stands in for it anywhere else in the diff.
+- **`test/cli-symlink-invocation.test.ts`** — confirmed via `git diff HEAD` that only the `spawnSync`
+  argument array (lines 49-57) changed. Read the full file: the docblock, the `symlink()` setup in
+  `beforeEach`, and the `readFile` + `toContain("<title>Welcome</title>")` assertions are byte-identical
+  to what the brief required kept. It still proves what it says: a real write reached through a
+  symlinked entry point, under the new flag surface.
+- **The removed `test/index.test.ts` test was genuinely obsolete, not dropped coverage.** The
+  two-positional "skip generation" mode it exercised no longer exists — an omitted `--output` is now a
+  required-argument error, not a silently-accepted mode — and that scenario is covered by the new
+  `6.3` "--output is missing" test, which is strictly stronger: it asserts the message, no stack trace,
+  _and_ that `index.html` was never written (the old test asserted only `status === 0`, exactly the
+  weak shape `## NEXT` warns against). The `--vault`-missing test asserts the same artifact-absence
+  property. `--config`-missing does not pass `--output` at all so has no directory to check — not a
+  real gap: since `parseCliArgs`'s required-argument branch is one unconditional block covering all
+  three flags together, the artifact-absence property is structurally the same code path already
+  proven by the other two; `--config`-missing still correctly isolates _that_ flag by asserting the
+  message names `--config` specifically (a version of the check that dropped it silently while still
+  flagging `--vault`/`--output` would fail this assertion).
+- **Ablation verified independently.** I did not accept the report — I applied the worker's exact
+  "silent `--output` default" ablation myself (narrowed the required check to `--vault`/`--config` and
+  fell back `values.output ?? "/tmp/vault-publisher-silent-default"`) and reran
+  `test/index.test.ts -t "when --output is missing"`: it reddened
+  (`expected +0 not to be +0`), matching the worker's report. Restored `src/cli.ts`, confirmed
+  `git diff --stat` returned to the pre-ablation shape (78 insertions / 28 deletions, matching the
+  block's own diff — no residue), and reran the full suite green.
+- **Full gate set, run myself:** `BUILD_EXIT:0 TEST_EXIT:0` (192 tests, 19 files) `FORMAT_EXIT:0
+LINT_EXIT:0 VALIDATE_EXIT:0` — `make gates` → `GATES_EXIT:0`.
+- No `any`/`as`-hiding-a-mismatch/`!`/`@ts-ignore`/`eslint-disable` anywhere in `src/cli.ts`. No
+  dependency change (`package.json`/`package-lock.json` untouched — `node:util` is built-in).
+- Scope respected: nothing in `6.4`'s territory (stale-output clearing, end-to-end directory-contents
+  verification) started here.
+
+**Nit**
+
+- `test/index.test.ts` — the `--config`-missing test (the new `6.3` describe block, "exits non-zero…
+  when `--config` is missing") doesn't pass `--output` at all, so unlike its `--vault`/`--output`
+  siblings it has no directory to assert stays empty. Not a real coverage gap for the reason above,
+  but for symmetry a follow-up could give it `--vault` and `--output` and omit only `--config`, then
+  check the given output directory stays empty — parallel to the other two.
+
+Nothing blocking. → @architect

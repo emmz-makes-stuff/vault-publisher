@@ -1,3 +1,4 @@
+import { mkdtempSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -37,22 +38,59 @@ const noFrontPageConfigPath = path.join(
   "publish.config.yaml",
 );
 
-function runCli(configPath: string): { status: number | null; stdout: string; stderr: string } {
+const createdOutputDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of createdOutputDirs.splice(0)) {
+    rm(dir, { recursive: true, force: true }).catch(() => {
+      // Best-effort cleanup only — a leftover temp dir here is inert, unlike
+      // one this suite might mistake for asserted-on output.
+    });
+  }
+});
+
+/**
+ * Runs the real CLI with a config path and an explicit vault root — every
+ * required flag is present, so this is the "the arguments are all fine, the
+ * config content is what's under test" path. `vaultRoot` defaults to the
+ * config's own directory, matching every fixture vault's layout (the config
+ * lives inside the vault it describes).
+ */
+function runCli(
+  configPath: string,
+  vaultRoot: string = path.dirname(configPath),
+): { status: number | null; stdout: string; stderr: string } {
   // Node 24 strips TypeScript syntax natively, so the source runs directly —
   // no build step, no dist/ output to go stale against these tests.
-  const result = spawnSync(process.execPath, [entryPoint, configPath], {
-    encoding: "utf8",
-  });
+  const outputDir = mkdtempSync(path.join(tmpdir(), "vault-publisher-cli-run-"));
+  createdOutputDirs.push(outputDir);
+  const result = spawnSync(
+    process.execPath,
+    [entryPoint, "--vault", vaultRoot, "--config", configPath, "--output", outputDir],
+    { encoding: "utf8" },
+  );
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
 function runCliWithOutput(
   configPath: string,
   outputDir: string,
+  vaultRoot: string = path.dirname(configPath),
 ): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync(process.execPath, [entryPoint, configPath, outputDir], {
-    encoding: "utf8",
-  });
+  const result = spawnSync(
+    process.execPath,
+    [entryPoint, "--vault", vaultRoot, "--config", configPath, "--output", outputDir],
+    { encoding: "utf8" },
+  );
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+function runCliRawArgs(args: readonly string[]): {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+} {
+  const result = spawnSync(process.execPath, [entryPoint, ...args], { encoding: "utf8" });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
@@ -161,12 +199,6 @@ describe("CLI entry point — block B: published wired through to a written site
     await rm(outputDir, { recursive: true, force: true });
   });
 
-  it("skips site generation entirely when no output directory is given — existing two-argument callers see unchanged behaviour", () => {
-    const result = runCli(integrationVaultConfigPath);
-
-    expect(result.status).toBe(0);
-  });
-
   it("writes the front page and a nested page when an output directory is given", async () => {
     const result = runCliWithOutput(integrationVaultConfigPath, outputDir);
 
@@ -237,5 +269,115 @@ describe("CLI entry point — warns when the vault's own Index.md is not publish
     await expect(readFile(path.join(outputDir, "index.html"), "utf8")).rejects.toThrow();
     const onboarding = await readFile(path.join(outputDir, "Handbook", "Onboarding.html"), "utf8");
     expect(onboarding).toContain("Welcome to the handbook.");
+  });
+});
+
+describe("CLI entry point — 6.3 util.parseArgs surface", () => {
+  let outputDirForMissingVault: string;
+
+  beforeEach(() => {
+    outputDirForMissingVault = mkdtempSync(path.join(tmpdir(), "vault-publisher-argtest-"));
+    createdOutputDirs.push(outputDirForMissingVault);
+  });
+
+  it("--help prints usage to stdout, exits 0, and does nothing else", () => {
+    const result = runCliRawArgs(["--help"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("usage: vault-publisher");
+    expect(result.stdout).toContain("--vault");
+    expect(result.stdout).toContain("--config");
+    expect(result.stdout).toContain("--output");
+    expect(result.stderr).toBe("");
+  });
+
+  it("--help short-circuits even when other required flags are also missing", () => {
+    // --help alone, with no --vault/--config/--output, still succeeds — help
+    // is not just "a valid combination of flags happens to satisfy it".
+    const result = runCliRawArgs(["--help", "--vault", "/nonexistent"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("usage: vault-publisher");
+  });
+
+  it("exits non-zero with a clean message and no stack trace when --output is missing", async () => {
+    const outputDir = mkdtempSync(path.join(tmpdir(), "vault-publisher-missing-output-"));
+    createdOutputDirs.push(outputDir);
+
+    const result = runCliRawArgs([
+      "--vault",
+      path.dirname(integrationVaultConfigPath),
+      "--config",
+      integrationVaultConfigPath,
+    ]);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("--output");
+    const lines = result.stderr.trim().split("\n");
+    expect(lines.some((line) => /^\s*at /.test(line))).toBe(false);
+    // Proves the run never reached publishSite, not merely that it reported
+    // an error while still writing something.
+    await expect(readFile(path.join(outputDir, "index.html"), "utf8")).rejects.toThrow();
+  });
+
+  it("exits non-zero with a clean message and no stack trace when --vault is missing", async () => {
+    const result = runCliRawArgs([
+      "--config",
+      integrationVaultConfigPath,
+      "--output",
+      outputDirForMissingVault,
+    ]);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("--vault");
+    const lines = result.stderr.trim().split("\n");
+    expect(lines.some((line) => /^\s*at /.test(line))).toBe(false);
+    await expect(
+      readFile(path.join(outputDirForMissingVault, "index.html"), "utf8"),
+    ).rejects.toThrow();
+  });
+
+  it("exits non-zero with a clean message and no stack trace when --config is missing", () => {
+    const result = runCliRawArgs(["--vault", path.dirname(integrationVaultConfigPath)]);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("--config");
+  });
+
+  it("exits non-zero with a clean message and no stack trace on an unknown flag", () => {
+    const result = runCliRawArgs([
+      "--vault",
+      path.dirname(integrationVaultConfigPath),
+      "--config",
+      integrationVaultConfigPath,
+      "--output",
+      outputDirForMissingVault,
+      "--bogus",
+    ]);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).not.toBe("");
+    const lines = result.stderr.trim().split("\n");
+    expect(lines.some((line) => /^\s*at /.test(line))).toBe(false);
+  });
+
+  it("rejects an unexpected positional argument instead of ignoring it", () => {
+    const result = runCliRawArgs([
+      "--vault",
+      path.dirname(integrationVaultConfigPath),
+      "--config",
+      integrationVaultConfigPath,
+      "--output",
+      outputDirForMissingVault,
+      "extra-positional",
+    ]);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).not.toBe("");
   });
 });

@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { parseArgs } from "node:util";
 import type { PublishConfig } from "./config.ts";
 import { loadConfig } from "./config.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
@@ -11,6 +12,66 @@ import { reportWarnings, WarningCollector } from "./warnings.ts";
 import { buildNoteIndex, VAULT_ROOT_INDEX_NOTE } from "./wikilinks.ts";
 import { writeSite, type RenderedPage } from "./writer.ts";
 
+const USAGE =
+  "usage: vault-publisher --vault <path> --config <path> --output <path>\n" +
+  "       vault-publisher --help\n";
+
+interface ParsedArgs {
+  readonly vault: string;
+  readonly config: string;
+  readonly output: string;
+}
+
+/**
+ * Parses argv into the three required paths, or returns `undefined` after
+ * having already handled the outcome itself (printed usage and set the exit
+ * code for a bad flag or a missing required option, or printed help and
+ * exited 0 for `--help`) — the caller only has real work left to do when
+ * this returns a value.
+ */
+function parseCliArgs(argv: readonly string[]): ParsedArgs | undefined {
+  let values: {
+    vault?: string;
+    config?: string;
+    output?: string;
+    help?: boolean;
+  };
+  try {
+    ({ values } = parseArgs({
+      args: argv.slice(2),
+      options: {
+        vault: { type: "string" },
+        config: { type: "string" },
+        output: { type: "string" },
+        help: { type: "boolean" },
+      },
+      allowPositionals: false,
+    }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${message}\n${USAGE}`);
+    process.exitCode = 1;
+    return undefined;
+  }
+
+  if (values.help === true) {
+    process.stdout.write(USAGE);
+    return undefined;
+  }
+
+  if (values.vault === undefined || values.config === undefined || values.output === undefined) {
+    const missing: string[] = [];
+    if (values.vault === undefined) missing.push("--vault");
+    if (values.config === undefined) missing.push("--config");
+    if (values.output === undefined) missing.push("--output");
+    process.stderr.write(`missing required argument(s): ${missing.join(", ")}\n${USAGE}`);
+    process.exitCode = 1;
+    return undefined;
+  }
+
+  return { vault: values.vault, config: values.config, output: values.output };
+}
+
 /**
  * `argv` defaults to `process.argv` for the real CLI and is only ever
  * overridden in tests, so `publishSite`'s failure path can be exercised
@@ -19,13 +80,11 @@ import { writeSite, type RenderedPage } from "./writer.ts";
  * which is what every other machine this repo runs on happens to be.
  */
 export async function main(argv: readonly string[] = process.argv): Promise<void> {
-  const configPath = argv[2];
-  const outputDir = argv[3];
-  if (configPath === undefined) {
-    process.stderr.write("usage: vault-publisher <config-path> [output-dir]\n");
-    process.exitCode = 1;
+  const args = parseCliArgs(argv);
+  if (args === undefined) {
     return;
   }
+  const { vault: vaultRoot, config: configPath, output: outputDir } = args;
 
   let config: PublishConfig;
   try {
@@ -37,7 +96,6 @@ export async function main(argv: readonly string[] = process.argv): Promise<void
     return;
   }
 
-  const vaultRoot = path.dirname(configPath);
   const vaultPaths = await listVaultNotes(vaultRoot);
   const { published, unmatched } = resolveSelection(config, vaultPaths);
 
@@ -50,28 +108,20 @@ export async function main(argv: readonly string[] = process.argv): Promise<void
     );
   }
 
-  // `output-dir` is a stopgap positional argument, not the CLI surface —
-  // `6.3` owns `util.parseArgs`, flags, and `--help`. Its only job here is
-  // to stop `published` from being computed and thrown away: every existing
-  // caller of this entry point passes two arguments and sees unchanged
-  // behaviour, since site generation is skipped entirely when a third is
-  // absent.
-  if (outputDir !== undefined) {
-    try {
-      await publishSite(vaultRoot, published, outputDir, collector);
-    } catch (error) {
-      // Same convention `loadConfig`'s catch above uses: a clean message on
-      // stderr and a non-zero exit code, never an unhandled rejection with a
-      // Node stack trace. `reportWarnings` still runs here — a run that dies
-      // partway through must not silently discard what it already found,
-      // since warnings are the Product Owner's only visibility into a
-      // degraded publish.
-      const message = error instanceof Error ? error.message : String(error);
-      process.stderr.write(`${message}\n`);
-      process.exitCode = 1;
-      reportWarnings(collector.all());
-      return;
-    }
+  try {
+    await publishSite(vaultRoot, published, outputDir, collector);
+  } catch (error) {
+    // Same convention `loadConfig`'s catch above uses: a clean message on
+    // stderr and a non-zero exit code, never an unhandled rejection with a
+    // Node stack trace. `reportWarnings` still runs here — a run that dies
+    // partway through must not silently discard what it already found,
+    // since warnings are the Product Owner's only visibility into a
+    // degraded publish.
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${message}\n`);
+    process.exitCode = 1;
+    reportWarnings(collector.all());
+    return;
   }
 
   reportWarnings(collector.all());
