@@ -6354,6 +6354,18 @@ an instance of.**
 
 **Carried into §7 — what it inherits:**
 
+- **A committed test vault, Emmz's call on 2026-08-27.** Build a fixture vault that lives **inside
+  this repository and under source control**, as the standing vault for future testing. Today's
+  fixtures are scattered per-block under `test/fixtures/` (`integration-vault`, `warnings-vault`,
+  `degraded-content-vault`, `end-to-end-vault`, `vault-root-floor`) and several were carved to
+  reproduce one finding. A single committed vault gives §7 and §8 something real to publish against
+  without touching the Oomi vault, and gives the macOS temp-directory question above a settled answer
+  — a vault under the repo is never under `/private/tmp`. Nothing confidential goes in it: invented
+  notes only, but shaped like the real thing (nested folders, a `Private/` and a `Journal/` for the
+  floor to withhold, wikilinks that resolve and some that don't, a Bases block, frontmatter). Decide
+  whether it **replaces** the per-block fixtures or sits alongside them; folding five fixtures into
+  one is a change to what those tests exercise, so it is not a pure move.
+
 - **`action.yml` must pin `--vault` to the workspace root.** This is the durable half of S6-3; the
   code guard is a fail-closed heuristic and cannot be more than that. Do not expose a vault-root
   input a caller can reparent.
