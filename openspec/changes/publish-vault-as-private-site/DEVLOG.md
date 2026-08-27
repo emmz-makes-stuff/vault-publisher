@@ -7376,323 +7376,248 @@ GATES_EXIT:0` — 223 tests.
 is infrastructure added at the Product Owner's direction on 2026-08-27, the day the repository went
 public and a client identifier reached `main`. If it warrants a spec, that is a separate change.
 
+**[architect]** Publishability gate — two defects found **after** it was committed. Fixed, reviewer
+`Approve` on re-audit, recommitted.
+
+**The eighteenth instance, and the most pointed one yet: the gate had never scanned its own test
+file.** The default scan set was `git ls-files`, which lists **tracked files only**.
+`test/check-publishable.test.ts` was untracked for the entire build-and-review cycle, so every green
+signal — the worker's ablations, the reviewer's `scanned 166 file(s)` / `PUBLISHABLE_EXIT:0`, and both
+of mine — was green over a file the gate could not see. It surfaced the moment I committed it and the
+gate immediately failed on its own fixtures.
+
+Three things make this worth writing down properly rather than filing as a bug:
+
+- **It happened inside the tool built to prevent instance 16.** Building a check does not exempt the
+  check from the failure mode it exists to catch. That is now the fifth time in this change a fix has
+  reproduced the class it was fixing.
+- **The blind spot pointed at the likeliest case.** A leaked identifier arrives in a **new** file far
+  more often than in an existing one, and new files are exactly what `git ls-files` cannot see. The
+  gate was blind precisely where it most needed to look.
+- **Everyone's evidence agreed, and everyone was wrong together.** Three independent parties ran the
+  same command and got the same number. Agreement between observers means nothing when they share an
+  instrument — the count `166` was consistent, reproducible, and describing a set that excluded the
+  file under test.
+
+**The fixes.** Scan set widened to `git ls-files -co --exclude-standard -z` — tracked **plus**
+untracked-but-not-ignored, still honouring `.gitignore` so `node_modules` and the identifier symlink
+stay out. Fixture strings are now assembled from fragments at runtime, so the contiguous matching
+literal never sits in the source bytes while the string written to disk is byte-identical to before.
+No pattern weakened and **no suppression for the test file** — a gate with a hole shaped like its own
+tests is not a gate.
+
+**Ablations.** The worker reverted only the scan-set line and reddened exactly the new regression test.
+The reviewer re-derived it independently, checked the binary-file path with a planted binary (skipped
+cleanly via the existing `grep -Iq` guard), and confirmed the runtime-assembled strings still catch a
+real pattern regression rather than merely failing to trip the gate — the trade that fix makes, and
+the quiet way it could have disarmed two tests while they kept passing. It also confirmed the new
+test avoids the `repo_root`-in-a-copy trap by placing the script at the **same relative path** inside
+a real `git init` fixture.
+
+**Architect's own, and the one that settles it:** planted a match in a **never-staged** file at the
+repo root — caught, named by path and rule, `PUBLISHABLE_EXIT:1`. Removed it — `PUBLISHABLE_EXIT:0`,
+168 files. The rise from 166 to 168 is _not_ evidence of the widening on its own; it is explained by
+the script and its test becoming tracked. The untracked plant is the evidence.
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 PUBLISHABLE_EXIT:0
+GATES_EXIT:0` — 224 tests.
+
+**Standing rule §7 adds: a count is not a scope.** `scanned N file(s)` tells you how many files were
+examined, never which — and the one you care about is the one that is missing. When a check reports a
+number, ask what set produced it before believing what it excludes.
+
 ## NEXT
 
-**Sections 1–6 are closed** (supervisor `Approve` on each). **45/59 tasks.** Next is **section 7 —
-distribution and deployment**: `action.yml`, the `v1` tag, the wrangler configuration, and the vault
-repository's publish workflow.
+**Sections 1–6 are closed** (supervisor `Approve` on each). **§7 is OPEN and has NO supervisor review
+yet** — it cannot have one until its last block lands. **48/59 tasks.**
 
-**§6 delivered the publisher's outer surface.** `src/cli.ts` is a real `util.parseArgs` CLI —
-`--vault`, `--config`, `--output`, all required with no defaults, `allowPositionals: false`, `--help`
-to stdout at exit 0. The positional stopgap and its skip-generation branch are gone. `src/writer.ts`
-now makes the output directory match the published set, and it is still the only module in `src/`
-that writes or deletes. `resolveSelection` is still the only producer of a published set; the new
-floor gate is a **refusal gate**, not a second filter — it decides whether the invocation runs, never
-which notes publish.
+**Resume point: `7.4`.** `7.1`, `7.2`, `7.3` are ticked and verified against real runs, not
+reproductions. Everything left in §7 (`7.4`–`7.8`) needs the vault repository, a Cloudflare deploy
+token, and the first deploy of **real confidential content** — all Product Owner work. Do not start
+them without them.
 
-**Fourteen and fifteen, both introduced by remediations.** §5 warned that a fix is not exempt from
-the rule that produced it; §6 proved it twice more.
+**⚠️ Three things a fresh session must not get wrong:**
 
-- **The fourteenth** — `test/index.test.ts`'s `--output`-missing test made a temp directory, never
-  passed it to the CLI, then asserted no page appeared in it. Unconditionally true. It was written
-  _by_ a remediation and **the reviewer's block B `Approve` cited it approvingly as "strictly
-  stronger"** than the test it replaced. The fix was deletion: with no output directory supplied,
-  "it never reached `publishSite`" is not externally observable, so there was nothing to assert.
-- **The fifteenth** — `expect(lines.length).toBeGreaterThan(0)` on `stderr.trim().split("\n")` as an
-  anti-vacuity guard. `"".split("\n")` is `[""]`, length 1, so a silently-publishing CLI passed the
-  very check that existed to catch it.
+1. **`7.3` was ticked on fixture evidence, and it carries a transferred obligation.** Its clause
+   "re-request the `workers.dev` address **and** a preview address afterwards to confirm the deploy
+   did not re-enable the routes `2.2` disabled" concerns the **real** Worker, whose first deploy is
+   `7.4`'s event. **If `7.4` lands without that check, the `7.3` tick was wrong.** Recorded as an
+   Architect judgement, not an oversight.
+2. **The repository is PUBLIC as of 2026-08-27.** A client identifier reached `main` the same day, was
+   found by an ad-hoc grep after the push, and history was rewritten to purge it. PR #2's diff on
+   GitHub still shows the original text and pre-rewrite objects stay fetchable by SHA. **Never write
+   the vault's name, the published hostname, the Worker name, the account subdomain or the team domain
+   into this repository** — specs, tasks, DEVLOG, fixtures or commit messages.
+3. **`make gates` now includes `make publishable`, and it needs a symlink a fresh clone will not
+   have.** `.publishable-identifiers` is gitignored and points at the canonical list in the vault
+   repository (`.publisher/publishable-identifiers`). Without it the gate **errors by design** rather
+   than passing. Recreate the symlink, or set `$VP_IDENTIFIERS`. In CI, `PUBLISHABLE_LIST_OPTIONAL=1`
+   runs the pattern rules only and says so loudly.
 
-**Standing rule §6 adds:** **an assertion about a thing the run was never given cannot fail.** Before
-writing a negative assertion, name the input that makes the negative observable. If withholding an
-argument _is_ the test, the artifact check is theatre.
+**§7 so far.** `action.yml` is a composite action with `--vault` hardcoded to `$GITHUB_WORKSPACE`
+(decision S6-3) and no input of any spelling able to reparent it; output defaults to
+`$RUNNER_TEMP/vault-publisher-site`, **outside** the workspace, because the section 6 containment
+guard refuses an output directory inside the vault root — which makes `7.7` structurally true rather
+than a `.gitignore` promise. `test-vault/` is committed at the repo root, additive to
+`test/fixtures/`, with all five `EXCLUSION_FLOOR` entries **named in its `publish.config.yaml` and
+refused anyway** — that is what makes the floor's removal observable. `v1` is tagged on `main` and
+verified by consumption from a separate repository. The wrangler configuration lives in the **vault**
+repository at `.publisher/wrangler.jsonc`.
 
-**Three rounds on block C, and why it took three.** The output-directory containment gate was fixed
-twice by covering exactly the case that had been demonstrated to it — unresolved strings, then
-leaf-only `realpath`. Both times a structurally identical attack one step further out still deleted
-real vault content at exit 0. The third shape — walk to the nearest existing ancestor, `realpath` it,
-rejoin only the genuinely nonexistent trailing segments — is general, and held against every axis the
-reviewer could construct. **When a fix matches the reproduction exactly, ask what the reproduction was
-an instance of.**
+**Sixteen and seventeen. Both were green until something outside the code was varied.**
 
-**Carried into §7 — what it inherits:**
+- **The sixteenth: a hand-executed reproduction is not a verification.** `action.yml` shipped with a
+  hand-run of "the exact command sequence the action's steps run" — same invocation, same arguments,
+  exit 0, gates green, reviewer `Approve`. The first real Actions run failed on its **first step**:
+  `actions/setup-node` resolves `node-version-file` relative to `$GITHUB_WORKSPACE`, so an absolute
+  `${{ github.action_path }}/.nvmrc` had the workspace joined onto it. The reproduction passed because
+  it never went through `setup-node` at all. **When you hand-execute a sequence, name the steps you
+  did not execute — that list is where the next failure is.** It was survivable only because `7.1`
+  stayed unticked pending a real run.
+- **The seventeenth: green by accident of `PATH`.** The publishability gate — the tool built to stop
+  the leak — crashed under stock `/bin/bash` 3.2 on an empty array, on exactly the
+  `PUBLISHABLE_LIST_OPTIONAL=1` path. The worker's ablations, my gate runs and the reviewer's first
+  pass were all green **because Homebrew's bash 5 was ahead on `PATH`**. Its test claimed to exercise
+  the skip path and exercised the ambient environment. **A test that claims to pin an interpreter and
+  does not is the same defect one level up.** The fix that matters is the harness pinning
+  `PATH=/usr/bin:/bin`, not the array guard.
+- Also recorded, cheaply learned: **ablate a script in place.** Copying it elsewhere changes its
+  `repo_root` resolution and produces a misleading failure.
 
-- **A committed test vault, Emmz's call on 2026-08-27.** Build a fixture vault that lives **inside
-  this repository and under source control**, as the standing vault for future testing. Today's
-  fixtures are scattered per-block under `test/fixtures/` (`integration-vault`, `warnings-vault`,
-  `degraded-content-vault`, `end-to-end-vault`, `vault-root-floor`) and several were carved to
-  reproduce one finding. A single committed vault gives §7 and §8 something real to publish against
-  without touching the source vault, and gives the macOS temp-directory question above a settled answer
-  — a vault under the repo is never under `/private/tmp`. Nothing confidential goes in it: invented
-  notes only, but shaped like the real thing (nested folders, a `Private/` and a `Journal/` for the
-  floor to withhold, wikilinks that resolve and some that don't, a Bases block, frontmatter). Decide
-  whether it **replaces** the per-block fixtures or sits alongside them; folding five fixtures into
-  one is a change to what those tests exercise, so it is not a pure move.
+**Standing rules this change has accumulated**, in the order they were paid for: a check that cannot
+fail proves nothing · an assertion about an input the run was never given cannot fail · when a fix
+matches the reproduction exactly, ask what the reproduction was an instance of · a fix is not exempt
+from the rule that produced it · construction is not observation · name the steps your reproduction
+skipped · vary the environment, not only the input.
 
-- **`action.yml` must pin `--vault` to the workspace root.** This is the durable half of S6-3; the
-  code guard is a fail-closed heuristic and cannot be more than that. Do not expose a vault-root
-  input a caller can reparent.
-- **The macOS temp-directory false positive.** The floor guard tests every segment of the _absolute_
-  resolved path, including ancestors above the vault that can never prefix a note path. On macOS
-  `/tmp` resolves to `/private/tmp`, so **every vault under a temp directory is refused on macOS** —
-  the supervisor got a refusal for a directory named `NotPrivate`. The suite is green only by
-  accident of which side uses `tmpdir()`: fixture vaults live under the repo, `mkdtemp` supplies
-  output directories. **The first test that builds a vault under `tmpdir()` fails on macOS and passes
-  on Linux for unrelated reasons** — and CI is Linux, so it will look like a local-only flake. Decide
-  the guard's scope before that happens.
-- **The marker file `.vault-publisher-output`** lands in the directory `7.3` uploads. It holds no
-  vault-derived content and sits behind Access, and the exact-set test names it explicitly rather
-  than filtering it out. Decide whether it is excluded from what is served.
-- **A non-existent `--vault` crashes with a raw Node stack trace** — `listVaultNotes` at
-  `src/cli.ts:137` sits outside every try/catch. Exits 1, violates no binding decision, three lines
-  to close.
-- **The marker and the two new non-zero exits are part of the tool's contract** and appear in no spec
-  and no `design.md` Decision — they live only in this thread. Worth a `design.md` entry before
-  archive.
-- **`resolveRealOrNaivePath` is exported from `src/writer.ts`** with two unrelated callers, and
-  arguably belongs in `src/selection.ts` with this project's other containment primitives. Not a
-  defect; a future move.
+**Carried, still open:**
+
+- **The `.vault-publisher-output` marker is served** — observed live, `200`, zero bytes, no
+  vault-derived content. `8.1`/`8.3` should decide whether it is excluded from what is served rather
+  than leaving it incidental.
+- **`/` is a 404 when no front page is selected.** The real `publish.config.yaml` must select one.
+- **`action.yml`'s `--config` is assembled by string concatenation**, not a normalising path join. Not
+  a floor defeat under S6-3; parked for the §7 supervisor.
+- **§6's own `EXCLUSION_FLOOR` unit tests may assert over configs that never name the floored entry**,
+  in which case they cannot fail the way they appear to. One pass, parked for the §7 supervisor.
+- **`actions/setup-node@v4` and `actions/checkout@v4` are two majors behind** (`v7` declares `node24`;
+  `v4` declares the deprecated `node20`). Harmless today, a hard failure when node20 support ends.
+- **A non-existent `--vault` crashes with a raw Node stack trace** — `listVaultNotes` outside every
+  try/catch. Exits 1, three lines to close.
+- **The marker and the two non-zero exits are part of the tool's contract** and appear in no spec and
+  no `design.md` Decision. Worth an entry before archive.
+- **`resolveRealOrNaivePath` is exported from `src/writer.ts`** with two unrelated callers; arguably
+  belongs with the other containment primitives in `src/selection.ts`.
 - **The containment refusal is one-directional** — nothing refuses an `--output` that _contains_ the
-  vault, beyond the marker's incidental "was empty once" invariant.
+  vault.
 - **A check-then-write window** exists in principle between resolving the output path and writing it.
   Unreachable in a single-shot CI build; parked deliberately.
 - **`test/end-to-end-output.test.ts` mkdirs scratch directories inside a tracked fixture vault**, with
   `finally`-only cleanup.
-- **The format gate fails on the DEVLOG at every block boundary** — now twelve for twelve. `make
-format-fix` then `make format`.
-
-**Still open, unchanged from §3/§4/§5:**
-
+- **The format gate fails on the DEVLOG at every block boundary** — fifteen for fifteen. `make
+format-fix`, then `make format`.
 - **Hardlinks defeat `isWithinVaultBoundary`** — a threat-model decision parked for §8 hardening.
 - **Unobserved claims in `reader-access`**: removal's "can no longer authenticate" half, and the
   non-disclosure scenario's timing.
 - **Access one-time code expiry: observed lapsing at 10 minutes, 2026-08-25** — `8.6`'s verification,
   witnessed, untickable until §8 opens.
-- **Committer identity** — Emmz's personal address is the git author on every commit and would go
-  public with the repository. Decide before publishing, not after.
+- **Committer identity** — the Product Owner's personal address is the git author on every commit and
+  is now public, the repository having been published on 2026-08-27. Decided by events rather than
+  deliberately; worth a conscious ruling.
 
-**[worker]** Publishability gate — `scripts/check-publishable.sh` + `test/check-publishable.test.ts`,
-both green. Not a `tasks.md` item (see the architect's scope note above), so nothing ticked.
+**[worker]** Two post-commit defects fixed, addressed → @reviewer.
 
-**Script.** Default scan is `git ls-files -z`; explicit path arguments recurse via `find -type f`
-(files or directories, mixed). Always prints `check-publishable: scanned N file(s).` before doing
-anything else; zero files is an unconditional `ERROR` and exit 1, ahead of everything else — an empty
-scan set can never reach the "clean" exit path. Pattern rules: `*.workers.dev` and
-`*.cloudflareaccess.com` hostnames matched by a label-based regex (`[A-Za-z0-9-]+` segments joined by
-literal dots), plus a standard email regex allowing only `noreply@anthropic.com` and
-`noreply@notify.cloudflare.com` (case-insensitive exact match on the matched address, not a substring
-allowance). Literal rules: `$VP_IDENTIFIERS` else `.publishable-identifiers`, `#`-comments and blank
-lines stripped, case-insensitive literal (`grep -F`) substring match per identifier; the resolved list
-path is excluded from its own scan set by realpath comparison. Missing-or-empty list is `ERROR` unless
-`PUBLISHABLE_LIST_OPTIONAL=1`, which prints two `SKIPPED:` lines to stderr naming exactly what didn't
-run and continues with pattern rules only. A hit prints `path:line: <rule>: <match>` and the run exits
-non-zero at the end (not on first hit, so one run reports everything wrong at once).
+**Defect 1 — widened default scan set.** `git -C "$repo_root" ls-files -z` → `git -C "$repo_root"
+ls-files -co --exclude-standard -z` — tracked _and_ untracked-but-not-ignored. `--exclude-standard`
+still honours `.gitignore`, so `.publishable-identifiers` and `node_modules` stay out; nothing else
+about the scan-set-building logic changed. Binary-file handling was already `grep -Iq .`-gated per
+file, unaffected by which files land in the set.
 
-**Why the label regex, not a literal `.workers.dev` substring match.** The brief flagged that the
-DEVLOG's own honest placeholders (`<team>.cloudflareaccess.com`, `*.workers.dev`,
-`<WORKER_NAME>.<YOUR_SUBDOMAIN>.workers.dev`) must not trip the rule. `*`, `<` and `>` are not valid
-hostname-label characters, so requiring a real label (`[A-Za-z0-9]` bounded, hyphens only inside)
-immediately before `.workers.dev`/`.cloudflareaccess.com` excludes all three placeholder forms
-structurally — verified against the real tree (166 tracked files) with `PUBLISHABLE_LIST_OPTIONAL=1`
-and an invented identifier list: exit 0, no false positive anywhere in this DEVLOG or elsewhere.
+**Defect 2 — fixture literals no longer sit in the source.** `PLANTED_WORKERS_DEV_HOSTNAME =
+["fictional-example", "workers", "dev"].join(".")` and `PLANTED_EMAIL = ["person",
+"example.com"].join("@")`, both module-level `const`s in `test/check-publishable.test.ts`, built
+before any test runs. Neither array element alone is a hostname or an email address, so the checker's
+own patterns find nothing when it scans this file's bytes — only the runtime-joined value, written to
+a fixture file inside `scratchDir`, is a real match. The four call sites (`writeFile` bodies and the
+matching `toContain` assertions) now reference the constants instead of the old inline literals. Did
+not touch the DEVLOG-placeholder test (`<team>.cloudflareaccess.com` etc.) — those strings are
+deliberately non-matching by construction, not something needing obfuscation.
 
-**Tests** — 13 cases, `test/check-publishable.test.ts`, spawns the script the way
-`test/index.test.ts`/`test/test-vault.test.ts` spawn the CLI, against `mkdtemp` scratch trees. Covers
-every case the brief listed, plus two extra: honest-placeholder non-trip, and case-insensitive literal
-matching. Every identifier and hostname in every fixture is invented
-(`fictional-example<dot>workers<dot>dev`, `FictionalClientName-Zephyr`, `person<at>example.com`) — none of it is
-the real vault name or a real hostname.
+**Durable regression test for defect 1** — `catches a planted match in an untracked-but-not-ignored
+file (default scan set)`. The script resolves its own repo root from `BASH_SOURCE`, not from `cwd`, so
+exercising the true default (no path arguments) against a fixture needs a real git repository with a
+copy of the script inside it, at the same relative path (`scripts/check-publishable.sh`) — not the
+vault-publisher checkout. The test: `git init` in a scratch dir, copies the real script in, writes one
+file that is **never staged** and not gitignored, carrying `PLANTED_WORKERS_DEV_HOSTNAME`, then invokes
+the copied script with **no arguments** under the pinned `PATH=/usr/bin:/bin`. Asserts non-zero exit
+and that both the planted hostname and the file's name appear in the output.
 
-**Ablations — proving the tests can fail, not just pass.**
+**Ablation — reverted only the scan-set change, everything else at the fixed state:**
 
-- Replaced `workers_dev_regex` with a string that matches nothing, re-ran the suite: exactly
-  `fails on a planted *.workers.dev hostname` went red (`expected +0 not to be +0`, i.e. the script
-  now exits 0 over a planted hostname), all 12 others stayed green. Restored the script
-  byte-for-byte (`diff` clean against the pre-ablation copy).
-- Emptied the `for id in "${identifiers[@]}"` loop's iterable, re-ran: exactly the two literal-match
-  tests went red (`fails on a planted literal identifier` and `matches literal identifiers
-case-insensitively`), the rest stayed green. Restored, `diff` clean.
+    else
+      while IFS= read -r -d '' f; do
+        files+=("$f")
+      done < <(git -C "$repo_root" ls-files -z)   # scan-set change reverted, nothing else touched
+    fi
+
+Ran the full 14-case suite against that single-line reversion, under the same pinned `PATH`: exactly
+`catches a planted match in an untracked-but-not-ignored file (default scan set)` went red —
+`expected 'check-publishable: scanned 0 file(s).…' to contain 'fictional-example<dot>workers<dot>dev'`
+(the fixture repo has nothing staged, so tracked-only `ls-files` sees zero files and the script hits
+its own empty-scan-set `ERROR` path before ever reaching the planted string) — the other 13 stayed
+green. Restored, `diff` against the pre-ablation copy clean, 14/14 green again.
+
+**Confirmed against this repository's real tree, fixed script, no args:**
+`check-publishable: scanned 168 file(s).` and `PUBLISHABLE_EXIT:0` — up from the reviewer-reported 166
+because `scripts/check-publishable.sh` and `test/check-publishable.test.ts` are now tracked and the
+gate can see itself. (168 rather than higher because nothing in this checkout is currently untracked
+beyond this DEVLOG edit, which is tracked-modified, not new — the widened scan set's effect shows up
+the next time a genuinely new file lands uncommitted, which is exactly the failure mode defect 1
+closes.)
 
 **Gates, full set:**
 `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 PUBLISHABLE_EXIT:0 GATES_EXIT:0`.
-223 tests total, all green (210 pre-existing + 13 new). `check-publishable` itself reports
-`scanned 166 file(s).` and exits 0 over this repository's real tracked tree, using the real
-`.publishable-identifiers` symlink — run without printing its content, since the list names the exact
-things it exists to keep out of a transcript.
-
-No commit, no box ticked (there is no box — see the scope note). → @reviewer
-
-**[worker]** One more thing worth recording rather than quietly fixing: `make publishable` caught the
-draft of the post above — the two fixture examples above, written earlier as plain hostname/email
-literals, tripped the pattern rules exactly as designed. The checker doesn't know intent; a matching
-shape is a matching shape whether it's a leak or a worked example. Rewrote both the same way the
-DEVLOG's other honest placeholders already avoid the pattern (breaking the label immediately before
-`workers.dev` and the `@`), then re-ran `make gates`: `PUBLISHABLE_EXIT:0`. First real-world hit from
-this gate, on its own author's text — evidence it does more than pass its own tests.
-
-**[reviewer]** Publishability gate — audit of `scripts/check-publishable.sh`,
-`test/check-publishable.test.ts`, and the `Makefile`/`.gitignore` wiring. **Request changes** — one
-blocker, in the exact designed-hazard path the brief asked me to scrutinize hardest.
-
-**Blocker — `for id in "${identifiers[@]}"` (scripts/check-publishable.sh:135) crashes under a stock
-macOS/POSIX `bash` whenever `identifiers` is empty, i.e. exactly the `PUBLISHABLE_LIST_OPTIONAL=1`
-path this gate exists to run loudly-degraded rather than silently.** Reproduced against the real
-shebang resolution, not by hand-picking an interpreter:
-
-```
-$ PATH=/usr/bin:/bin VP_IDENTIFIERS=/nonexistent PUBLISHABLE_LIST_OPTIONAL=1 \
-    scripts/check-publishable.sh test/check-publishable.test.ts
-check-publishable: scanned 1 file(s).
-SKIPPED: no literal identifier list at '/nonexistent' — literal-identifier checks did NOT run.
-SKIPPED: only the generic hostname/email patterns were checked in this run.
-...
-scripts/check-publishable.sh: line 108: identifiers[@]: unbound variable
-```
-
-`#!/usr/bin/env bash` resolves whatever `bash` is first on `$PATH`. This repo's dev shell (and mine,
-by default) has Homebrew's bash 5 ahead of `/bin/bash`, which is why the worker's ablations and my
-first pass of `make publishable`/`make test` were both green — but macOS ships bash 3.2 at `/bin/bash`,
-and `set -u` makes `"${identifiers[@]}"` on a zero-length array an unconditional fatal "unbound
-variable" in bash 3.2 (`arr=(); set -u; for x in "${arr[@]}"; do :; done` dies the same way stock).
-Any environment where Homebrew's bash isn't first on `PATH` — a fresh checkout, a minimal CI image, a
-non-interactive invocation with a trimmed `PATH` — hits this on the very first non-empty file scanned.
-
-This is worse than a crash-equals-fail coincidence. The per-file loop checks `*.workers.dev`,
-`*.cloudflareaccess.com` and email patterns _before_ reaching the identifiers loop, so a real leak in
-file 1 is still caught (`hit=1`) ahead of the crash — but **every file after the first is never
-scanned**, and on a genuinely clean tree the run still dies non-zero, with no `SKIPPED`/`ERROR`
-framing, just a bash interpreter error. That reads as flaky, not as a leak — exactly the shape that
-gets "fixed" downstream by someone marking the CI step `continue-on-error` or shrugging off the
-`make publishable` failure as noise, which quietly reopens the hole this gate exists to close. The
-`skips loudly and exits 0 when the list is missing and PUBLISHABLE_LIST_OPTIONAL=1` test
-(`test/check-publishable.test.ts:169`) only stays green because the environment it happens to run in
-supplies a modern `bash`; it is not exercising what it claims to.
-
-Fix is small — guard the loop on `((${#identifiers[@]}))` (or equivalent) before iterating — but I'm
-reporting, not editing, per my role. Also worth a line in the script noting _why_ the guard is there,
-so it doesn't get "simplified" back out.
-
-**Everything else checked clean:**
-
-- Anti-vacuity: no-args, nonexistent-path-arg, empty-dir, and comments-only-list all correctly hit the
-  `ERROR`/exit-1 path (traced and, for the ones the worker didn't already prove, re-ran myself: broken
-  symlink target, directory target, permission-denied target — all fail closed, none silently pass).
-  The `scanned N file(s)` accounting happens _after_ the list-file self-exclusion and _before_ the
-  zero-check, so the count is honest.
-- `PUBLISHABLE_LIST_OPTIONAL` only takes effect on the literal string `"1"` — any typo (`true`, `yes`,
-  unset-but-truthy) falls through to the hard `ERROR`, i.e. fails closed on misconfiguration.
-- Ran `make publishable` myself over the real tree: `scanned 166 file(s).` / `PUBLISHABLE_EXIT:0` —
-  confirms no real client identifier reached this diff, the DEVLOG included. `make gates` also green
-  (`GATES_EXIT:0`, 223 tests) independent of the worker's report.
-- `Makefile`: `publishable` prints `PUBLISHABLE_EXIT:<n>` and exits with it, matches convention; added
-  to `gates`'s `-k` list, which can't mask another target's failure (each keeps its own exit line, and
-  `-k`'s aggregate `$?` is non-zero if any one of them failed). No edits to gate targets outside the
-  addition.
-- `.gitignore`: adds only the `.publishable-identifiers` symlink pointer, matches the design described
-  in the brief.
-- No real client identifier, hostname, or vault name in any fixture, comment, or this DEVLOG section —
-  verified by the gate run above, not just by reading.
-- Scope: correctly outside `publish-vault-as-private-site` per the architect's scope note; nothing here
-  ticks a task or touches `tasks.md`.
-
-Fix the blocker and re-run the ablations under a `PATH` that doesn't put Homebrew's bash first (or add
-a CI-style minimal `PATH` case to the test harness) before handing back. → @worker
-
-**[worker]** Bash 3.2 unbound-variable fix, addressed → @reviewer.
-
-**Root cause confirmed exactly as reported.** `for id in "${identifiers[@]}"` (and, less obviously,
-the earlier `"${files[@]}"` loop that runs on line ~47 _before_ the empty-scan-set check) crash under
-`set -u` on stock macOS `/bin/bash` 3.2 when the array is empty — bash 3.2 treats a bare
-`"${arr[@]}"` expansion of a zero-length array as an unbound-variable reference; bash 4+ does not.
-Reproduced the reviewer's exact command against the pre-fix script:
-
-    scripts/check-publishable.sh: line 114: identifiers[@]: unbound variable
-
-**Fix.** Swept every `"${array[@]}"` expansion in the script:
-
-- `for f in "${files[@]}"` → `for f in ${files[@]+"${files[@]}"}`
-- `for id in "${identifiers[@]}"` → `for id in ${identifiers[@]+"${identifiers[@]}"}`
-- the identifier-list-exclusion loop (runs before the empty-scan-set check, so `files` can
-  legitimately be empty there too) now guards with `[ ${#files[@]} -gt 0 ]` before iterating, and the
-  `files=("${filtered[@]}")` reassignment is guarded the same way.
-
-The `${arr[@]+"${arr[@]}"}` form is the portable bash 3.2-safe idiom: the `+` alternate-value
-expansion only substitutes `"${arr[@]}"` when `arr[@]` is _set_ (i.e., the array is non-empty),
-so an empty array expands to nothing instead of triggering the unbound-variable path.
-`${#identifiers[@]}` (a length expansion, not an element expansion) was never affected — it already
-returns 0 safely on an empty array in bash 3.2 — so the `[ "${#identifiers[@]}" -eq 0 ]` gate above it
-needed no change.
-
-**Test harness fix — the more valuable half.** `run()` in `test/check-publishable.test.ts` now pins
-`PATH=/usr/bin:/bin` in the spawned process's environment by default, for every one of the 13 tests,
-not just one added case. That is deliberate: `#!/usr/bin/env bash` on this machine was resolving to
-Homebrew's bash 5 ahead of `/bin/bash` on the ambient `PATH`, which is exactly why the first round's
-green run and green ablations proved nothing about bash 3.2. With the trimmed `PATH` forced, `env`
-resolves `bash` to the stock `/bin/bash` 3.2 on macOS, so every existing assertion is now implicitly a
-portability check as well as a behavioral one.
-
-**Ablations, re-run under the trimmed `PATH` this time, all three:**
-
-1. **Regenerated the pre-fix regression directly.** Reverted just the `identifiers` loop back to the
-   bare `"${identifiers[@]}"` form, ran the reviewer's exact repro command
-   (`PATH=/usr/bin:/bin VP_IDENTIFIERS=/nonexistent PUBLISHABLE_LIST_OPTIONAL=1
-scripts/check-publishable.sh test/check-publishable.test.ts`): reproduced verbatim —
-   `line 114: identifiers[@]: unbound variable`, exit 1, scan stopped mid-file. Then ran the full test
-   suite in that same ablated state (harness now always under trimmed `PATH`):
-   `skips loudly and exits 0 when the list is missing and PUBLISHABLE_LIST_OPTIONAL=1` went red
-   (`expected 1 to be +0`), the other 12 stayed green. That is the test that would have caught this
-   the first time, now catching it. Restored, `diff` against the pre-ablation copy clean, suite back
-   to 13/13.
-2. **workers_dev_regex neutered** (unchanged from the first round, re-run under trimmed `PATH`):
-   exactly the workers.dev test went red, 12 others green. Restored, `diff` clean.
-3. **identifiers loop iterable emptied** (unchanged from the first round, re-run under trimmed `PATH`):
-   exactly the two literal-match tests went red, 11 others green. Restored, `diff` clean.
-
-Also checked the empty-scan-set path directly under bash 3.2 with the fix in place — a directory with
-no files, same trimmed `PATH`, same `PUBLISHABLE_LIST_OPTIONAL=1`: clean `ERROR: no files were
-scanned` and exit 1, no crash, confirming the guard added to the pre-scanned-check `files` loop closes
-the same class of hole the reviewer found, not just the one line they pointed at.
-
-**Gates, full set, script and test file both restored to the fixed state:**
-`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 PUBLISHABLE_EXIT:0 GATES_EXIT:0`.
-223 tests, all green.
+224 tests total (223 + 1 new).
 
 No commit, no tick. → @reviewer
 
-**[reviewer]** Re-audit of the bash-3.2 fix. **Approve.** Re-derived every claim rather than trusting
-the report:
+**[reviewer]** Re-audit of the two post-commit defect fixes (widened scan set, runtime-assembled
+fixture literals) — independently re-derived every claim rather than reading the diff.
 
-- **`${array[@]+"${array[@]}"}` is correct on bash 3.2, not merely different.** Tested directly:
-  `arr=(); set -u; for x in ${arr[@]+"${arr[@]}"}; do ...; done` runs zero iterations without error
-  under `/bin/bash` 3.2.57 here, and the same form over a non-empty array yields the expected elements
-  (including elements that are themselves empty strings, which stay correctly distinct — no collapsing
-  into a single empty-string item). This is the standard `${var+...}`-unset-guard idiom applied to an
-  array's `[@]` subscript; it works because a zero-length array satisfies bash's "unset" branch of the
-  `${param+word}` test even though `declare -p` shows it as declared.
-- **No third bare `"${…[@]}"` survives.** `grep -n '\[@\]' scripts/check-publishable.sh` returns eight
-  lines: two `${#…[@]}` count expansions (always safe, verified separately — bash 3.2 does not choke on
-  counting an empty array), two `[ ${#…[@]} -gt 0 ]` guards, one `files=("${filtered[@]}")` reassignment
-  now reached only inside its own `-gt 0` guard, and the two `${array[@]+"${array[@]}"}` sites at the
-  script's original two crash points. That accounts for every `[@]` occurrence in the file.
-- **The `files[@]` site and the ordering claim both check out.** The identifier-list-exclusion block
-  (now guarding both the `for f in "${files[@]}"` iteration and the `files=("${filtered[@]}")`
-  reassignment on `[ ${#files[@]} -gt 0 ]` / `[ ${#filtered[@]} -gt 0 ]`) sits between the scan-set
-  build and `scanned=${#files[@]}` — i.e. before the empty-scan-set guard, exactly as described. I
-  reconstructed the pre-fix script in place (bare `"${files[@]}"` / `"${identifiers[@]}"`, everything
-  else byte-identical) and ran it from its real path — not a copy elsewhere, which I first got wrong
-  and which produced a misleading unrelated `repo_root` failure — confirming the crash and its exact
-  message, then restored and diffed byte-identical against the pre-ablation copy.
-- **The harness pin is real, not decorative.** `/usr/bin/bash` does not exist on this machine; `env`
-  with `PATH=/usr/bin:/bin` resolves `bash` to `/bin/bash` 3.2.57 — confirmed directly, and confirmed
-  again by spawning the script exactly as `test/check-publishable.test.ts`'s `run()` does (Node
-  `spawnSync` on the script's absolute path, `env.PATH` trimmed) with the pre-fix script swapped in:
-  reproduces the identical `identifiers[@]: unbound variable` crash through the real harness call, not
-  a hand-invocation. With the fix restored, the same call and the full 13-test file both pass clean.
-- **Ran my own ablation**, not one of the worker's: blanked the `is_allowed_email` allowlist (so
-  `noreply@anthropic.com` should no longer be excepted) and re-ran the full 13-test suite under the
-  trimmed `PATH`. Exactly `allows noreply@anthropic.com through the email pattern` went red
-  (`expected +0, got 1`), the other 12 stayed green, including both `PUBLISHABLE_LIST_OPTIONAL=1`
-  tests — confirming the fix didn't just stop the crash, it left the gate's actual discrimination
-  intact under the interpreter that used to break it. Restored byte-identical, reran `make gates`:
-  `GATES_EXIT:0`, 223 tests.
+**Defect 1 fix verified.** `git ls-files -co --exclude-standard -z` genuinely widens the scan set to
+tracked + untracked-not-ignored while still excluding gitignored paths — piped the real scan set and
+grepped for `node_modules` and `publishable-identifiers`: zero hits, both correctly absent. Planted a
+fresh untracked, never-staged file at the repo root with a bare email address and ran
+`scripts/check-publishable.sh` directly under `PATH=/usr/bin:/bin` (not through the test suite):
+scanned count rose 168→169, file caught by name and line, exit 1. Reverted only the scan-set line
+(back to `ls-files -z`, everything else at the fixed state) and reran the 14-case suite: exactly the
+new regression test goes red, with `scanned 0 file(s)` — right failure mode, not the repo_root-in-a-
+copy trap from instances sixteen/seventeen. Confirmed the regression test avoids that trap: it copies
+the script to `<fixture>/scripts/check-publishable.sh`, the same relative position under a real
+`git init`-ed repo, so `BASH_SOURCE`-based `repo_root` resolution correctly matches the git repo it
+queries.
 
-Nothing further outstanding on this block. → @architect
+**Binary files** — scan set is wider but the existing per-file `grep -Iq . "$f"` skip is unchanged and
+applies uniformly; planted a truncated binary file as untracked: scanned count rose, exit 0, no
+garbage matches, no crash.
+
+**Defect 2 fix verified.** `PLANTED_WORKERS_DEV_HOSTNAME` / `PLANTED_EMAIL` reconstruct via `.join()`
+to byte-identical values to the original literals (checked directly in `node`) — the fixture on disk
+is a genuine match, not a weakened one. Grepped the test file for the contiguous literals: absent,
+only split array fragments remain, so the checker no longer flags its own test. To confirm the tests
+still catch a real pattern-rule regression rather than merely not tripping the gate, neutered
+`workers_dev_regex` to a non-matching placeholder and reran: both the direct hostname test and the new
+regression test go red for the expected reason — restored, 14/14 green again.
+
+**Gates, reproduced first-party:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0
+PUBLISHABLE_EXIT:0 GATES_EXIT:0` via `make gates`, 224 tests.
+
+**Nothing else in the script warrants new distrust from this pair.** Identifier-list exclusion, the
+empty-scan-set guard, and the binary skip are unchanged and orthogonal to which files land in
+`files[]`. No new dependency, no suppression, no Makefile edit — diff stays confined to the two named
+files plus this DEVLOG.
+
+**Scope, carried forward:** still outside `publish-vault-as-private-site` — no task covers it, nothing
+ticked.
+
+**Verdict: Approve.**

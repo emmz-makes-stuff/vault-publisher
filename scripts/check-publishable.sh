@@ -35,9 +35,13 @@ if [ "$#" -gt 0 ]; then
     fi
   done
 else
+  # Tracked *and* untracked-but-not-ignored: a leak lands in a new file far
+  # more often than an existing one, and `git ls-files` alone is blind to
+  # anything not yet added. `--exclude-standard` still honours .gitignore,
+  # so `.publishable-identifiers` and node_modules stay out of the scan.
   while IFS= read -r -d '' f; do
     files+=("$f")
-  done < <(git -C "$repo_root" ls-files -z)
+  done < <(git -C "$repo_root" ls-files -co --exclude-standard -z)
 fi
 
 # The identifier list names the very things being protected; never scan it.

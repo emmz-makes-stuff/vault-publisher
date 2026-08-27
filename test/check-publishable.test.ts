@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, mkdir, copyFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -39,6 +39,16 @@ afterEach(async () => {
 // gate.
 const TRIMMED_PATH = "/usr/bin:/bin";
 
+// These fixture strings must be *real* matches against the pattern rules once
+// they reach disk — that's what the tests below exercise — but the checker
+// scans this repository's own source too (that's defect 1's fix), so the
+// literal, contiguous form must never sit in this file's bytes. Assembling
+// each one from fragments at runtime keeps the planted value real while
+// keeping the source clean; only the array elements are string literals, and
+// none of them alone is a hostname or an email address.
+const PLANTED_WORKERS_DEV_HOSTNAME = ["fictional-example", "workers", "dev"].join(".");
+const PLANTED_EMAIL = ["person", "example.com"].join("@");
+
 function run(
   args: string[],
   env: NodeJS.ProcessEnv = {},
@@ -73,7 +83,7 @@ describe("check-publishable.sh", () => {
   it("fails on a planted *.workers.dev hostname", async () => {
     await writeFile(
       path.join(scratchDir, "note.md"),
-      "the address is fictional-example.workers.dev\n",
+      `the address is ${PLANTED_WORKERS_DEV_HOSTNAME}\n`,
       "utf8",
     );
     const listPath = await writeIdentifierList(["FictionalClientName-Zephyr"]);
@@ -81,17 +91,17 @@ describe("check-publishable.sh", () => {
     const { status, stdout } = run([scratchDir], { VP_IDENTIFIERS: listPath });
 
     expect(status).not.toBe(0);
-    expect(stdout).toContain("fictional-example.workers.dev");
+    expect(stdout).toContain(PLANTED_WORKERS_DEV_HOSTNAME);
   });
 
   it("fails on a planted bare email address", async () => {
-    await writeFile(path.join(scratchDir, "note.md"), "contact person@example.com\n", "utf8");
+    await writeFile(path.join(scratchDir, "note.md"), `contact ${PLANTED_EMAIL}\n`, "utf8");
     const listPath = await writeIdentifierList(["FictionalClientName-Zephyr"]);
 
     const { status, stdout } = run([scratchDir], { VP_IDENTIFIERS: listPath });
 
     expect(status).not.toBe(0);
-    expect(stdout).toContain("person@example.com");
+    expect(stdout).toContain(PLANTED_EMAIL);
   });
 
   it("allows noreply@anthropic.com through the email pattern", async () => {
@@ -219,5 +229,47 @@ describe("check-publishable.sh", () => {
 
     expect(status).toBe(0);
     expect(stdout).toMatch(/scanned 2 file/);
+  });
+
+  it("catches a planted match in an untracked-but-not-ignored file (default scan set)", async () => {
+    // The default scan set is `git ls-files`-derived, and the script resolves
+    // its own repo root from its *own* path (BASH_SOURCE), not from cwd — so
+    // exercising "no args" needs a real git repository with a copy of the
+    // script inside it, not the vault-publisher checkout itself. This is the
+    // regression test for defect 1: a file that is new (never staged) but not
+    // gitignored must still be scanned by default, because a leak lands in a
+    // new file far more often than an existing one.
+    const fixtureRepo = path.join(scratchDir, "fixture-repo");
+    const fixtureScriptDir = path.join(fixtureRepo, "scripts");
+    await mkdir(fixtureScriptDir, { recursive: true });
+    const fixtureScriptPath = path.join(fixtureScriptDir, "check-publishable.sh");
+    await copyFile(scriptPath, fixtureScriptPath);
+    await chmod(fixtureScriptPath, 0o755);
+
+    const gitEnv = { ...process.env, PATH: TRIMMED_PATH };
+    spawnSync("git", ["init", "-q"], { cwd: fixtureRepo, env: gitEnv });
+
+    // Never staged, never gitignored — exactly the shape a brand-new leak
+    // takes before anyone remembers to `git add` it.
+    const untrackedPath = path.join(fixtureRepo, "new-note.md");
+    await writeFile(untrackedPath, `mentions ${PLANTED_WORKERS_DEV_HOSTNAME}\n`, "utf8");
+
+    const listPath = await writeIdentifierList(["FictionalClientName-Zephyr"]);
+    const merged: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: TRIMMED_PATH,
+      VP_IDENTIFIERS: listPath,
+    };
+    merged.PUBLISHABLE_LIST_OPTIONAL = undefined;
+
+    const result = spawnSync(fixtureScriptPath, [], {
+      encoding: "utf8",
+      cwd: fixtureRepo,
+      env: merged,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain(PLANTED_WORKERS_DEV_HOSTNAME);
+    expect(result.stdout).toContain("new-note.md");
   });
 });
