@@ -6314,6 +6314,446 @@ independent knowledge of where the real vault root is, because `--vault` defines
 guard is a fail-closed heuristic and `action.yml` pinning `--vault` to the workspace root is the
 durable half. §7 owns that.
 
+## 7. Distribution and deployment
+
+**[architect]** Base: d594629 — the composite action, the `v1` tag, the wrangler configuration, and
+the vault repository's publish workflow. This is where the publisher stops being a library with tests
+and becomes something another repository invokes.
+
+**[architect]** Section shape — most of §7 is not mine to run. `7.2` (tag, and resolve
+`@v1` from another repository), `7.3` (`wrangler deploy`), and `7.4`–`7.8` (the vault repo's workflow,
+the Cloudflare deploy token, the per-run bypass-hostname check) all need credentials and the vault
+repository, neither of which exists in this repo's reach. Per §4 those are Product Owner
+verifications: implement and self-test as far as possible, hand over a copy-pasteable check, wait for
+confirmation before ticking. Block A is therefore `7.1` plus the committed test vault §6 carried
+forward; everything after it is a handover.
+
+**[architect]** Product Owner decisions, 2026-08-27 — the two questions §6 parked about the committed
+vault:
+
+- **It sits alongside the existing fixtures**, additive. `test/fixtures/`'s fifteen vaults keep their
+  tests unchanged. Folding five of them into one changes what those tests exercise — several were
+  carved to reproduce a single finding — so consolidation is not part of this block and is not
+  assumed by it.
+- **It lives at `test-vault/`, repo root**, not under `test/fixtures/`. It is the standing vault, not
+  one more per-block fixture, and the layout should say so.
+
+**[architect]** Block A brief — `7.1` + the committed test vault → @worker
+
+**Tasks: `7.1` only** (plus the test vault §6 carried forward, which has no task number of its own —
+it is Emmz's 2026-08-27 call, recorded above). `7.2`–`7.8` are Product Owner verifications and are
+not in this block; do not start them, and do not write anything into a vault repository.
+
+**Deliverable 1 — `test-vault/` at the repository root, committed.**
+
+The standing vault for §7, §8 and future testing. **Additive**: every existing fixture under
+`test/fixtures/` keeps its own vault and its tests are not repointed. Do not consolidate.
+
+- **Nothing confidential, and nothing that could be mistaken for it.** Invented notes only. No source
+  content, no client names, no real email addresses, no real hostnames.
+- Shaped like the real thing: nested folders at least two deep, frontmatter with `title`, wikilinks
+  that resolve, at least one that **does not** resolve, at least one **ambiguous** one, a Bases query
+  block, a callout, a table, an embed.
+- Exercises the exclusion floor from `src/selection.ts:10` — a `Private/`, a `Journal/`, an
+  `.obsidian/`, a `.claude/` and a root `CLAUDE.md`, each holding a note with a **unique grep-able
+  marker string** in its body so a leak is provable by search rather than by eyeballing a tree.
+  ⚠️ The fixture `CLAUDE.md` must contain inert fixture prose only — no instructions, no directives.
+  A `CLAUDE.md` inside this repository is live agent context for anyone working in that directory.
+- A `test-vault/publish.config.yaml` selecting a **subset**: some folders and notes published, others
+  present in the vault and deliberately unselected. The unselected ones get grep-able markers too.
+- **Prettier**: follow the existing precedent — fixtures are formatted, and only files whose exact
+  bytes matter are listed in `.prettierignore`. If you add any, say which and why in this thread.
+
+**Deliverable 2 — `action.yml`, composite, at the repository root.**
+
+- Composite action per `design.md` §3 and ADR-0003: runs `npm ci` and the CLI from
+  `$GITHUB_ACTION_PATH`. **No committed `dist/`** — `dist/` is gitignored and stays that way. The
+  entry point is `src/index.ts`, run directly by Node (type stripping); no build step is needed and
+  `test/index.test.ts:10` is the precedent for that invocation.
+- **`--vault` is pinned to `$GITHUB_WORKSPACE`, hardcoded.** This is decision **S6-3**, the durable
+  half of the exclusion-floor guarantee: the code guard is a fail-closed heuristic and cannot be more
+  than that. **Expose no input a caller can use to reparent the vault root** — not named `vault`, not
+  named `path`, not `working-directory`, not by any other spelling. If you find yourself wanting one
+  to make something work, stop and post here instead.
+- Inputs are `config` and `output` only, both resolved **relative to `$GITHUB_WORKSPACE`**, with
+  sensible defaults. Node comes from `actions/setup-node` pinned to the `.nvmrc` version.
+
+**Deliverable 3 — a workflow in this repository that consumes the action.**
+
+`7.1`'s verify clause. The action pins the vault to the workspace root, so this repository cannot
+simply point it at a subdirectory — that is the whole point of S6-3. The shape:
+
+1. `actions/checkout` with `path: publisher`
+2. stage the vault at the workspace root: `cp -R publisher/test-vault/. .`
+3. `uses: ./publisher`
+4. assert on the output directory
+
+Step 2 leaves `publisher/` sitting inside what the action now treats as the vault. **That is
+deliberate and you should assert on it**: selection is allow-list, so nothing under `publisher/` can
+publish, and proving that is worth more than a tidy workspace. Assert the expected pages exist **and**
+that none of the floor markers, none of the unselected markers, and nothing from `publisher/` appears
+anywhere in the output — `grep -r` over the output directory, exit non-zero on a hit.
+
+**Deliverable 4 — a local test that observes the vault.**
+
+`test-vault/` must not be scaffolding that only a CI run touches. Add a vitest test that publishes it
+and asserts, over the real output: the selected set is exactly what the config names; each floor
+marker and each unselected marker is absent from every emitted file; the unresolved wikilink produces
+a `[WARNING]`; the Bases block is dropped and warned. This is what stops the vault rotting.
+
+**Done-gates.**
+
+- `make build` → `BUILD_EXIT:0`, `make test` → `TEST_EXIT:0`, `make format` → `FORMAT_EXIT:0`,
+  `make lint` → `LINT_EXIT:0`, `make validate` → `VALIDATE_EXIT:0`. Read the exit line, not the
+  output. The format gate fails on this DEVLOG at every block boundary — `make format-fix`, then
+  `make format`.
+- **Prove your checks can fail.** Fifteen instances in this change so far, four of them added by
+  remediations. Specifically for this block: delete a floor folder's exclusion — or point the leak
+  grep at a directory it was never given — and show the named test going **red**, then restore.
+  A grep that ran over an empty or wrong directory reports clean; `echo` the path and the file count
+  it actually examined. Report the ablation and its result in this thread.
+- **Do not claim `7.1` is verified.** Its verify clause needs a real Actions run, which neither of us
+  can observe from here. Build it, test the equivalent locally, and hand it back — Emmz runs the
+  workflow and confirms before anything is ticked. Say plainly in your report what you did and did
+  not observe.
+
+You do not commit and you do not tick boxes. Post progress here as you go, then → @reviewer.
+
+**[worker]** Block A built — `test-vault/`, `action.yml`, `.github/workflows/test-action.yml`,
+`test/test-vault.test.ts`. Two blockers surfaced, one structural and one a design contradiction I
+resolved provisionally; both need your attention.
+
+**Blocker 1 — the fixture `CLAUDE.md` and a `.claude/` note cannot be created by a worker.** The
+write guard refuses any file whose basename is `CLAUDE.md` or whose path contains `.claude/`,
+**anywhere in the tree**, not just at repo root — confirmed by trying both `Write` and a `cat` on the
+guard script itself, both blocked with the same boundary message. `test/fixtures/warnings-vault/CLAUDE.md`
+already exists in the repo, so this file class has been created before — just not by a worker under
+this guard. **I need you to add two files** (I can wire everything else around them once they exist):
+
+- `test-vault/CLAUDE.md` — inert fixture prose only, no instructions, ending with a line
+  `Marker: VP-TESTVAULT-FLOOR-ROOTCLAUDE-9f2k`.
+- `test-vault/.claude/Note.md` — any invented note with frontmatter `title:` and a line
+  `Marker: VP-TESTVAULT-FLOOR-DOTCLAUDE-3m8q`.
+
+Once they exist I'll add both to `publish.config.yaml`'s explicit (refused) selection list, to
+`test/test-vault.test.ts`'s `FLOOR_MARKERS`, and to the workflow's marker array — all three already
+written so this is a one-line addition each, not a restructure.
+
+**Blocker 2 — `action.yml`'s `output` input can never default to a path "relative to `$GITHUB_WORKSPACE`."**
+`--vault` is pinned to `$GITHUB_WORKSPACE` (S6-3), and `writer.ts`'s `OutputDirectoryWithinVaultError`
+unconditionally refuses any output directory inside the vault root — reproduced locally: `--output
+$GITHUB_WORKSPACE/dist` against `--vault $GITHUB_WORKSPACE` exits 1 every time, refusing before
+writing anything. Every path under the workspace is inside the vault once S6-3 pins `--vault` there,
+so a workspace-relative default can never succeed — this isn't a corner case, it's every default run.
+
+**What I did, flagged as provisional, not settled:** `output` now defaults to empty; the publish step
+falls back to `"$RUNNER_TEMP/vault-publisher-site"` (outside the workspace) when the input is unset,
+and only resolves relative to the workspace when the caller supplies a value explicitly. Added an
+`output-dir` action output so a caller (7.3's `wrangler deploy` step, eventually) can read back
+whatever the run actually resolved to, since it can't compute the fallback path itself. I verified
+this mechanism end to end by hand — a simulated workspace/`RUNNER_TEMP` pair outside it, `node
+src/index.ts` invoked exactly as the composite step does — exit 0, exactly the expected 7 files, no
+marker leak. **I have not run this in real GitHub Actions** — see the not-verified note below. If you
+want a different resolution (e.g. `config`/`output` both required with no default, or a different
+default location), the fix is contained to `action.yml`'s `Publish` step.
+
+**Deliverable 1 — `test-vault/`.** Three of five floor entries built and proven: `Journal/`,
+`Private/`, `.obsidian/` (with an actual `.md` file inside it — `workspace.json` alone would never be
+scanned as a selection candidate, so a marker there would have proven nothing). `publish.config.yaml`
+deliberately **names** `Journal`, `Private`, `.obsidian` as folders to publish, alongside the real
+selected set — an earlier draft left them merely unselected-and-also-floored, which I caught before
+committing to it: with a config that never asks for them, deleting them from `EXCLUSION_FLOOR` doesn't
+redden anything, because allow-list selection alone already keeps them out. Naming them in config and
+watching the floor refuse them anyway is what `note-selection`'s "SHALL NOT be published under any
+configuration" actually asks for. Two folders published for real (`Handbook`, two folders deep at
+`Handbook/Policies/`, `Handbook/Extras/`, `Handbook/More/`), one note (`Index.md`), one unresolved
+wikilink, one ambiguous wikilink (two published notes both named `Duplicate Note.md`, on purpose), one
+Bases block, one callout, one table, one embed of an absent attachment. `Team/` and `Archive/` hold
+present-but-unselected notes with their own markers. No `.prettierignore` additions — every fixture
+formats cleanly as-is.
+
+**Deliverable 2 — `action.yml`.** Composite, `npm ci` + `node src/index.ts` from
+`$GITHUB_ACTION_PATH`, no `dist/`. `--vault` hardcoded to `${{ github.workspace }}`, no input of any
+spelling reparents it. `config` defaults to `publish.config.yaml`, resolved against the workspace.
+`output` — see blocker 2. Node via `actions/setup-node` reading `${{ github.action_path }}/.nvmrc`.
+
+**Deliverable 3 — `.github/workflows/test-action.yml`.** `actions/checkout` to `path: publisher`,
+stage `test-vault/` at the workspace root, `uses: ./publisher` with no `output` override (exercising
+the default), then two assertion steps: an exact sorted file-set match against `dist` (this single
+check proves both "everything selected is present" and "nothing from `publisher/` snuck in," since
+`publisher/` sits inside the vault tree by construction and selection never names anything under it),
+then a marker-leak grep over every remaining marker, with a `file_count` guard so scanning nothing
+can't read as clean. **Not run in real Actions — see the note below.**
+
+**Deliverable 4 — `test/test-vault.test.ts`.** Seven tests, all passing, over a real spawned CLI run
+against the committed vault: exact file-set match; the floor refuses all three explicitly-named
+entries with the exact `[WARNING]` line per entry; no floor marker anywhere in the output; no
+unselected marker anywhere in the output; the unresolved wikilink warns and renders as plain text
+(asserted against the exact paragraph, not "no anchor contains this text anywhere" — the explorer nav
+legitimately links to both `Duplicate Note` pages by title, so a page-wide anchor search would have
+been a false-negative magnet); the ambiguous wikilink, same treatment; the Bases block warns and
+leaves no trace.
+
+**Ablations — proving the checks can fail, not just pass.**
+
+- Removed `"Journal/"` from `EXCLUSION_FLOOR`, ran the CLI by hand against the vault: exit 0, and
+  `Journal/2026-01-05.html` appeared in the output carrying `VP-TESTVAULT-FLOOR-JOURNAL-5r9x` — the
+  leak the marker-absence test exists to catch, actually caught. Restored, re-ran, marker gone again,
+  `git diff` on `src/selection.ts` clean.
+- Simulated the workflow's own leak-grep step against a real spawned publish, then injected
+  `VP-TESTVAULT-FLOOR-PRIVATE-2w6t` into an already-published file and re-ran the same grep: it found
+  it, exit 0 from `grep -l` (would fail the workflow step). Restored the file byte-for-byte.
+- Pointed the same grep at a directory that was never given any output (an empty scratch directory):
+  `file_count` came back `0`, and the workflow's own `file_count -eq 0` guard is what catches that
+  shape of vacuous scan — confirmed it fires rather than silently reporting "no markers found."
+
+**Gates**, this repo's tree, after all of the above:
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. 210 tests, all
+green (203 pre-existing + 7 new).
+
+**Not verified — do not tick `7.1` on this.** I did not and could not run a real GitHub Actions job:
+no Actions runner, no way to observe `uses: ./publisher` resolve a composite action from this
+checkout, no way to confirm `actions/setup-node`'s `node-version-file` reads `.nvmrc` the way I expect,
+no way to confirm the workflow trigger fires as written. What I verified instead: the exact sequence of
+commands the composite action's steps run, executed by hand against a simulated
+workspace/`$RUNNER_TEMP` pair outside it, in this environment — same `node src/index.ts` invocation,
+same arguments, same assertion scripts, byte-for-byte. That is evidence the mechanism is sound, not a
+substitute for the real run. Copy-pasteable check once this is pushed: trigger
+`.github/workflows/test-action.yml` (push to `main` or open a PR) and confirm the job goes green.
+
+Blocked on blockers 1 and 2 above — not handing off to @reviewer yet. Blocker 1 needs two files only
+you can create; blocker 2 needs a decision on whether my provisional resolution stands. → @architect
+
+**[architect]** Both blockers answered → @worker. Resume and finish the block.
+
+**Blocker 1 — done, the two files exist.** `test-vault/CLAUDE.md` and `test-vault/.claude/Note.md`
+are written, carrying `VP-TESTVAULT-FLOOR-ROOTCLAUDE-9f2k` and `VP-TESTVAULT-FLOOR-DOTCLAUDE-3m8q`
+respectively. The guard was right to stop you and you were right to stop rather than route around it.
+Wire them in as you described: named in `publish.config.yaml`'s refused selection, added to
+`FLOOR_MARKERS`, added to the workflow's marker array. That takes the vault to five of five floor
+entries, all **named in config and refused anyway**, which is the shape `note-selection` asks for.
+
+Note `.prettierignore` already carries `CLAUDE.md` and `.claude/`, so these two skip the format gate.
+That is pre-existing and fine — neither is byte-asserted.
+
+**Blocker 2 — your resolution stands, with one amendment.** You are right and my brief was wrong:
+once S6-3 pins `--vault` to `$GITHUB_WORKSPACE`, every path under the workspace is inside the vault,
+so `OutputDirectoryWithinVaultError` refuses a workspace-relative output on **every** default run.
+That is not a corner case, and "relative to `$GITHUB_WORKSPACE`" was an instruction that could not be
+carried out. Defaulting to `$RUNNER_TEMP/vault-publisher-site` is correct, and the `output-dir` action
+output is the right way to hand the resolved path to `7.3`'s deploy step.
+
+It is also better than what I asked for, for a reason neither of us wrote down: `7.7` requires the
+built site never be committed to either repository and `git status` clean after a publish. An output
+directory that is structurally **outside the workspace** makes that true by construction rather than
+by `.gitignore` discipline. Record that here so `7.7` inherits the argument.
+
+The amendment: **do not resolve a caller-supplied `output` against the workspace either.** Under S6-3
+a supplied relative path lands inside the vault and is refused exactly like the default was, so
+resolving it that way builds a second guaranteed failure for anyone who uses the input. Take a
+supplied value **verbatim** — the caller's job is to give an absolute path outside the workspace, and
+the write-side guard fails closed if they don't. Also **fail loudly if `RUNNER_TEMP` is unset** rather
+than falling back to a bare `/vault-publisher-site`; an unset variable expanding to a root-level path
+is the kind of default that goes wrong quietly.
+
+**On your ablation of the config-naming.** Catching that naming `Journal`/`Private`/`.obsidian` in
+config is what makes the floor's removal observable — that deleting them from `EXCLUSION_FLOOR`
+reddens nothing when allow-list selection alone already keeps them out — is the sharpest thing in this
+block. That is the eleventh instance's lesson applied before the fact rather than after it: a check
+over territory the fixture never sends anything into cannot fail. Noted for the section review.
+
+**Still not verified, and stays that way:** `7.1`'s verify clause needs a real Actions run. Your
+hand-executed sequence is evidence the mechanism is sound and I am recording it as that, not as the
+verification. Emmz runs the workflow; nothing is ticked before that.
+
+When the wiring is in and the gates are green again — including a re-run of the floor ablation now
+that five entries are covered rather than three — hand off to @reviewer.
+
+**[worker]** Both blockers wired in, block A finished.
+
+- `publish.config.yaml` now names all five floor entries (`Journal`, `Private`, `.obsidian`,
+  `.claude`, `CLAUDE.md`) — a manual run confirms all five refusal warnings fire and the output set is
+  unchanged (the same seven files as before).
+- `test/test-vault.test.ts`: `FLOOR_MARKERS` carries all five markers; the config-refusal test asserts
+  all five `[WARNING]` lines; doc comment updated to say five of five. 7 tests, all passing.
+- `.github/workflows/test-action.yml`'s marker array carries all five.
+- `action.yml`, both amendments applied. A supplied `output` is now taken **verbatim** — no workspace
+  join at all, not even for a caller-supplied value; resolving it against the workspace would just be
+  a second guaranteed failure under S6-3, as you said. `RUNNER_TEMP` unset now fails loudly, before
+  `node` ever runs, with a clean stderr message — checked with `${RUNNER_TEMP:-}` and an explicit exit,
+  not a silent `/vault-publisher-site` fallback.
+- Re-verified the full mechanism by hand, three cases, since the fallback logic changed shape:
+  (1) default, `RUNNER_TEMP` set → exit 0, exactly the 7 expected files at
+  `$RUNNER_TEMP/vault-publisher-site`; (2) `RUNNER_TEMP` unset, no `output` given → the script's own
+  guard fires and exits 1 before `node` is invoked at all; (3) an absolute `output` supplied → taken
+  verbatim, exit 0, written to exactly that path, no workspace prefix anywhere in it. Still hand-run,
+  still not a real Actions job — see below.
+- **Floor ablation, re-run with all five entries.** Emptied `EXCLUSION_FLOOR` to `[]`, ran the CLI by
+  hand against the vault: all five markers leaked into the output
+  (`Journal/2026-01-05.html`, `Private/Confidential Client.html`, `.obsidian/Plugin Note.html`,
+  `.claude/Note.html`, `CLAUDE.html` all appeared, each carrying its marker). Ran
+  `test/test-vault.test.ts` in the same ablated state: 3 of 7 tests failed — the exact-file-set match,
+  the five-warnings assertion, and the marker-absence test — for the reason you'd expect, not a
+  crash or a vacuous pass. Restored `EXCLUSION_FLOOR`, `git diff src/selection.ts` clean, re-ran: 7/7
+  green again.
+
+**Gates, full set, after all of the above:**
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`. 210 tests, all
+green.
+
+**Still not verified — unchanged from my last post, restating per your instruction not to claim it.**
+No real GitHub Actions run was or could be observed from here. Everything above is a hand-executed
+reproduction of the composite action's exact command sequence against a simulated
+workspace/`$RUNNER_TEMP` pair, not the real thing. Copy-pasteable check once this is pushed: trigger
+`.github/workflows/test-action.yml` (push to `main` or open a PR) and confirm the job goes green —
+that is `7.1`'s actual verification, still outstanding.
+
+Working tree: `test-vault/`, `action.yml`, `.github/workflows/test-action.yml`,
+`test/test-vault.test.ts` all untracked; this DEVLOG modified. No other file touched — `git status`
+confirms `src/selection.ts` and everything else is clean. No commit, no box ticked.
+
+→ @reviewer
+
+**[reviewer]** Block A (`7.1` + committed test vault) — **Approve**.
+
+Audited `action.yml`, `.github/workflows/test-action.yml`, `test-vault/` (all 12 fixture files, both
+floor and unselected), `test/test-vault.test.ts`, and re-ran everything myself rather than taking the
+report on trust.
+
+**What I verified directly, not just read:**
+
+- `make gates` on the full tree: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0
+GATES_EXIT:0`, 210 tests green, matching the worker's report exactly.
+- **Re-ran the floor ablation myself**, independent of the worker's own report: commented out the
+  `"Private/"` entry in `EXCLUSION_FLOOR` and reran `test/test-vault.test.ts`. 3 of 7 tests went red —
+  the exact-file-set match, the five-warnings assertion, and (the one that matters most)
+  `never writes any exclusion-floor marker`, which failed with the marker's own leaked HTML in the
+  assertion diff (`Private/Confidential Client.html`, `VP-TESTVAULT-FLOOR-PRIVATE-2w6t` present in
+  the received content). Restored, reran, 7/7 green, `git diff src/selection.ts` clean. The check
+  can fail, and fails for the right reason — not a crash, not a vacuous pass.
+- `git check-ignore -v` on `test-vault/CLAUDE.md`, `test-vault/.claude/Note.md`,
+  `test-vault/.obsidian/workspace.json` — none ignored (exit 1). I checked this specifically because
+  `.gitignore` has a _different_ project's `.claude/.dmons-tripwire/`-scoped rule elsewhere in the
+  tree and I wanted to be sure a broader rule wasn't silently swallowing the two fixture files the
+  worker needed the architect's help to create. It isn't — both are trackable.
+- Confirmed the DEVLOG diff for this block is append-only (`git diff HEAD -- DEVLOG.md` shows no
+  removed lines) and `tasks.md` is untouched — matches the "no box ticked" claim.
+- Read all 12 `test-vault/` files end to end. Nothing but invented content — no source material, no
+  real names, hostnames, or addresses anywhere, including the two files Emmz wrote directly
+  (`CLAUDE.md`, `.claude/Note.md` — both inert fixture prose, no directives).
+- Grepped the four new/changed files for `any`, `as <Type>`, `@ts-ignore`, `@ts-expect-error`,
+  `eslint-disable` — none present.
+
+**S6-3 — `action.yml:9-19,35`: `--vault` is hardcoded to `${{ github.workspace }}`. No input named
+`vault`, `path`, `working-directory`, or anything else can reparent it — confirmed by reading every
+line of the `inputs:` block; there are exactly two inputs, `config` and `output`, neither of which
+touches `--vault`.** Satisfied.
+
+**Blocker 2's resolution — verified sound, not just documented.** `writer.ts`'s
+`OutputDirectoryWithinVaultError` genuinely does make every workspace-relative output path fail once
+`--vault` is pinned to the workspace, so a workspace-relative default (the original brief) could never
+succeed — the worker was right to escalate rather than build something guaranteed to fail on first
+use. The shipped resolution — unset `output` defaults to `$RUNNER_TEMP/vault-publisher-site` outside
+the workspace, `RUNNER_TEMP` unset fails loudly before `node` runs
+(`action.yml:52-56`), a supplied `output` is taken verbatim with no workspace join at all
+(`action.yml:58-59`) — matches decision S6-3's spirit (no path that reparents or defeats the floor)
+and the architect's amendment exactly. `--config`, the one caller-controlled path still resolved
+inside the vault, is joined by plain string concatenation (`action.yml:60`,
+`"${{ github.workspace }}/${{ inputs.config }}"`) rather than a normalising join — a `config` input
+containing `../` could in principle walk outside the workspace. I'm not blocking on this: `config` is
+supposed to live inside the caller's own repo and the caller already controls the workflow file that
+supplies it, so this isn't the floor-defeat shape S6-3 is guarding against. Flagging as an
+architectural note below in case `design.md` wants it tightened later.
+
+**Deliverable 3 — the staging step's soundness.** `cp -R publisher/test-vault/. .` leaves `publisher/`
+(the full publisher checkout, including `action.yml`, `src/`, `node_modules` after `npm ci`, etc.)
+sitting inside what the action then treats as the vault root. `publish.config.yaml` names only
+`Handbook` (folder) and `Index.md`/`CLAUDE.md` (notes) — nothing under `publisher/` — so the exact
+sorted file-set match in "Assert the output holds exactly the expected pages, nothing else" is a real
+test of allow-list selection under exactly the condition where a leak would be easiest: a directory
+full of `.md` files (this repo's own docs, `openspec/changes/**/*.md`, etc.) sitting right there in
+the scanned tree, never selected, never floored, and excluded purely because nothing named it. That is
+a stronger proof than the marker grep alone and I agree with the brief's judgment that this is worth
+asserting deliberately rather than tidying away.
+
+**Deliverable 4 — `test/test-vault.test.ts` is genuine, not scaffolding.** Every assertion is against
+exact strings (`[WARNING]` lines, marker substrings, the sentence the ambiguous-wikilink degradation
+produces) rather than shape ("output is non-empty"). The ambiguous-wikilink test in particular
+(`toContain("share this name: Duplicate Note.</p>")`) is deliberately narrow because the explorer nav
+legitimately anchors both `Duplicate Note` pages by title — a page-wide "no anchor contains this text"
+check would have been a false-negative magnet exactly as the worker's comment says, and I checked that
+reasoning holds by reading the rendered `index.html` from a real run: the nav does carry two
+`<a href=".../Duplicate%20Note.html">` anchors, so a looser check would indeed have passed regardless
+of whether degradation worked.
+
+**Blockers: none.**
+
+**Nits:**
+
+- `action.yml:63` — `echo "output-dir=$output_dir" >> "$GITHUB_OUTPUT"` is unquoted-safe only because
+  `output_dir` cannot contain a newline in practice; if `RUNNER_TEMP` or a supplied `output` ever
+  contained a space it would still work (multi-line `GITHUB_OUTPUT` syntax isn't needed for this),
+  so this is a non-issue, not a real nit — noting only because I checked it deliberately.
+
+**Architectural notes for the section review:**
+
+- `--config`'s string-concatenation join (`action.yml:60`) doesn't normalise `../`, unlike `--vault`
+  and `--output` which are now either hardcoded or taken verbatim. Not a floor-defeat under S6-3 (the
+  caller already controls the config value), but worth a line in `design.md` if a future caller ever
+  takes `config` from something less trusted than its own workflow file.
+- The worker's ablation methodology — naming every floor entry in `publish.config.yaml` so its removal
+  from `EXCLUSION_FLOOR` is actually observable, rather than leaving floor folders merely unselected —
+  is worth calling out to the supervisor as the pattern the rest of the suite should follow. Section
+  6's `EXCLUSION_FLOOR` unit tests are worth a spot-check against this same standard: does deleting an
+  entry there redden a test that never named it in a config, the same failure mode this block just
+  fixed for itself?
+
+**[architect]** Block A closed — committed, **nothing ticked**.
+
+Reviewer `Approve`, and it verified rather than accepted: it re-ran `make gates` itself, re-ran the
+floor ablation on a different entry than the worker used (`"Private/"` rather than `"Journal/"`) and
+watched three tests redden **on an observed marker leak** rather than on a crash, confirmed the two
+files I wrote are not gitignored, confirmed `tasks.md` is untouched, and read all twelve fixture notes
+end to end for confidentiality. That is the right shape of audit for this block.
+
+Gates re-run first-party, after `make format-fix` (the DEVLOG tripped the format gate again — thirteen
+for thirteen):
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`, 210 tests, 21 files.
+
+**No box is ticked and `7.1` stays open.** Its verify clause is "a workflow in this repo consumes the
+action against a fixture vault and produces output", and no Actions run has been observed — not by the
+worker, not by the reviewer, not by me. What exists is a hand-executed reproduction of the composite
+action's exact command sequence, which is evidence the mechanism is sound and is **not** the
+verification. Ticking on that would be the sixteenth instance: a green claim over territory nothing
+examined. The block commits as `feat` with the work in it and the box open; Emmz runs the workflow and
+`7.1` gets ticked on the result.
+
+**Handover to the Product Owner — the check for `7.1`:** push this branch and confirm
+`.github/workflows/test-action.yml` goes green.
+
+```
+git push -u origin change/publish-vault-as-private-site
+gh run watch $(gh run list --workflow=test-action.yml --branch=change/publish-vault-as-private-site \
+  --limit=1 --json databaseId --jq '.[0].databaseId')
+```
+
+Expect: the job checks out the publisher to `publisher/`, stages `test-vault/` at the workspace root,
+runs `uses: ./publisher`, and both assertion steps pass — the exact sorted file-set match against the
+output directory, and the five-marker leak grep with its `file_count` guard. **A green run is the
+verification; a green run in which the assertion steps were skipped is not**, so check the step list,
+not just the job's tick.
+
+**Two notes carried to the section review, neither blocking** (reviewer's, and I agree with both):
+
+- `action.yml`'s `--config` input is joined by string concatenation rather than a normalising path
+  join. Not a floor defeat under S6-3 — the caller controls that value and the config cannot name its
+  way past the floor regardless — but it is the one place in the action where a path is assembled by
+  hand, and it should be tightened.
+- The worker's **"name every floor entry in config so its removal is observable"** pattern is worth
+  turning back on §6's own `EXCLUSION_FLOOR` unit tests. If any of those assert over a config that
+  never asks for the floored entry, they cannot fail the way they appear to — allow-list selection
+  alone would keep it out. That is the eleventh instance's shape and it is worth one pass.
+
 ## NEXT
 
 **Sections 1–6 are closed** (supervisor `Approve` on each). **45/59 tasks.** Next is **section 7 —
