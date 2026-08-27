@@ -300,10 +300,7 @@ describe("CLI entry point — 6.3 util.parseArgs surface", () => {
     expect(result.stdout).toContain("usage: vault-publisher");
   });
 
-  it("exits non-zero with a clean message and no stack trace when --output is missing", async () => {
-    const outputDir = mkdtempSync(path.join(tmpdir(), "vault-publisher-missing-output-"));
-    createdOutputDirs.push(outputDir);
-
+  it("exits non-zero with a clean message and no stack trace when --output is missing", () => {
     const result = runCliRawArgs([
       "--vault",
       path.dirname(integrationVaultConfigPath),
@@ -316,9 +313,6 @@ describe("CLI entry point — 6.3 util.parseArgs surface", () => {
     expect(result.stderr).toContain("--output");
     const lines = result.stderr.trim().split("\n");
     expect(lines.some((line) => /^\s*at /.test(line))).toBe(false);
-    // Proves the run never reached publishSite, not merely that it reported
-    // an error while still writing something.
-    await expect(readFile(path.join(outputDir, "index.html"), "utf8")).rejects.toThrow();
   });
 
   it("exits non-zero with a clean message and no stack trace when --vault is missing", async () => {
@@ -379,5 +373,56 @@ describe("CLI entry point — 6.3 util.parseArgs surface", () => {
     expect(result.status).not.toBe(0);
     expect(result.stdout).toBe("");
     expect(result.stderr).not.toBe("");
+  });
+});
+
+const vaultRootFloorFixtureRoot = path.join(repoRoot, "test", "fixtures", "vault-root-floor");
+const reparentedIntoPrivateConfigPath = path.join(
+  vaultRootFloorFixtureRoot,
+  "reparented-into-private.config.yaml",
+);
+const nestedHandbookConfigPath = path.join(
+  vaultRootFloorFixtureRoot,
+  "nested-handbook.config.yaml",
+);
+
+describe("CLI entry point — --vault reparented past the exclusion floor", () => {
+  let outputDir: string;
+
+  beforeEach(async () => {
+    outputDir = await mkdtemp(path.join(tmpdir(), "vault-publisher-floor-root-"));
+  });
+
+  afterEach(async () => {
+    await rm(outputDir, { recursive: true, force: true });
+  });
+
+  it("refuses a --vault whose resolved path has a floor-folder segment, and publishes nothing", async () => {
+    // Pointing --vault at .../Private reclassifies "Confidential Client.md"
+    // as a top-level note the config can name directly, unless the floor
+    // segment in --vault's own path is caught before selection ever runs.
+    const result = runCliWithOutput(
+      reparentedIntoPrivateConfigPath,
+      outputDir,
+      path.join(vaultRootFloorFixtureRoot, "Private"),
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("--vault");
+    await expect(
+      readFile(path.join(outputDir, "Confidential Client.html"), "utf8"),
+    ).rejects.toThrow();
+  });
+
+  it("still publishes when --vault names a legitimate nested subfolder with no floor segment", async () => {
+    const result = runCliWithOutput(
+      nestedHandbookConfigPath,
+      outputDir,
+      path.join(vaultRootFloorFixtureRoot, "Handbook"),
+    );
+
+    expect(result.status).toBe(0);
+    const html = await readFile(path.join(outputDir, "Article.html"), "utf8");
+    expect(html).toContain("Article");
   });
 });
