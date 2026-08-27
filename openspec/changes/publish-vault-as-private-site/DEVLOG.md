@@ -7117,6 +7117,52 @@ verification requiring the `v1` tag, Cloudflare credentials, or the vault reposi
 review for `## 7.` runs when the section's last block lands, not now. Handover list going to Emmz
 next.
 
+**[architect]** `7.2` **verified and ticked** — `v1` resolves and runs from another repository.
+
+**It did not, at first.** The tag was cut on `main` while every commit of this change lived on
+`change/publish-vault-as-private-site`, unmerged. `main` held two commits — the initial scaffolding and
+a docs PR — so `v1` pointed at a tree with no `action.yml` and no `src/`. The tag existed, `git`
+resolved the ref, and `uses: …@v1` would have failed with "action.yml not found". That is the sixteenth
+instance's shape moved into the release process: **a green-looking signal over an empty target.** My
+handover instruction caused it — I said "tag on `main`" without checking the branch had ever reached
+`main`.
+
+`7.2`'s verify clause is exactly the instrument that catches it, and it only catches it if read
+literally: _"verify `uses: emmz-makes-stuff/vault-publisher@v1` resolves **from another repository**."_
+Confirming the tag exists is not that check. Two green `test-action.yml` runs did not constitute it
+either — both use `uses: ./publisher`, a local path, which exercises the action but never the tag.
+
+**Resolution.** PR #2 merged to `main` as `cfc7704` — a **merge commit**, not a squash: the per-block
+commits are this change's durable record of how it was built and collapsing them would destroy it.
+`v1` deleted (was `35f73c9`) and recreated on `cfc7704`; `git ls-tree v1` confirms `action.yml` is
+present at the tag.
+
+**The evidence for the tick**, from a workflow in a separate repository (`publisher-test`):
+
+```
+node "/home/runner/work/_actions/emmz-makes-stuff/vault-publisher/v1/src/index.ts" \
+  --vault "/home/runner/work/publisher-test/publisher-test" ...
+cannot read configuration file: /home/runner/work/publisher-test/publisher-test/publish.config.yaml
+```
+
+The runner downloaded the action **from the tag** into `_actions/…/v1/` and ran it against a foreign
+workspace. It reached `Read the pinned Node version`, `Set up Node` (24.19.0 from `.nvmrc`), `npm ci`
+and `Publish`, failing only for want of a `publish.config.yaml` in that repo — the expected failure,
+and a **stronger** signal than a green job would have been: it proves the action resolved, installed
+and executed, and failed on the one thing genuinely absent.
+
+**A third real run, for free.** The merge to `main` fired `test-action.yml` on its
+`push: branches: [main]` trigger and passed, with both assertion steps `success` rather than skipped
+(step conclusions checked, not just the job's tick). The first green run was `pull_request` from a
+branch checkout; this one proves the same behaviour from the state `@v1` now points at.
+
+**Parked for the section review — `actions/setup-node@v4` and `actions/checkout@v4` are two majors
+behind.** Both are at `v7` and declare `using: node24`; `v4` declares `node20`, which the runner is
+deprecating — hence the warning on every run. It is emitted about `setup-node` itself, not about
+`.nvmrc` or the Node running the CLI; our composite action declares no JS runtime at all. Harmless
+today, a hard failure when node20 support is removed. No task covers it, so it is not being folded
+into `7.3`.
+
 ## NEXT
 
 **Sections 1–6 are closed** (supervisor `Approve` on each). **45/59 tasks.** Next is **section 7 —
