@@ -7,10 +7,16 @@ import { parseFrontmatter } from "./frontmatter.ts";
 import { buildNavigationTree } from "./navigation.ts";
 import { renderPage } from "./page.ts";
 import { renderNoteToHast } from "./pipeline.ts";
-import { isEntryWithheldByFloor, listVaultNotes, resolveSelection } from "./selection.ts";
+import {
+  isEntryWithheldByFloor,
+  listVaultNotes,
+  pathContainsFloorFolderSegment,
+  resolveSelection,
+  VaultRootWithheldByFloorError,
+} from "./selection.ts";
 import { reportWarnings, WarningCollector } from "./warnings.ts";
 import { buildNoteIndex, VAULT_ROOT_INDEX_NOTE } from "./wikilinks.ts";
-import { writeSite, type RenderedPage } from "./writer.ts";
+import { resolveRealOrNaivePath, writeSite, type RenderedPage } from "./writer.ts";
 
 const USAGE =
   "usage: vault-publisher --vault <path> --config <path> --output <path>\n" +
@@ -73,6 +79,29 @@ function parseCliArgs(argv: readonly string[]): ParsedArgs | undefined {
 }
 
 /**
+ * Refuses a `--vault` whose own resolved path has a floor-folder segment
+ * (`--vault <vault>/Private`, `--vault <vault>/Journal/2026`) — the
+ * exclusion floor matches path segments relative to the vault root, so
+ * re-rooting past a floor folder would reclassify everything it withholds
+ * as ordinary top-level notes a config could name, defeating `isExcluded`
+ * without touching the config at all. Resolved with `resolveRealOrNaivePath`
+ * — the same nearest-existing-ancestor/`realpath` helper
+ * `assertOutputDirectoryOutsideVault` uses — so a symlinked alias cannot
+ * walk around this by name. Checked unconditionally, before the config is
+ * even loaded: this is a refusal, not a degraded publish.
+ */
+async function assertVaultRootOutsideFloor(vaultRoot: string): Promise<void> {
+  const resolvedVaultRoot = await resolveRealOrNaivePath(vaultRoot);
+  if (pathContainsFloorFolderSegment(resolvedVaultRoot)) {
+    throw new VaultRootWithheldByFloorError(
+      `refusing to publish: --vault "${vaultRoot}" resolves inside a directory the exclusion ` +
+        "floor withholds; point --vault at the vault's own root, not a path beneath one of its " +
+        "excluded folders",
+    );
+  }
+}
+
+/**
  * `argv` defaults to `process.argv` for the real CLI and is only ever
  * overridden in tests, so `publishSite`'s failure path can be exercised
  * in-process — a real `Index.md`/`index.md` output-path collision can't be
@@ -85,6 +114,15 @@ export async function main(argv: readonly string[] = process.argv): Promise<void
     return;
   }
   const { vault: vaultRoot, config: configPath, output: outputDir } = args;
+
+  try {
+    await assertVaultRootOutsideFloor(vaultRoot);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${message}\n`);
+    process.exitCode = 1;
+    return;
+  }
 
   let config: PublishConfig;
   try {

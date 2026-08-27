@@ -130,7 +130,7 @@ function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
  * only the trailing not-yet-created segments are ever compared as plain
  * strings.
  */
-async function resolveRealOrNaivePath(target: string): Promise<string> {
+export async function resolveRealOrNaivePath(target: string): Promise<string> {
   try {
     return await realpath(target);
   } catch (error) {

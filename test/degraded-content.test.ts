@@ -58,11 +58,10 @@ describe("6.1 — degradation warnings observed through a spawned publish", () =
   });
 
   it("reports an unresolved wikilink, naming the containing note", () => {
-    // Degradation warnings are only ever pushed while rendering a note, and
-    // rendering only happens when an output directory is given — the
-    // stopgap two-argument invocation skips site generation entirely
-    // (block `6.3`'s to remove). This block observes the warnings a real
-    // publish produces, so it drives the CLI the way a real publish does.
+    // Degradation warnings are only ever pushed while rendering a note, so
+    // an output directory is passed here to make rendering actually run —
+    // this block observes the warnings a real publish produces, so it
+    // drives the CLI the way a real publish does.
     const result = runCli(degradedConfigPath, outputDir);
 
     expect(result.stderr).toContain(
@@ -82,14 +81,16 @@ describe("6.1 — degradation warnings observed through a spawned publish", () =
     // to appear. None of its published notes carry a wikilink or a Bases
     // block, so no degradation line should appear alongside them. An output
     // dir is required here, not optional: degradation warnings are only
-    // ever pushed while rendering runs, and rendering is skipped entirely
-    // when the third positional is absent — without it this test can never
+    // ever pushed while rendering runs — without it this test can never
     // observe a real degradation push, only its own absence.
     const result = runCli(cleanConfigPath, outputDir);
 
     expect(result.status).toBe(0);
     const lines = result.stderr.trim().split("\n");
-    expect(lines.length).toBeGreaterThan(0);
+    // Guards against a reporter gone silent: an empty stderr splits to
+    // `[""]`, length 1, so a length check alone passes vacuously — assert
+    // real `[WARNING]` output exists instead of merely counting lines.
+    expect(lines.some((line) => /^\[WARNING\] /.test(line))).toBe(true);
     for (const line of lines) {
       expect(line).not.toMatch(/wikilink to|embed of|Bases query block was dropped/);
     }

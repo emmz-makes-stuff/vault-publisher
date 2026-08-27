@@ -6249,6 +6249,57 @@ Gates: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 GATES
 
 `6.4` complete, ready for review. No box ticked, no commit made. → @reviewer
 
+**[architect]** Remediation block — section 6 supervisor findings → @worker
+
+No new task numbers and nothing to tick; every box in `## 6.` is already ticked. This block answers
+the supervisor's four blockers.
+
+**Finding 1 — `test/index.test.ts:303-322`, the vacuous artifact assertion.** The `--output`-missing
+test creates a temp directory, never passes it to the CLI (withholding it _is_ the test), then
+asserts `index.html` is absent from it. Unconditionally true. **Instance fourteen** — and note where
+it came from: it was added _by_ a remediation, and block B's reviewer cited it approvingly as
+"strictly stronger" than the stopgap test it replaced. The supervisor is right that the fix is
+**deletion, not a cleverer assertion**: with no `--output` supplied there is no directory the CLI
+could have written to, so "it never reached `publishSite`" is not externally observable. Keep the
+exit-code and stderr-message assertions; delete the temp directory and the artifact check. If the
+sibling `--vault`- and `--config`-missing tests carry the same shape, they get the same treatment.
+
+**Finding 2 — `test/degraded-content.test.ts:92`, the anti-vacuity guard that isn't.**
+`expect(lines.length).toBeGreaterThan(0)` on `stderr.trim().split("\n")` — empty stderr yields `[""]`,
+length 1, so a silently-publishing CLI passes. Replace it with a guard on **actual `[WARNING]`
+lines**, and prove it: ablate `reportWarnings` to a no-op and confirm this specific assertion reddens.
+
+**Finding 3 — the vault root is now caller-supplied, and the exclusion floor is relative to it.**
+This is mine, not the worker's: `6.3` made `--vault` an input, and the floor matches segments relative
+to it, so `--vault <vault>/Private` reclassifies `Private/Confidential Client.md` as a top-level note
+a config may name. The floor is `note-selection`'s hardest guarantee — "An excluded path SHALL NOT be
+published under any configuration" — and an argument that reparents it defeats it without touching
+the config at all.
+
+**My decision: close it in code.** Refuse a `--vault` whose own resolved path contains a segment
+matching a floor **folder** entry, case-insensitively — `<vault>/Private`, `<vault>/Journal/2026`,
+anything under `.obsidian/`. Resolve it the same way the output-directory gate does (nearest existing
+ancestor, `realpath`, rejoin) so an alias cannot walk past it; reuse that helper rather than writing a
+second resolver. Non-zero exit, clean message, nothing published. This is a refusal, not a warning —
+there is no honest degraded publish here.
+
+Test both directions: a legitimate nested `--vault` (a plain subfolder with no floor segment) still
+publishes, and each floor folder as a `--vault` segment refuses. **Ablate:** remove the guard and
+confirm the refusal tests redden _and_ that a note the floor exists to withhold actually publishes —
+that second half is the point, and it is the assertion that would have caught this in the first place.
+
+**Finding 4 — dead scaffolding.** `test/degraded-content.test.ts:61-65` and `82-87` still describe the
+stopgap `6.3` deleted, in the present tense. Correct them to describe what the tests now do.
+
+**Not in this block, going to `## NEXT`:** the `design.md` entry for the marker file and the two new
+non-zero exits; the one-directional containment refusal; `end-to-end-output.test.ts` mkdir-ing scratch
+directories inside a tracked fixture vault; the TOCTOU window the reviewer parked; and the §7 note
+that `action.yml` must not let a caller supply a reparented vault root.
+
+**Done-gates.** `make gates` → `GATES_EXIT:0`, quoting each `LABEL_EXIT:` line (`make format-fix`
+first for the DEVLOG). Post under `## 6.` as `**[worker]**` ending `→ @reviewer`. **You do not commit
+and you do not tick boxes.**
+
 ## NEXT
 
 **Sections 1–5 are closed** (supervisor `Approve` on each). 41/59 tasks. Next is **section 6 —
@@ -6832,5 +6883,308 @@ edge-case termination) rather than re-running the same two scenarios, and it hel
 untouched from the previous round (already verified sound then). Full gate set as delivered:
 `BUILD_EXIT:0 TEST_EXIT:0` (201 tests, 20 files) `FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0` →
 `GATES_EXIT:0`.
+
+Nothing blocking. → @architect
+
+**[supervisor]** Section review — `## 6. Warnings and CLI`, scope `git diff 8263b39..HEAD`
+(`b43f578`, `fed26a1`, `001b0fe`).
+
+**Verdict: Request changes.**
+
+Read the commit sequence, not just the cumulative diff. The section's _shipping_ code is in good
+shape: one writer module (`src/writer.ts`) is the only thing in `src/` that calls `writeFile`,
+`mkdir` or `rm`, and `src/cli.ts:13` is its only caller — one authority for what gets written and
+what gets deleted, no second filter grown anywhere. `isPathWithinOrEqual` (`src/selection.ts:139`)
+lands as an addition only; `isWithinVaultBoundary` and `resolveSelection` are byte-identical, so
+nothing §3–§5 proved regressed. `test/index.test.ts:219-222` still proves the exclusion floor end to
+end through a spawned publish into a real output directory, and 6.4's `--vault`/`--output` refactor
+did not disturb it. `writeSite`'s ordering is right in the way that matters: rendering completes in
+`publishSite` _before_ `writeSite` deletes anything, and the collision check and both refusals run
+before the first `rm`, so a render failure can never leave a cleared directory behind. The
+`publish-pipeline` scenario "Configuration changed without note changes … including removing pages
+for notes no longer selected" — nominally §7's — is genuinely closed here, by a test that publishes
+twice into the _same_ directory.
+
+**On the final shape of the clearing guard, since it was asked directly: yes, it is general.** The
+third version — walk up to the nearest ancestor that exists, `realpath` that, rejoin only the
+genuinely nonexistent trailing segments — is "resolve as much of the path as reality allows", not a
+patch scoped to the two reproductions. The first two fixes each covered exactly the case
+demonstrated to them; this one does not have that shape. The reviewer probed it along axes the diff
+did not (vault-side alias, mid-chain symlink, recursion termination) and I agree with that reading.
+
+What I am blocking on is not the deletion logic. It is that this section, on the way to closing the
+thirteenth "check that could not fail", added two more — and one of them was blessed in review as
+being _stronger_ than the check it replaced.
+
+---
+
+### Blockers
+
+**S6-1 — `test/index.test.ts:303-322` ("… when `--output` is missing") asserts over territory the
+process never enters. Instance fourteen, introduced by `6.3` and signed off.**
+
+Line 304 creates a fresh `mkdtemp` directory. The CLI is then invoked at 307-312 with `--vault` and
+`--config` **and no `--output`** — so that directory is never given to the child process, by
+construction, because withholding it is the entire point of the test. Line 321 then asserts
+`index.html` is not inside it, under a comment claiming it "proves the run never reached
+`publishSite`". It proves nothing: the assertion is true for every possible behaviour of the CLI,
+including the silent-default ablation the worker ran (which wrote to `/tmp/vault-publisher-…`, not
+here). The ablation reddened this test through `expect(result.status).not.toBe(0)` at line 314; the
+artifact clause has never been observed failing and cannot be.
+
+This matters beyond the one assertion. The reviewer's Approve for block B rested on this test being
+"strictly stronger" than the deleted "skips site generation entirely" test — the artifact claim was
+the whole basis for that comparison. `## NEXT`'s standing rule ("never assert exit 0 alone for a
+process whose job is to write files; assert the artifact") was satisfied in appearance and not in
+fact, on the block that exists to delete a stopgap justified by the same class of defect.
+
+The honest remediation is **deletion, not a cleverer assertion.** With no `--output` supplied there
+is no location the test can watch that the CLI would have written to, so "it never reached
+`publishSite`" is not externally observable here. Remove line 321 and its comment; `--vault`-missing
+(`test/index.test.ts:324`) does pass an `--output` and carries a real artifact claim for the shared
+required-argument branch. Do not replace it with a cwd check unless an ablation is shown reddening
+it.
+
+**S6-2 — `test/degraded-content.test.ts:92`'s anti-vacuity guard cannot fail, in the one scenario
+that already cost a remediation round for exactly this.**
+
+`expect(lines.length).toBeGreaterThan(0)` where `lines = result.stderr.trim().split("\n")`. For an
+empty stderr that is `[""]`, length 1 — always true — and the loop at 93-95 then tests `""` against
+the regex and passes. So a publish that printed nothing at all satisfies this test end to end. Both
+the inline comment (82-87) and the worker's report present this line as the thing that stops the
+scenario passing vacuously on empty stderr. It does not. `reportWarnings` going silent would leave
+this test green; only `6.2`'s test would catch it.
+
+Fix: assert stderr contains at least one line matching `/^\[WARNING\] /` — `warnings-vault`
+genuinely produces selection-level warnings, so that reddens if the reporter goes quiet, which is
+the property the comment claims. Ablate `reportWarnings` to a no-op and show _this_ test reddening,
+not `6.2`'s.
+
+**S6-3 — `6.3` promoted the vault root from a derived value to a caller-supplied input, and the
+exclusion floor is defined relative to whatever it says. Nothing in the section tests that seam, and
+§7 is about to template it from workflow inputs.**
+
+`src/cli.ts:99` now does `listVaultNotes(vaultRoot)` with `vaultRoot = values.vault`. The floor
+(`src/selection.ts:102-108`) matches path _segments of the note path relative to the vault root_, so
+`--vault <vault>/Private` reclassifies `Private/Confidential Client.md` as a top-level
+`Confidential Client.md`: no `Private` segment, `matchesFloorFile` sees only the basename, and a
+config naming it publishes it. `note-selection` states the floor absolutely — "An excluded path SHALL
+NOT be published under any configuration."
+
+This is not visible in `6.3`'s diff, which only shows a flag being added, and it is not a defect the
+block introduced from nothing — `path.dirname(configPath)` could already be pointed inside `Private/`
+by putting the config there. What changed is that the vault root became a **named, documented,
+independently-settable argument**, decoupled from the config for the first time, on the eve of the
+section that turns these three paths into `action.yml` inputs. Every test in the suite passes
+`--vault` as the config's own directory (`test/index.test.ts:56`, `degraded-content.test.ts:39`,
+`end-to-end-output.test.ts:32`), so the re-rooted case is untested in both directions.
+
+❓ **@architect** — which way does this go? I see two defensible answers and this is a decision, not
+a mis-implementation:
+
+- **Close it in code**: evaluate the floor against the vault root's own trailing segment(s) as well,
+  in `selection.ts` (one authority), and refuse `--vault` that names a floor folder. Cheap, but
+  false-positives a vault legitimately living under a directory called `Journal`.
+- **Close it in the surface**: bind §7 so `action.yml` does not expose an arbitrary `--vault`, and
+  fixes it to the workspace root. Then record that constraint where §7 can't miss it.
+
+Either way the section should not close with the seam both unrecorded and unexercised. The minimum I
+need to lift this blocker is a recorded decision plus one test pinning whichever behaviour is chosen.
+
+**S6-4 — dead scaffolding: `test/degraded-content.test.ts:61-65` and `82-87` still describe the
+stopgap `6.3` deleted, in the present tense.**
+
+"rendering only happens when an output directory is given — the stopgap two-argument invocation skips
+site generation entirely (block `6.3`'s to remove)" and "rendering is skipped entirely when the third
+positional is absent". There is no third positional and no skip branch; `src/cli.ts:111-125` calls
+`publishSite` unconditionally. Block B edited this file's argv arrays and left the prose. Anyone
+reading it later learns a false fact about the CLI and may conclude the output directory in these
+tests is incidental. Rewrite both to say what is now true: the output directory is passed because
+degradation warnings are only pushed while rendering runs, and rendering is what this block observes.
+
+---
+
+### Suggested remediation shape — one fix block
+
+Small and entirely in tests plus one decision:
+
+1. `test/index.test.ts:319-321` — delete the artifact assertion and its comment (S6-1).
+2. `test/degraded-content.test.ts:90-95` — replace the inert length guard with a `/^\[WARNING\] /`
+   assertion, and ablate `reportWarnings` to show _this_ test reddening (S6-2).
+3. `test/degraded-content.test.ts:61-65, 82-87` — rewrite the stopgap comments (S6-4).
+4. S6-3 per the architect's answer: a recorded decision and one test pinning it.
+
+No `N.M` numbers, nothing to tick. Items 1-3 need no source change.
+
+---
+
+### Architectural notes — for `## NEXT`, not for the fix block
+
+- **The containment refusal is one-directional.** `assertOutputDirectoryOutsideVault`
+  (`src/writer.ts:172`) refuses an `--output` inside the vault; nothing refuses an `--output` that
+  _contains_ the vault, where the clearing loop would `rm -rf` the vault itself. The only thing
+  standing there is the marker — and what actually makes this unreachable today is that the marker is
+  only ever written to a directory that was absent or empty at the time, so a marked directory cannot
+  already contain a vault. That invariant is real but incidental and written down nowhere. Either add
+  the mirror check (`isPathWithinOrEqual(resolvedOutputDir, resolvedVaultRoot)`) or state the
+  invariant in `writer.ts`'s docblock.
+- **The marker file and §7 — deferring to `7.3` is adequate, with one addition.** As an artifact it
+  is harmless: an empty dotfile, no vault-derived content, behind Access like everything else, and
+  `6.4`'s exact-set test names it explicitly rather than filtering it, so it cannot hide a stray file.
+  But `.vault-publisher-output` is now part of the tool's _contract_ — a directory's identity — and
+  neither it nor the two new non-zero exits it introduces (`UnrecognisedOutputDirectoryError`,
+  `OutputDirectoryWithinVaultError`) appear in `publish-pipeline`'s spec or `design.md`'s Decisions.
+  Emmz's decision lives only in a DEVLOG post. §7's workflow must guarantee `--output` names a
+  directory that is absent, empty, or already marked, _and_ outside the vault, or every publish
+  fails — and that constraint is currently invisible from the specs. Recommend a `design.md` Decision
+  before archive. Not a §6 fix.
+- **TOCTOU between the containment resolution and the writes** — agreed with the reviewer: real,
+  out of reach of a passing/failing assertion, and not worth a fourth round. Park it beside the
+  hardlink note.
+- **`end-to-end-output.test.ts` mkdirs scratch directories inside a tracked fixture vault**
+  (`symlink-target-inside-vault`, `real-parent-inside-vault`, `real-ancestor-inside-vault`,
+  `empty-dir-inside-vault-for-containment-test`), cleaned up in `finally` only. An interrupted run
+  leaves residue in `git status` — including a file whose contents are the string
+  `TOP_SECRET_CLIENT_DATA_MUST_SURVIVE`, sitting in the repository tree. Publishing the fixture to a
+  temp copy first would remove the whole class.
+- **CLI test overlap after three blocks:** five files now spawn the CLI. Each has a distinct
+  purpose and none should be deleted, but `test/index.test.ts`'s "writes the front page and a nested
+  page" is now a weaker subset of `end-to-end-output.test.ts`'s exact-set test against a different
+  fixture. Worth knowing, not worth acting on.
+- **DEVLOG structure:** this section's review thread is appended _below_ the `## NEXT` heading rather
+  than under `## 6.`, because `## NEXT` sits mid-file at line 6252. Not a code finding, but the next
+  section's supervisor will have the same problem locating its thread.
+
+Gate discipline: every block in this section posted its `LABEL_EXIT:` lines, all `0` at handoff
+(`b43f578`, `fed26a1`, `001b0fe`). No block landed unverified. No human-in-the-loop task in this
+section.
+
+→ @architect
+
+**[worker]** Remediation for section 6 supervisor findings — no new task numbers, nothing ticked.
+
+- **S6-1** (`test/index.test.ts`) — deleted the vacuous artifact assertion in the `--output`-missing
+  test (the temp `outputDir` it watched was never passed to the CLI, so the check was true for every
+  possible CLI behaviour). Kept the exit-code/stderr-message assertions. Checked the sibling
+  missing-flag tests (`--vault`, `--config`): `--vault`-missing already carries a real artifact claim
+  against a directory it _does_ pass via `--output`; `--config`-missing makes no artifact claim at
+  all. Neither needed touching.
+- **S6-2** (`test/degraded-content.test.ts:92`) — replaced `expect(lines.length).toBeGreaterThan(0)`
+  with `expect(lines.some((line) => /^\[WARNING\] /.test(line))).toBe(true)`. Ablated `reportWarnings`
+  to a no-op and confirmed this exact assertion reddens (`expected false to be true`, pointing at line
+  93); restored and reran the suite green before moving on.
+- **S6-4** — rewrote the two present-tense comments describing the deleted stopgap
+  (`test/degraded-content.test.ts:61-65, 82-87`) to say what's true now: an output directory is passed
+  because degradation warnings are only pushed while rendering runs, not because of a removed
+  positional-argument branch.
+- **S6-3** (the architect's decision: close it in code) — added `pathContainsFloorFolderSegment`
+  (`src/selection.ts`), reusing the existing `matchesFloorFolder` check against every segment of a
+  resolved path, and a new `VaultRootWithheldByFloorError`. Exported `resolveRealOrNaivePath` from
+  `src/writer.ts` (previously module-private) instead of writing a second resolver, and added
+  `assertVaultRootOutsideFloor` in `src/cli.ts`, called unconditionally before `loadConfig` — refuses
+  a `--vault` whose resolved path has a floor-folder segment, case-insensitively, non-zero exit, clean
+  message, nothing published.
+
+  New fixture `test/fixtures/vault-root-floor/` (`Private/Confidential Client.md`,
+  `Handbook/Article.md`, two configs) backs two tests in `test/index.test.ts`: `--vault
+.../Private` is refused and never writes `Confidential Client.html`; `--vault .../Handbook` (a
+  legitimate nested, non-floor subfolder) still publishes `Article.html`. **Ablated:** removed the
+  `assertVaultRootOutsideFloor` call — the refusal test reddened (`expected +0 not to be +0` on
+  `status`), and, separately, running the CLI directly against `--vault
+.../vault-root-floor/Private` with the guard removed wrote `Confidential Client.html` to the output
+  directory — the floor-withheld note actually publishing, which is the property the guard exists to
+  stop. Restored the guard before continuing.
+
+**Not touched, per the brief:** the `design.md` entry for the marker file, the one-directional
+containment refusal, `end-to-end-output.test.ts`'s in-fixture scratch dirs, the TOCTOU window, and the
+§7 `action.yml` note — all parked at `## NEXT`.
+
+**Done-gates.** `make format-fix` run first (DEVLOG plus two new fixture notes). `make gates` →
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 GATES_EXIT:0`.
+
+No box ticked, no commit made. → @reviewer
+
+**[reviewer]** Audit of the section 6 remediation block (supervisor findings S6-1–S6-4) —
+`git diff HEAD` against `001b0fe`.
+
+**Verdict: Approve.**
+
+**S6-1 (my own block B Approve cited this test as "strictly stronger" — the supervisor was right and
+I missed it).** Confirmed the fix is deletion, not a cleverer assertion: the `--output`-missing test
+no longer creates or watches a temp directory it never passes to the CLI. The remaining assertions
+(`status`, `stdout === ""`, `stderr` names the missing flag, no stack-trace line) all pin something
+externally observable. Checked the sibling tests myself: `--vault`-missing _does_ pass a real
+`--output` (`outputDirForMissingVault`, created in `beforeEach`) and its artifact-absence check is
+genuine — the directory is one the CLI actually received and could have written to had the guard not
+fired. `--config`-missing carries no artifact claim and needed none. Both match the worker's report.
+
+**S6-2 (adjacent to a scenario I also reviewed).** Independently ablated `reportWarnings` to a no-op
+myself (not the worker's version — my own edit) and reran `test/degraded-content.test.ts`: all four
+tests reddened, specifically including the "nothing degraded" test at the exact new assertion
+(`expected false to be true`, `lines.some(/^\[WARNING\] /)`) — the property the old
+`length > 0` check could never have caught, since `"".trim().split("\n")` is `[""]`, length 1.
+Restored `src/warnings.ts`; diff empty afterward, confirming the fix lives entirely in the test file.
+
+**S6-3 — the substantive one. Ran the ablation myself, and checked that a withheld note actually
+publishes, not just that a test goes red.** Removed the `assertVaultRootOutsideFloor` call from
+`src/cli.ts` and ran the real CLI directly (not through the test suite) against
+`--vault test/fixtures/vault-root-floor/Private`: **exit 0**, and
+`/tmp/floortest/Confidential Client.html` was written and readable, full body included
+(`<p>Invented fixture content that must never publish.</p>`), linked from the explorer. That is the
+property the guard exists to stop, reproduced directly — not inferred from an assertion. Restored the
+guard; the same command now refuses (`refusing to publish: --vault "..." resolves inside a directory
+the exclusion floor withholds`, exit 1), `git diff --stat` back to the reported shape (40 insertions /
+2 deletions on `cli.ts`), full `test/index.test.ts` suite green.
+
+Probed completeness beyond the diff's own two tests, all against the real CLI:
+
+- **Depth** — `--vault` three levels under `Journal/` (`Journal/2026/deep`): refused.
+- **Case** — `--vault` at a lowercase `journal/` and an uppercase `PRIVATE/`: both refused, matching
+  the case-insensitivity the rest of the floor already has.
+- **Alias, several shapes** — a symlink (living outside anything floor-named) whose target sits
+  directly inside `Journal/2026/deep`: refused. A symlink with a "clean" name whose target is nested
+  three levels inside `Private/`: refused. In both, the realpath resolution correctly dereferences the
+  alias before the segment check runs — a cosmetically clean symlink name cannot launder a floor
+  segment sitting in its target.
+- **Vault root not yet existing** — `--vault` pointed at a nonexistent path whose string still
+  contains `/Private/`: refused (the naive-fallback half of `resolveRealOrNaivePath` still preserves
+  every path segment even when nothing on disk backs it, so the segment check sees it regardless).
+- **The other end — `--config` outside the vault naming paths that climb back in.** Not a live
+  vector: `resolveSelection` (`selection.ts:57-91`) matches `config.notes`/`config.folders` entries
+  only against `vaultPaths`, the set `listVaultNotes` already produced by walking _inside_ `vaultRoot`
+  and filtering through `isWithinVaultBoundary`. A config entry naming something outside that walk
+  (`../secret.md`, an absolute path) simply never appears in `vaultSet` and lands in `unmatched` —
+  this was already closed by §3/§4's read-side machinery, untouched by this block, and I re-read it to
+  confirm rather than assume.
+
+**One authority, checked, not assumed.** `pathContainsFloorFolderSegment` (`selection.ts:155`) calls
+the same private `matchesFloorFolder` that `isExcluded` and `isEntryWithheldByFloor` already use —
+confirmed by reading the function bodies, not duplicated case-insensitive matching logic written a
+second time. `resolveRealOrNaivePath`'s export is a one-line change with no logic touched; `cli.ts`
+imports and calls it exactly as `writer.ts` already does, no second resolver.
+
+**Error precedence.** `assertVaultRootOutsideFloor` runs before `loadConfig`, unconditionally. Full
+suite green (203/203) is consistent with no pinned precedence disturbed, and I checked why directly:
+the two existing tests that assert on config-load failures (`malformed config`, `unreadable config`)
+only assert `status !== 0` / `stderr !== ""`, never exact message content, and neither's `--vault`
+resolves through a floor segment (`test/fixtures` contains no `Private`/`Journal`/`.obsidian`/`.claude`
+segment) — so the new check passes through silently ahead of them in every existing test, and nothing
+pinned the old ordering specifically enough to notice a change if there were one.
+
+**S6-4.** Read both rewritten comments (`test/degraded-content.test.ts:61-64, 82-83`) — no remaining
+reference to "the stopgap," "the third positional," or a skip branch that no longer exists.
+
+**Architectural note (not blocking) — `resolveRealOrNaivePath`'s home.** It's pure path-resolution
+with no write-side logic (no `writeFile`/`rm`/`mkdir` in it), and it now has two unrelated callers:
+`writer.ts`'s own containment check and `cli.ts`'s floor check. `selection.ts` already carries the
+project's other shared containment primitive (`isPathWithinOrEqual`, whose own docstring calls itself
+"the one containment primitive this project reuses") — `resolveRealOrNaivePath` reads like it belongs
+there too, not merely exported out of the module named for a different concern. Worth moving on a
+future touch, not this one; nothing about the current placement is incorrect, and the worker did
+exactly what was briefed (reuse, don't duplicate).
+
+Full gate set: `BUILD_EXIT:0 TEST_EXIT:0` (203 tests, 20 files) `FORMAT_EXIT:0 LINT_EXIT:0
+VALIDATE_EXIT:0` → `GATES_EXIT:0`, run myself. No new dependency. Fixture content
+(`Confidential Client`, `Article`) is plainly invented.
 
 Nothing blocking. → @architect

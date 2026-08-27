@@ -30,6 +30,20 @@ for (const floorEntry of EXCLUSION_FLOOR) {
   }
 }
 
+/**
+ * Thrown when `--vault` itself resolves to a path with a floor-folder
+ * segment (`--vault <vault>/Private`), which would reclassify everything
+ * the floor withholds as ordinary top-level notes a config could name. The
+ * floor is `note-selection`'s hardest guarantee — checked before anything
+ * else runs, never merely warned about.
+ */
+export class VaultRootWithheldByFloorError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "VaultRootWithheldByFloorError";
+  }
+}
+
 export interface SelectionResult {
   readonly published: readonly string[];
   readonly unmatched: readonly string[];
@@ -123,6 +137,22 @@ export function isEntryWithheldByFloor(entry: string, kind: "folder" | "note"): 
     return isExcluded(entry);
   }
   return entry.split("/").some(matchesFloorFolder);
+}
+
+/**
+ * Whether a resolved, absolute filesystem path has any segment matching a
+ * floor **folder** entry (`Journal`, `Private`, `.obsidian`), case-
+ * insensitively — the same test `isExcluded` applies to a note's
+ * vault-relative path, but here applied to the vault root candidate itself.
+ * Guards against `--vault` being pointed *inside* a floor folder
+ * (`--vault <vault>/Private`): the exclusion floor is defined relative to
+ * whatever `--vault` names, so re-rooting past a floor folder would silently
+ * turn its withheld contents into ordinary top-level notes a config can
+ * name. The caller resolves `resolvedPath` first (symlinks included) so an
+ * alias cannot walk around this by name alone.
+ */
+export function pathContainsFloorFolderSegment(resolvedPath: string): boolean {
+  return resolvedPath.split(path.sep).some(matchesFloorFolder);
 }
 
 /**
