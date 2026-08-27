@@ -7083,6 +7083,40 @@ unselected-note marker leaked into the output`. The second prints `scanning N fi
 skipped step prints nothing and would leave the job green over an assertion that never happened.
 Everything after `Set up Node` is still unobserved: the previous run never got that far.
 
+**[architect]** `7.1` **verified and ticked** — the Product Owner ran the PR job and it went green,
+end to end, with both assertion steps observed rather than assumed.
+
+What the real runner proved that nothing local could:
+
+- **The composite action resolves and runs from a checkout.** `Read the pinned Node version` → `Set
+up Node` found 24.19.0 from `.nvmrc` in the tool cache → `npm ci` clean, 245 packages → `Publish`
+  exited 0. Every step the hand-run had skipped.
+- **The floor refused all five entries the config explicitly named**, on a real runner:
+  `[WARNING] publish.config.yaml: "Journal/" | "Private/" | ".obsidian/" | ".claude/" | "CLAUDE.md"
+is excluded and will not publish`. That is `note-selection`'s "SHALL NOT be published under any
+  configuration" **observed**, not argued from unit tests. It is the single most important line in
+  this change and it now has a run behind it.
+- **`OUTPUT_DIR: /home/runner/work/_temp/vault-publisher-site`** — the `$RUNNER_TEMP` default,
+  outside the workspace. Blocker 2's resolution confirmed live: the site lands outside the checkout by
+  construction, which is what makes `7.7` structurally true rather than a `.gitignore` promise.
+- **`output file set matches exactly`** — seven files, nothing more. `publisher/` sat inside what the
+  action treated as the vault for the whole run and contributed nothing; allow-list selection held
+  against a vault containing an entire second repository.
+- **`scanning 7 files under …` / `no marker leaked across 7 files`** — non-zero count, matching the
+  seven-file expected set, so the `file_count` guard was meaningful rather than decorative. This is
+  the assertion that matters: the warnings prove the publisher _said_ it withheld those five; the grep
+  proves none of their content reached a rendered page, including via an explorer link or an embed.
+- The four `Index.md` warnings (unresolved wikilink, ambiguous wikilink, unresolved embed, dropped
+  Bases block) fired as designed and the publish still exited 0 — `6.2` re-observed for free, on a
+  runner, against the committed vault.
+
+**Block A is closed.** `244a18b` (feature) + `050e5b2` (the Node setup fix) + this tick.
+
+**The section is not closed** — `7.2`–`7.8` remain, and every one of them is a Product Owner
+verification requiring the `v1` tag, Cloudflare credentials, or the vault repository. The supervisor
+review for `## 7.` runs when the section's last block lands, not now. Handover list going to Emmz
+next.
+
 ## NEXT
 
 **Sections 1–6 are closed** (supervisor `Approve` on each). **45/59 tasks.** Next is **section 7 —
