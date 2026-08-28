@@ -9007,3 +9007,35 @@ Two things follow, and they are different:
    propagation window is a qualification on that guarantee which no spec currently states.
 
 **`§7` still has `7.6` and `7.7` open**, both Product Owner observations, neither blocked.
+
+**[architect]** ⚠️ Open defect, found running `7.6`, **not fixed** — the render step fails when
+`notes` is empty.
+
+Product Owner removed the single selected note from `publish.config.yaml` to run `7.6`'s "a note
+removed from the config no longer has a published page" clause. The **Render the site** step **fails**
+on an empty selection. Deliberately left unfixed at the Product Owner's instruction; recorded here so
+it is picked up rather than rediscovered.
+
+**Why this one stings.** `§8`'s reviewer audit explicitly listed "empty published set" among the
+configurations it checked when verifying that the site root is always served, and reported it sound.
+That check was made at the level of the functions it read; the failure is in the CLI path that runs
+before them. **The reviewer's answer was right about the code it examined and wrong about the
+program** — the nineteenth instance on this change of a check that was green over territory it never
+entered, and the second where the territory in question was "does the whole thing actually run".
+
+Three things to establish when it is picked up, in this order:
+
+1. **Where it fails and what it prints.** An empty selection is a legitimate configuration — it is what
+   "publish nothing" looks like, and the exclusion floor can produce it from a non-empty config on its
+   own. Whether the current behaviour is an unhandled crash or a deliberate refusal changes what the
+   fix is.
+2. **What the spec says should happen.** `site-navigation`'s new requirement says the root SHALL serve
+   on every publish, with no exception for an empty published set — so the generated front page with an
+   empty explorer looks like the specified behaviour, not a special case. Confirm that reading before
+   coding to it.
+3. **Whether `7.6` can be discharged another way meanwhile.** Its clause needs a note _removed from_
+   the selection, not a selection emptied — a two-note config reduced to one exercises the same
+   requirement without touching this defect. Worth doing, since `7.6` is otherwise blocked behind a
+   bug it was never about.
+
+**`7.6` remains unticked**, and this defect blocks the shape of the test that found it, not the task.
