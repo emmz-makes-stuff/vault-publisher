@@ -8756,3 +8756,154 @@ Architect call, not a defect in this one. Restating it here so it doesn't quietl
 NEXT` between sessions.
 
 No blockers, no nits worth holding the block for. → @architect
+
+**[architect]** Block brief — the two parked `publish.yml` nits, before the Product Owner's final run
+→ @worker
+
+Both were raised by the reviewer across earlier rounds and deliberately not blocked on at the time.
+They are being closed now for one reason: the Product Owner is about to copy the workflow into the
+vault repository one final time and run the whole of `7.8`'s Step B against it. Anything not fixed now
+costs another copy-over later.
+
+The file is the scratchpad draft, as before — not in this repository:
+`publish.yml` in the session scratchpad. `handover-7.4.md` beside it may need a touch.
+
+**Nit 1 — the version ID is read with `tail -n1` and no assertion that there was exactly one match.**
+The discarded round-two scrape explicitly failed on more than one candidate; the construction that
+replaced it does not. The reviewer built both a genuine duplicate and a decoy occurrence embedded in
+prose, and `tail -n1` picked the true final line in both — so this is not demonstrated to be wrong
+today. It is an unexamined assumption sitting in exactly the spot this change keeps finding them, and
+the check's whole value rests on the address being the one this deploy produced. Make the count
+explicit and fail on anything other than one match, or — if you can show `tail -n1` is strictly
+correct for every shape wrangler can emit — say so with the evidence and leave it. Either is
+acceptable; asserting without evidence is not.
+
+**Nit 2 — `protected_host` carries the route pattern verbatim, path glob included.** With
+`custom_domain: true` the pattern is a bare hostname, which is why the live runs have been fine
+(confirmed against the real config: no slash in it). With a routes-style pattern such as
+`example.org/*` the control would request `https://example.org/*/` — a nonsense URL for the one check
+whose job is to discriminate a real refusal from a typo. Take the host portion of the pattern, and
+fail loudly rather than guessing if what remains is not a plausible hostname.
+
+**Test both against the shapes that matter**, not just the shape in use: for nit 1, zero matches, one,
+two identical, two different, and a `Current Version ID:` appearing inside an error message rather
+than a success line; for nit 2, a bare hostname, `host/*`, `host/path/*`, and something that is not a
+hostname at all. Identifier-free fixtures — invent every value.
+
+Gates and `actionlint`, quote the exit lines. Scratchpad only, no commit, no tick. → @reviewer.
+
+**[worker]** Closed both parked `publish.yml` nits.
+
+**Nit 1 — version-ID match counting.** Replaced `tail -n1`/no-assertion with an explicit count:
+`grep -oE` collects every `Current Version ID:` occurrence in the deploy log, and the step fails
+loudly (`::error::found N 'Current Version ID:' occurrences...`) unless the count is exactly 1 —
+zero and two-or-more (identical or distinct) are both refused now, matching the discarded
+round-two scrape's original discipline rather than assuming the last line is this deploy's.
+
+**Nit 2 — `protected_host` reduced to a host.** `route_pattern` (renamed from `protected_host`) is
+read as before; `protected_host` is now `${route_pattern%%/*}` — the host portion only — validated
+against a hostname-shaped regex before use, failing loudly (`does not reduce to a plausible
+hostname`) if what's left isn't one. Bare `custom_domain: true` hostnames (the vault's real shape)
+pass through unchanged; `host/*` and `host/path/*` both reduce to `host`.
+
+**Testing.** `verify-step.sh`'s `run:` text was extracted programmatically from `publish.yml`
+(`js-yaml` via `node`, in the session scratchpad — not committed anywhere) rather than
+hand-copied, then executed verbatim against 9 fixture cases: for nit 1, zero/one/two-identical/
+two-different/one-embedded-in-an-error-message; for nit 2, bare hostname, `host/*`,
+`host/path/*`, and a string that isn't a hostname at all. A stub `curl` (records requested URLs,
+serves a canned `workers/subdomain` response, returns configurable status codes) and a stub
+`mktemp` (this sandbox's `/var/folders` default is write-denied even with `TMPDIR` set — a
+harness artefact, not something real CI hits) stood in for the network; all 9 passed, and a
+re-extraction after the edits diffed identical to the tested copy, confirming the shipped code
+path is what ran. Identifier-free fixtures throughout (invented worker name, hostnames, UUIDs).
+
+Also updated `handover-7.4.md` §4's failure-mode list with the two new loud-failure shapes
+(duplicate version-ID lines; a route pattern that doesn't reduce to a hostname), so the Product
+Owner recognizes them if hit during the real run.
+
+Scratchpad-only change; this repository's tree is untouched.
+`ACTIONLINT_EXIT:0` `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0
+PUBLISHABLE_EXIT:0 GATES_EXIT:0` — all green (gates ran against this repo's existing tree, which
+this block did not modify; they establish the repo wasn't broken while the scratchpad file was
+edited, not that the scratchpad edit itself is covered by them).
+
+No commit, no tick — scratchpad file, no `N.M` tasks. → @reviewer
+
+**[reviewer]** Round-5 (final) re-audit — the two parked nits, attacked directly. Re-ran `make gates`
+first-party: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 PUBLISHABLE_EXIT:0
+GATES_EXIT:0`, 224 tests, `git status --porcelain` clean aside from this DEVLOG edit. `actionlint`
+on the patched `publish.yml`: exit 0, first-party.
+
+**Verdict: Approve** — this is ready for the Product Owner's Step B run against the real Worker.
+Two non-blocking nits below, both about message/pattern polish, neither a false-green path.
+
+**Method — diffed against my own round-4 approved text first**, to establish scope before attacking
+anything: the only changes are the version-ID counting block and the `route_pattern` →
+`protected_host` reduction/validation. The subdomain-call block and the bypass/control loop are
+byte-identical to what I approved last round. Then extracted the "Verify the bypass hostnames still
+refuse" step's `run:` body out of the actual shipped file via the `yaml` package (independently of
+the worker's `js-yaml` extraction) and ran it against fixtures of my own construction, not the
+worker's nine.
+
+**Nit 1 (occurrence count) — verified against the exact shape the brief was worried about.** Built
+six deploy-log fixtures: zero matches, one, two identical, two different, one match embedded in an
+unrelated error/rollback sentence, and — the sharpest case — a real final line preceded by a decoy
+occurrence embedded in prose (the exact scenario my round-4 nit was about). Results: zero → loud
+failure; one (including the one embedded in an error message, which the step has no way to
+distinguish from a "real" line and correctly doesn't try to) → succeeds using that one value; two
+identical, two different, and real-plus-decoy → all three now fail with
+`::error::found 2 'Current Version ID:' occurrences...`, where round 4's `tail -n1` would have
+silently picked one and gone green. Confirms the fix isn't filtering matches by any accidental
+heuristic — it counts every regex hit and refuses on anything but exactly one.
+
+**Nit 2 (hostname reduction) — verified against the shapes in the brief, with one testing correction
+worth recording.** My first pass tested the regex in isolation without invoking `bash` explicitly,
+and this sandbox's plain shell is `zsh` — whose `[[ =~ ]]` disagrees with bash's on a few of these
+patterns. Re-ran every case through `bash -c` explicitly (matching what a GitHub Actions `run:` step
+actually executes) and, separately, end-to-end through the real extracted step against two full
+fixture configs. Confirmed under real bash: a bare hostname (the vault's actual `custom_domain: true`
+shape) passes unchanged; `host/*` and `host/path/*` both reduce to `host` and the positive control
+requests the clean URL (verified end-to-end: `positive control (protected): https://notes.fixture.
+example/`, not the `.../*/ ` nonsense path from round 4); `/*` alone (nothing left after stripping),
+an empty pattern, and a pattern that is only a path (`just-a-path/no-host` → `just-a-path`, no dot) are
+all correctly rejected with the crafted `::error::...does not reduce to a plausible hostname`; a
+Punycode-encoded IDN label passes (as it should — Cloudflare represents IDN routes as ASCII/Punycode
+already, so this is the realistic shape, not a raw Unicode one); a hostname-with-port and a bare
+single-label host (`localhost`) are both rejected, which is correct for this project's actual shape
+of route — a real Cloudflare custom-domain pattern is always at least two labels and never carries a
+port. One real edge found: a trailing-dot FQDN (`notes.example.org.`, valid DNS notation) is rejected
+by the regex, since it requires the string to end on an alphanumeric label. Low practical risk —
+Cloudflare's own dashboard/API never emits `routes[0].pattern` with a trailing dot — but noted below
+as a nit rather than silently accepted as fine.
+
+**The stubbed `curl`/`mktemp` — attacked specifically, per the brief's sharpest concern.** The
+worker's own 9-fixture suite stubs `mktemp` to always succeed (a harness artefact of this sandbox's
+`/var/folders` write-denial, as they note), which means their own suite never exercises a real
+`mktemp` failure. I tested that path independently: replaced `mktemp` on `PATH` with one that fails,
+and confirmed the script does **not** continue with an empty or bogus path — `subdomain_body_file=
+"$(mktemp)"` is a bare assignment (not guarded by `if !`), so `set -e` catches the failing command
+substitution and the script exits 1 immediately, before touching `curl` at all. The message printed
+is `mktemp`'s own raw stderr, not this step's `::error::` house style — a smaller version of the same
+"raw crash vs. crafted message" gap round 3 found and fixed for the `jq` parse-error path — but it is
+fail-safe, not fail-open, so it isn't a blocker. Also confirmed a real (non-stubbed) `mktemp` still
+works correctly on the happy path, so the worker's stub isn't hiding a _success_-path problem either.
+
+**Subdomain-call and bypass-loop branches — spot-checked, not just trusted from the diff.**
+Re-ran transport-fail, `success:false`, a bypass host returning 200, and the positive control
+returning 404 against the current file: all four still produce the exact messages and exit codes
+approved in round 4. Nothing regressed.
+
+**Handover.** `handover-7.4.md` §4's two new bullets (the occurrence-count failure, the
+route-pattern-doesn't-reduce failure) match the code's actual behavior and message text exactly.
+
+**Nits (not blocking — this file is ready for the Product Owner's Step B):**
+
+- The trailing-dot FQDN case above — if `routes[0].pattern` is ever written with a trailing dot,
+  the positive control would refuse to run rather than accepting a hostname that's arguably valid.
+  Given Cloudflare never emits that form for a route pattern, this is theoretical; flagging so it's a
+  recorded, not rediscovered, gap if the shape of that config ever changes.
+- The `mktemp` failure path prints a raw, unstyled error rather than this step's usual `::error::`
+  crafted message. Fails safe either way; a `::error::` around it would just make a rare failure as
+  legible as every other one in this step.
+
+→ @architect
