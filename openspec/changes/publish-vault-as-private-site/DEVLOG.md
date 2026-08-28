@@ -7426,105 +7426,6 @@ GATES_EXIT:0` — 224 tests.
 examined, never which — and the one you care about is the one that is missing. When a check reports a
 number, ask what set produced it before believing what it excludes.
 
-## NEXT
-
-**Sections 1–6 are closed** (supervisor `Approve` on each). **§7 is OPEN and has NO supervisor review
-yet** — it cannot have one until its last block lands. **48/59 tasks.**
-
-**Resume point: `7.4`.** `7.1`, `7.2`, `7.3` are ticked and verified against real runs, not
-reproductions. Everything left in §7 (`7.4`–`7.8`) needs the vault repository, a Cloudflare deploy
-token, and the first deploy of **real confidential content** — all Product Owner work. Do not start
-them without them.
-
-**⚠️ Three things a fresh session must not get wrong:**
-
-1. **`7.3` was ticked on fixture evidence, and it carries a transferred obligation.** Its clause
-   "re-request the `workers.dev` address **and** a preview address afterwards to confirm the deploy
-   did not re-enable the routes `2.2` disabled" concerns the **real** Worker, whose first deploy is
-   `7.4`'s event. **If `7.4` lands without that check, the `7.3` tick was wrong.** Recorded as an
-   Architect judgement, not an oversight.
-2. **The repository is PUBLIC as of 2026-08-27.** A client identifier reached `main` the same day, was
-   found by an ad-hoc grep after the push, and history was rewritten to purge it. PR #2's diff on
-   GitHub still shows the original text and pre-rewrite objects stay fetchable by SHA. **Never write
-   the vault's name, the published hostname, the Worker name, the account subdomain or the team domain
-   into this repository** — specs, tasks, DEVLOG, fixtures or commit messages.
-3. **`make gates` now includes `make publishable`, and it needs a symlink a fresh clone will not
-   have.** `.publishable-identifiers` is gitignored and points at the canonical list in the vault
-   repository (`.publisher/publishable-identifiers`). Without it the gate **errors by design** rather
-   than passing. Recreate the symlink, or set `$VP_IDENTIFIERS`. In CI, `PUBLISHABLE_LIST_OPTIONAL=1`
-   runs the pattern rules only and says so loudly.
-
-**§7 so far.** `action.yml` is a composite action with `--vault` hardcoded to `$GITHUB_WORKSPACE`
-(decision S6-3) and no input of any spelling able to reparent it; output defaults to
-`$RUNNER_TEMP/vault-publisher-site`, **outside** the workspace, because the section 6 containment
-guard refuses an output directory inside the vault root — which makes `7.7` structurally true rather
-than a `.gitignore` promise. `test-vault/` is committed at the repo root, additive to
-`test/fixtures/`, with all five `EXCLUSION_FLOOR` entries **named in its `publish.config.yaml` and
-refused anyway** — that is what makes the floor's removal observable. `v1` is tagged on `main` and
-verified by consumption from a separate repository. The wrangler configuration lives in the **vault**
-repository at `.publisher/wrangler.jsonc`.
-
-**Sixteen and seventeen. Both were green until something outside the code was varied.**
-
-- **The sixteenth: a hand-executed reproduction is not a verification.** `action.yml` shipped with a
-  hand-run of "the exact command sequence the action's steps run" — same invocation, same arguments,
-  exit 0, gates green, reviewer `Approve`. The first real Actions run failed on its **first step**:
-  `actions/setup-node` resolves `node-version-file` relative to `$GITHUB_WORKSPACE`, so an absolute
-  `${{ github.action_path }}/.nvmrc` had the workspace joined onto it. The reproduction passed because
-  it never went through `setup-node` at all. **When you hand-execute a sequence, name the steps you
-  did not execute — that list is where the next failure is.** It was survivable only because `7.1`
-  stayed unticked pending a real run.
-- **The seventeenth: green by accident of `PATH`.** The publishability gate — the tool built to stop
-  the leak — crashed under stock `/bin/bash` 3.2 on an empty array, on exactly the
-  `PUBLISHABLE_LIST_OPTIONAL=1` path. The worker's ablations, my gate runs and the reviewer's first
-  pass were all green **because Homebrew's bash 5 was ahead on `PATH`**. Its test claimed to exercise
-  the skip path and exercised the ambient environment. **A test that claims to pin an interpreter and
-  does not is the same defect one level up.** The fix that matters is the harness pinning
-  `PATH=/usr/bin:/bin`, not the array guard.
-- Also recorded, cheaply learned: **ablate a script in place.** Copying it elsewhere changes its
-  `repo_root` resolution and produces a misleading failure.
-
-**Standing rules this change has accumulated**, in the order they were paid for: a check that cannot
-fail proves nothing · an assertion about an input the run was never given cannot fail · when a fix
-matches the reproduction exactly, ask what the reproduction was an instance of · a fix is not exempt
-from the rule that produced it · construction is not observation · name the steps your reproduction
-skipped · vary the environment, not only the input.
-
-**Carried, still open:**
-
-- **The `.vault-publisher-output` marker is served** — observed live, `200`, zero bytes, no
-  vault-derived content. `8.1`/`8.3` should decide whether it is excluded from what is served rather
-  than leaving it incidental.
-- **`/` is a 404 when no front page is selected.** The real `publish.config.yaml` must select one.
-- **`action.yml`'s `--config` is assembled by string concatenation**, not a normalising path join. Not
-  a floor defeat under S6-3; parked for the §7 supervisor.
-- **§6's own `EXCLUSION_FLOOR` unit tests may assert over configs that never name the floored entry**,
-  in which case they cannot fail the way they appear to. One pass, parked for the §7 supervisor.
-- **`actions/setup-node@v4` and `actions/checkout@v4` are two majors behind** (`v7` declares `node24`;
-  `v4` declares the deprecated `node20`). Harmless today, a hard failure when node20 support ends.
-- **A non-existent `--vault` crashes with a raw Node stack trace** — `listVaultNotes` outside every
-  try/catch. Exits 1, three lines to close.
-- **The marker and the two non-zero exits are part of the tool's contract** and appear in no spec and
-  no `design.md` Decision. Worth an entry before archive.
-- **`resolveRealOrNaivePath` is exported from `src/writer.ts`** with two unrelated callers; arguably
-  belongs with the other containment primitives in `src/selection.ts`.
-- **The containment refusal is one-directional** — nothing refuses an `--output` that _contains_ the
-  vault.
-- **A check-then-write window** exists in principle between resolving the output path and writing it.
-  Unreachable in a single-shot CI build; parked deliberately.
-- **`test/end-to-end-output.test.ts` mkdirs scratch directories inside a tracked fixture vault**, with
-  `finally`-only cleanup.
-- **The format gate fails on the DEVLOG at every block boundary** — fifteen for fifteen. `make
-format-fix`, then `make format`.
-- **Hardlinks defeat `isWithinVaultBoundary`** — a threat-model decision parked for §8 hardening.
-- **Unobserved claims in `reader-access`**: removal's "can no longer authenticate" half, and the
-  non-disclosure scenario's timing.
-- **Access one-time code expiry: observed lapsing at 10 minutes, 2026-08-25** — `8.6`'s verification,
-  witnessed, untickable until §8 opens.
-- **Committer identity** — the Product Owner's personal address is the git author on every commit and
-  is now public, the repository having been published on 2026-08-27. Decided by events rather than
-  deliberately; worth a conscious ruling.
-
 **[worker]** Two post-commit defects fixed, addressed → @reviewer.
 
 **Defect 1 — widened default scan set.** `git -C "$repo_root" ls-files -z` → `git -C "$repo_root"
@@ -9039,3 +8940,110 @@ Three things to establish when it is picked up, in this order:
    bug it was never about.
 
 **`7.6` remains unticked**, and this defect blocks the shape of the test that found it, not the task.
+
+## NEXT
+
+**56/64 tasks.** `§1`–`§6` closed with supervisor `Approve`. **`§7` and `§8` are both OPEN and both
+have all their implementation landed** — what they are missing is their supervisor reviews, plus two
+Product Owner observations in `§7`.
+
+**⚠️ Section numbering changed on 2026-08-28.** A new `## 8. A front page always exists` was inserted,
+and the old `## 8. Final verification` became `## 9.`. **Every DEVLOG post written before that date
+that says `8.1`, `8.3` or `8.6` means today's `9.1`, `9.3`, `9.6`.** Posts are append-only, so they
+were not rewritten.
+
+### Do these first, in this order
+
+1. **Run the held `§7` supervisor review.** Base `d594629`, scope `git diff d594629..HEAD`. It was
+   deliberately withheld: `§7`'s central guarantee is the bypass check, which was found to report green
+   while a bypass was open, and reviewing the section before `§8` closed that would have been reviewing
+   it against a spec it did not meet. That is now fixed and proven, so the review can proceed.
+2. **Run the `§8` supervisor review.** Base `f38db41`.
+3. **`7.6` and `7.7`** — Product Owner observations, unblocked, small. See below.
+
+### The two open `§7` tasks
+
+- **`7.6`** — a push changing only `publish.config.yaml` rebuilds, and a note removed from the
+  selection no longer has a page. **Do not test this by emptying `notes:`** — that hits the open defect
+  below. Use a two-note selection reduced to one.
+- **`7.7`** — the CI half is covered (the workflow's own workspace check has run silent on every green
+  run, and the output directory is structurally outside the workspace). What remains is the Product
+  Owner confirming their local vault clone is clean after pulling.
+
+### ⚠️ Open defect — the render step fails when `notes` is empty
+
+Found by the Product Owner running `7.6`, left unfixed on their instruction, recorded in full under
+`## 8.`. An empty selection is a **legitimate** configuration — it is what "publish nothing" looks
+like, and the exclusion floor can produce one from a non-empty config on its own.
+`site-navigation`'s new requirement says the root SHALL serve on every publish with no exception, so a
+generated front page with an empty explorer looks like the specified behaviour. Confirm that reading
+before coding to it. **`§8`'s reviewer listed "empty published set" among the cases it checked and
+called it sound** — true of the functions it read, false of the program.
+
+### ⚠️ Carried from the live runs, not yet actioned
+
+- **Disabling a bypass is not instantaneous, and the check is racy in one direction.** Reverting the
+  flags produced a **red** run reporting both addresses still serving while `curl` from another vantage
+  point returned 404; a re-run minutes later, nothing changed, went green. It fails safe, but a
+  spurious red at `9.3` — after real content is published — is where a confusing failure costs most.
+  A bounded settle-and-retry (fail only if **still** serving at the end of a window) is strictly more
+  accurate, since a genuinely open bypass stays 200 indefinitely.
+- **`reader-access` states no qualification about that window.** "No alternative hostname SHALL serve
+  published content" is now known to have a propagation window during which one does, of unmeasured
+  length. That belongs in the spec or in an explicit decision not to state it.
+- **`9.1` publishes real client content.** Before it: decide the reader-facing selection, and take the
+  vault owner's personal `Index.md` **out** of the config — it was added as a stopgap during `7.8`
+  debugging and is not written for readers. The generated front page now removes the reason it was
+  there.
+
+### What the live runs settled, so nobody re-opens it
+
+- **The constructed bypass addresses are correct** — both returned 200 under enabled flags, confirmed
+  by the Product Owner's own `curl`. The 8-hex version prefix is **undocumented**; this observation is
+  the only thing that establishes it. If wrangler's version-ID shape ever changes, this is the
+  assumption that breaks.
+- **`custom_domain: true` adopts a dashboard-attached route** rather than fighting it — `7.3`'s parked
+  residual uncertainty, closed by observation.
+- **The deploy token needs `Workers Scripts Write` (account) _and_ `Workers Routes Write` (zone).** The
+  account half alone uploads fine and then fails on routes. The subdomain endpoint needs no extra
+  permission. **The token expires 26 November 2026** and nothing warns first — the workflow will start
+  failing on every push with an auth error that looks exactly like a misconfiguration.
+- **`wrangler deploy` prints no `workers.dev` address at all**, so both bypass hostnames are
+  constructed, never scraped.
+
+### Standing rules this change has accumulated
+
+A check that cannot fail proves nothing · an assertion about an input the run was never given cannot
+fail · when a fix matches the reproduction exactly, ask what the reproduction was an instance of · a
+fix is not exempt from the rule that produced it · construction is not observation · name the steps
+your reproduction skipped · vary the environment, not only the input · **a known-harmless fact does not
+stay harmless when new code comes to depend on it** (the `/`-is-404 note sat in this list as cosmetic
+for weeks, then became a false green in the security check) · **an audit can be right about the code it
+read and wrong about the program**.
+
+### Still-open items carried from earlier sections
+
+- The `.vault-publisher-output` marker is served (200, zero bytes, no vault content). `9.1`/`9.3`
+  should decide whether it is excluded rather than incidental. Raised again by `§8`'s reviewer so it
+  does not drop off.
+- A non-existent `--vault` crashes with a raw Node stack trace; three lines to close.
+- The marker and the two non-zero exits are part of the tool's contract and appear in no spec.
+- `resolveRealOrNaivePath` is exported from `src/writer.ts` with two unrelated callers.
+- The containment refusal is one-directional — nothing refuses an `--output` that _contains_ the vault.
+- Hardlinks defeat `isWithinVaultBoundary` — parked for `§9` hardening.
+- `actions/setup-node@v4` and `actions/checkout@v4` are two majors behind.
+- Unobserved claims in `reader-access`: removal's "can no longer authenticate" half, and the
+  non-disclosure scenario's timing.
+- Access one-time code expiry observed lapsing at 10 minutes on 2026-08-25 — `9.6`'s verification,
+  witnessed, tickable once `§9` opens.
+- A trailing-dot FQDN is rejected by the workflow's hostname check; a `mktemp` failure aborts with a
+  raw message rather than the step's `::error::` style.
+- The format gate fails on the DEVLOG at nearly every block boundary — `make format-fix`, then
+  `make format`.
+- **`.publishable-identifiers` must be symlinked** or `make gates` errors by design on a fresh clone.
+
+### Environment
+
+The vault repository is a sibling working directory. **Never run `git status` against it and print the
+output** — its note titles are the confidential material, and doing so puts them in the session
+transcript. Check specific files by path instead. This was learned by doing it.
