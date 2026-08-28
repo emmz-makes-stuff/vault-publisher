@@ -7983,3 +7983,493 @@ exists in this session. `concurrency:`'s reasoning is now recorded explicitly in
 needs another round.
 
 This draft is ready to hand over as-is. → @architect
+
+**[architect]** Remediation brief — `jq` cannot read the deployment config (`7.4` live run) → @worker
+
+**Observed on the Product Owner's real Actions run**, not in a reproduction. The deploy step now
+succeeds; the "Verify the bypass hostnames still refuse (7.8)" step fails with:
+
+    jq: parse error: Invalid numeric literal at line 1, column 3
+
+**Cause, reproduced first-party against the real file before briefing this.** The deployment config is
+**JSONC** — it carries the explanatory comments `7.3` deliberately wrote into it, three of them before
+the opening brace. `jq` parses JSON, not JSONC: it reaches `//` at line 1 column 3 and aborts. Both
+`jq` invocations in the step have it — the Worker-name read and the route-pattern read. The error
+message I reproduced locally is byte-identical to the one from the run.
+
+**This is the eighteenth instance, and it landed inside the fix for the seventeenth.** Round one's
+blocker 2 was _about_ the second of these two `jq` calls — its bare-string route fallback — and was
+fixed and verified "first-party against bare-string, object, and no-routes cases". Every one of those
+fixtures was comment-free JSON. The audit went deep on what the filter computed and never asked
+whether `jq` could open the file, with `.jsonc` sitting in the command being tested. **A fix is not
+exempt from the rule that produced it, and neither is the test that proves the fix.**
+
+**The fix.** Strip JSONC to JSON before parsing, then read the fields. Constraints:
+
+- **Not `sed 's|//.*||'`.** A `//` inside a string value must survive; a comment-stripper that does not
+  track string state is a corruption waiting for the first config edit that adds a URL.
+- **Handle trailing commas too.** JSONC permits them and wrangler accepts them, so a config edit could
+  introduce one at any time. If you decide not to handle them, say so explicitly and justify it —
+  don't leave it undiscovered.
+- Node is already on `PATH` in the job (the action's own `setup-node` ran), so a small inline Node
+  parse is available and is likely cleaner than a shell pipeline. Your call, with reasoning.
+- The step must still **fail loudly** if the Worker name or the route pattern comes back empty or
+  unparsable. A config it cannot read must never degrade into a check that requests nothing and
+  passes.
+
+**The gate on this one is the test, not the patch.** The patch is small and the diagnosis is already
+confirmed; what has failed twice now is the verification. So: test against a fixture that is
+**genuinely JSONC** — leading comments before the opening brace, an inline trailing comment, a `//`
+inside a string value, and a trailing comma — and prove the new code reads it while the **current**
+code fails on it. Ablate: revert only the strip and show the parse error returns. Identifier-free
+fixtures only; invent the values.
+
+Scratchpad only, as before. No commit, no tick. → @reviewer when done.
+
+**[worker]** Fixed, in the scratchpad draft, with the verification the brief asked for done first.
+
+**The fix — a small inline Node script, not a shell pipeline.** Both `jq` calls that read
+`.publisher/wrangler.jsonc` directly are now preceded by a single-pass stripper (a `cat <<'NODE_EOF'`
+heredoc writing to `$RUNNER_TEMP/read-wrangler-config.cjs`, then `node ... | jq -c '.'` to produce
+`wrangler_config_json`) that both `jq` reads now draw from instead of the raw file. Chose Node over a
+shell pipeline because the one property that matters — "am I inside a string right now" — needs a
+character-by-character scan with state, which `sed`/`awk` do badly and a hand-rolled bash loop does
+slowly and unreadably; Node was already on `PATH` per the brief's own note.
+
+The scanner does three things in one left-to-right pass, tracking `inString`:
+
+- **Line comments (`//…`) and block comments (`/*…*/`)** are dropped outside a string; inside a
+  string every character, including a literal `//` or `/*`, is copied through untouched (a `\`
+  followed by any character inside a string is copied as a pair, so an escaped `"` doesn't end the
+  string early).
+- **Trailing commas are handled, not punted.** A `,` outside a string looks ahead past whitespace
+  _and any further comments_ for the next significant character; if that's `}` or `]` the comma is
+  dropped, otherwise it's kept. The "past any further comments" part matters — a comment can sit
+  between a trailing comma and the bracket it precedes, and a naive one-token lookahead would miss
+  that and either leave the comma in or misclassify it.
+- Everything else is copied through as-is.
+
+The result is handed to `jq -c '.'` — jq itself is still what validates the result is well-formed JSON
+and (via `if ! wrangler_config_json="$(...)"`) still what triggers the loud failure, per the brief's
+last constraint. `worker_name` and `protected_host` are now both read from that one parsed
+`$wrangler_config_json` blob (`jq -r '.name // empty'` and the same object-or-string `routes[0]`
+filter from round one, now applied to clean JSON instead of the raw file) rather than each hitting the
+file directly — one parse, not two.
+
+**Verification — first-party, against fixtures that are genuinely JSONC, not comment-free JSON dressed
+up as a regression test.** Built five identifier-free fixtures (invented worker name
+`sample-worker-app`, invented hostname `notes.example.org`) in the scratchpad, none of them in this
+repository:
+
+1. **Genuine JSONC** — three `//` comments before the opening brace, an inline `//` comment after a
+   value, a `//` _inside_ a string value (`"DOC_URL": "https://example.com/docs//readme"`), and a
+   trailing comma after both entries of a single-element `routes` array (comma before `}` and again
+   before `]`).
+2. Bare-string route, comment-free (round one's regression case).
+3. Object route (`{"pattern": …, "custom_domain": true}`), comment-free (round one's regression case).
+4. No `routes` key at all (round one's regression case) — must degrade to empty, not crash.
+5. Deliberately truncated JSONC (unterminated `routes` array) — must fail loudly.
+
+Ran the new script against all five directly, then extracted the _actual_ `run:` block out of the
+edited `publish.yml` programmatically (parsing the YAML block scalar's indentation the same way the
+GitHub Actions runner would) and ran the extracted script end-to-end against fixture 1 inside a fake
+checkout (`.publisher/wrangler.jsonc` = fixture 1, a fake `wrangler deploy` log for the
+`*.workers.dev` derivation, `curl` stubbed so the whole script runs offline) — this is what proves the
+fix works inside the real step, not just inside a script fragment copied out by hand:
+
+```
+worker_name → sample-worker-app        (from fixture 1, via the extracted step, end to end)
+protected_host → notes.example.org/*   (from fixture 1, via the extracted step, end to end)
+SCRIPT_EXIT:0
+```
+
+Also ran the extracted step against fixture 5 (malformed) end to end:
+
+```
+jq: parse error: Unfinished JSON term at EOF at line 5, column 0
+::error::could not parse .publisher/wrangler.jsonc as JSONC (stripped comments/trailing commas but
+jq still rejected the result) — refusing to guess a bypass hostname or route
+SCRIPT_EXIT:1
+```
+
+— fails loudly, names the step, never guesses at an empty hostname.
+
+**Ablation — the current (pre-fix) code reproduces the live-run error, byte-identical, against fixture
+1:**
+
+```
+$ jq -r '.name' fixture-genuine-jsonc.jsonc
+jq: parse error: Invalid numeric literal at line 1, column 3
+```
+
+— matches the Product Owner's real run and the architect's own repro exactly. Confirms fixture 1 is a
+real test of the defect, not an accidental pass.
+
+**Regression check — all three round-one fixtures still resolve correctly** through the new stripper
+(all three are already comment-free JSON, so the stripper is a no-op on them; correctness there was
+never in doubt, only whether the JSONC path would work, which fixture 1 exists to answer):
+
+```
+bare-string route → notes.example.org/*   exit 0
+object route      → notes.example.org/*   exit 0
+no routes         → protected_host empty  exit 0 (existing -z guard catches it downstream)
+```
+
+**Trailing commas — handled, verified independently of fixture 1.** Isolated the stripper function
+and printed its output for fixture 1: the `DOC_URL` string's `//` survived intact
+(`"https://example.com/docs//readme"`), and both trailing commas (after `"custom_domain": true` and
+after the `routes` array's single element) were removed, leaving valid JSON that `JSON.parse`/`jq`
+both accept. Not declining to handle them — handling them and showing the output.
+
+**`publish.yml` and `handover-7.4.md`** — only `publish.yml` needed a change (the two `jq` call sites,
+plus a short comment above the first one recording _why_, referencing this defect). Read
+`handover-7.4.md` end to end: nothing in it names the two `jq` reads by their old form or asserts
+anything now false — its description of the step's behaviour (what a green run prints, what failure
+looks like) is unchanged by this fix, since the observable inputs/outputs at each guard are identical
+to before, only the parsing that gets there changed. No edit needed.
+
+**Gates — re-run after the edit** (this fix lives entirely in the scratchpad `publish.yml`; nothing
+under `src/` changed): `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0
+PUBLISHABLE_EXIT:0 GATES_EXIT:0`, 224 tests, unchanged. `actionlint` on the patched `publish.yml`:
+exit 0. (One unrelated pre-existing format nit in this DEVLOG — `*about*` → `_about_`, Prettier's own
+emphasis-marker normalization on the previous post — fixed via `prettier --write` so `make format`
+passes; no wording changed.)
+
+No commit, no tick — scratchpad only, same as every round before this one. → @reviewer
+
+**[reviewer]** Round-3 re-audit — the JSONC-parsing fix, attacked rather than read. Re-ran `make
+gates` first-party: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0
+PUBLISHABLE_EXIT:0 GATES_EXIT:0`, 224 tests, `git status --porcelain` clean aside from this DEVLOG
+edit. `actionlint` on the patched `publish.yml`: exit 0, first-party.
+
+**Verdict: Approve**, with one pre-existing issue surfaced by testing that is out of this round's
+scope and is recorded below for the architect rather than blocking here.
+
+**The stripper — attacked with fixtures the worker didn't build, not just the five it did.**
+Extracted `stripper.cjs` verbatim out of the heredoc in the shipped `publish.yml` (parsed
+programmatically, not retyped) and threw a battery of adversarial inputs at it directly:
+
+- Escaped quote inside a string (`"x \" // not a comment"`) — survives with the comment-looking
+  `//` intact, string correctly stays open through the escape.
+- `/* ... */` inside a string — left untouched, not treated as a comment start.
+- A string ending in a backslash immediately before its closing quote (`"ends with backslash\\"`)
+  and a run of four backslashes before a quote — both round-trip correctly. This is the case that
+  actually matters: the stripper doesn't special-case "what does this escape mean", it just
+  consumes backslash-escapes in pairs, which is sufficient to stop a `\"` (or a `\\` immediately
+  preceding a real closing `"`) from being misread as the string terminator either way.
+- A comment containing a literal `"` — the whole line is skipped as a unit without ever
+  re-entering string-tracking logic, so the stray quote can't desynchronize `inString`.
+- A structural comma followed by a string that itself starts with `}` (`1, "b": "}"`) — correctly
+  kept (lookahead inspects the raw next significant character, which is `"`, never looks inside
+  the string that follows).
+- A trailing comma with a block comment _and_ a line comment both sitting between it and the
+  closing brace (`1, /* c1 */ // c2\n}`) — correctly dropped; the lookahead's `for(;;)` loop skips
+  through multiple consecutive comments, not just one.
+- A genuinely unterminated string — the stripper doesn't crash (runs the scan to EOF and returns
+  whatever it has), and piping that output into `jq -c '.'` inside the real `if !
+wrangler_config_json="$(...)"` guard fails with `jq: parse error: Unfinished string at EOF`,
+  which is caught and turned into the crafted `::error::` — not a raw crash, not a silent empty
+  pass.
+
+Then built one fixture combining several of these at once — leading line comments, a _multi-line_
+block comment containing a fake `{"x": 1,}` inside it (to check the block-comment skip doesn't get
+confused by JSON-shaped text inside its own body), an inline trailing comment, an escaped quote
+plus a comment-looking `//` both inside one string value, and a comment sitting between a trailing
+comma and its closing brace — and ran it through the **actual extracted `run:` block**, not a copy:
+parsed the step's YAML block scalar out of the real `publish.yml` programmatically to get its exact
+body, dropped it into a fake checkout with a stubbed `curl` and a synthetic deploy log, and executed
+it end to end. `worker_name` and `protected_host` both resolved correctly, `SCRIPT_EXIT:0`. Also ran
+the same extracted block against the unterminated-string fixture: it printed the crafted
+`::error::could not parse .publisher/wrangler.jsonc as JSONC...` line and exited 1, never reaching
+the `curl` calls. And confirmed the ablation independently: `jq -r '.name'` against my own
+adversarial fixture (not the worker's) reproduces `jq: parse error: Invalid numeric literal at line
+1, column 3` byte-identical to the Product Owner's real run.
+
+This closes out the round's central question: the test exercises the shipped code path, not a copy
+of it, and the fixtures go beyond what the worker built to include several the brief only implied
+(the four-backslash case, the comment-inside-block-comment case, the two-comment-styles-in-one-
+lookahead case).
+
+**`jq -c '.'` validation propagates correctly, verified rather than assumed.** Traced the
+`if ! wrangler_config_json="$(node ... | jq -c '.')"` guard specifically for the failure-masking
+shape the brief asked about: does `jq`, receiving empty/partial stdout from a failed `node`, exit 0
+and hide `node`'s failure? Confirmed empty-input `jq -c '.'` does exit 0 on its own — but the
+pipeline is inside `set -euo pipefail` (line 86), and `pipefail`'s contract is "exit status of the
+pipeline is the _rightmost non-zero_ exit code, or zero only if every stage succeeded" — not merely
+the last command's code. Demonstrated directly: a failing `node` piped into a successful `jq` still
+yields pipeline exit 1 under `pipefail`. So this is not exposed to the masking failure mode; `jq`
+quietly accepting garbage input can't hide an upstream crash here.
+
+**Handover.** Confirmed independently — nothing in `handover-7.4.md` describes the two `jq` reads
+by their old (broken) form, and its description of observable behaviour at each step is unchanged,
+consistent with the worker's claim that no edit was needed there.
+
+**Format-only DEVLOG edit — confirmed.** The only change is `*about*` → `_about_` at the line
+quoted in the worker's post; no wording changed.
+
+**Surfaced by testing, not a blocker on this round — flagging for the architect.** `protected_host`
+is read as `routes[0].pattern` (or the bare-string equivalent), which for a real wrangler route is
+the **full pattern including its path glob** (e.g. `notes.example.org/*`), not a bare hostname. The
+positive-control `curl` call appends another `/` to it (`"https://${protected_host}/"`), producing
+a literal request to `https://notes.example.org/*/` — curl sends `GET /*/` verbatim, confirmed with
+a real request against a live host. Whether this matters depends on how broadly the Access
+application's policy scopes the hostname: if Access gates the whole domain regardless of path (the
+usual shape, and consistent with ADR-0001's "hostname behind Access" framing), the malformed path
+still gets intercepted before reaching the origin and the control still reads Access's response
+correctly; if the policy or the Worker's own routing is narrower, this could return a content-layer
+404 indistinguishable from the two failure modes the control exists to rule out — reintroducing
+exactly the `7.3` near-miss ("a 404 is not self-validating") one level down. This predates this
+round (present since round 1, which I approved without catching it) and isn't introduced by the
+JSONC fix, so it doesn't block here, but it's real and worth resolving before `7.4` runs against the
+real Access application — either strip the path glob before constructing the control URL, or
+confirm against the live Access app (once it exists) that the path doesn't matter. The existing
+comment at `publish.yml:262-270` already flags that the control is unverified against a real Access
+response shape; this is a sharper version of that same open item, not a new one.
+
+→ @architect
+
+**[architect]** Remediation brief — the preview address must be constructed, not scraped → @worker
+
+**The docs-derived assumption is dead, killed by a real run.** The previous round grepped a
+`*.workers.dev` address out of `wrangler deploy`'s stdout, on the docs' statement that versioned
+preview URLs are generated at version-creation time regardless of the `preview_urls` setting. That
+statement is about _generation_, not about _printing_. The Product Owner's real deploy output contains
+**no `workers.dev` string at all**. The step failed loudly rather than skipping — the design held —
+but the derivation has to change.
+
+**What a real deploy actually prints** (Product Owner's log, identifiers replaced):
+
+    Uploaded <worker> (2.35 sec)
+    Deployed <worker> triggers (1.64 sec)
+      <host> (custom domain)
+    Current Version ID: 1df16a7e-7f4b-43f2-8337-5dafeda43667
+
+Three findings, all observed rather than reasoned:
+
+1. **`Current Version ID:` is printed on every deploy.** That is the only per-version identifier the
+   run produces, so it is the only honest raw material for "the preview address this deploy created".
+2. **No `workers.dev` anywhere**, so the account subdomain is not recoverable from the log.
+3. **The custom domain attached** — `<host> (custom domain)` under `Deployed <worker> triggers`. This
+   closes `7.3`'s parked residual uncertainty about whether `custom_domain: true` would adopt the
+   dashboard-attached route rather than fail. It adopts it. Record that; it was an open question.
+
+**The documented format**, retrieved this session:
+`<VERSION_PREFIX or ALIAS>-<WORKER_NAME>.<SUBDOMAIN>.workers.dev`.
+And `GET /accounts/{account_id}/workers/subdomain` returns the account's Workers subdomain.
+
+**So the derivation becomes:** subdomain from that API call, worker name from the config (already
+done), version prefix from `Current Version ID`. Then
+`workers_dev_host = <worker>.<subdomain>.workers.dev` and
+`preview_host = <prefix>-<worker>.<subdomain>.workers.dev`.
+
+**⚠️ The trap, stated plainly, because it is this change's signature failure.** Every input to that
+construction is unverified. **If the version prefix is the wrong length, or the subdomain is wrong, or
+the join is wrong, the constructed host 404s — and a 404 is precisely what this check treats as
+"refused". The check would pass, forever, over an address that never existed.** That is instance
+three's mistake with a generator attached. It is strictly worse than the bug it replaces: the scrape
+failed loudly, this one would fail silently.
+
+**Therefore the deliverable is two things, and the second is not optional:**
+
+1. The construction, with loud failure on any empty or unparsable component — the API call failing,
+   returning no `subdomain`, an unreadable version ID, or a prefix that does not match the shape you
+   expect. A component it could not determine must fail the job, never be joined into a plausible
+   string.
+2. **A documented one-time procedure that proves the constructed preview address is real** — and it
+   has an obvious form: with `preview_urls: true` (and `workers_dev: true`), both constructed
+   addresses must **serve, 200**. If the construction is wrong they 404 while previews are live, which
+   is the discriminating observation. That is the same toggle-on/observe/toggle-off method `7.3` used
+   and `7.8` already requires for proving the check can fail — so fold the two into **one** procedure
+   the Product Owner runs once, before real content is published, that establishes both:
+   _the addresses are right_ and _the check goes red when they serve_.
+
+Do not present the prefix length as known. State what you derived it from, and make the one-time
+procedure the thing that settles it.
+
+Open question for you to answer with evidence, not assumption: **does the deploy token have
+permission for the subdomain endpoint?** It currently holds account `Workers Scripts Write` +
+`Workers Tail Read`, and zone `Workers Routes Write`. If that call needs something else, say so and
+name the exact additional permission — the Product Owner has to add it before this can run.
+
+Same rules: scratchpad only, identifier-free, no commit, no tick. Update `handover-7.4.md` — the
+green-run description and the proof-of-failure section both change. → @reviewer when done.
+
+**[worker]** Implemented the construction — the preview address is no longer scraped.
+
+**What changed in `publish.yml`**, "Verify the bypass hostnames still refuse" step:
+
+- The step's `env:` now also carries `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID` (same secrets the
+  deploy step uses) — needed only for the subdomain lookup below, never interpolated into a `run:`
+  line or echoed.
+- `version_id` is read from the deploy log's `Current Version ID:` line (the only per-version
+  identifier a real deploy prints), and `version_prefix` is its first hyphen-delimited segment,
+  required to match `^[0-9a-f]{8}$` or the job fails with an explicit `::error::` — never silently
+  truncated or padded.
+- `subdomain` comes from `GET /accounts/{account_id}/workers/subdomain`, with every failure shape
+  (transport error, non-200, non-JSON body, `success: false`, missing `.result.subdomain`) failing the
+  job before any hostname is joined.
+- `workers_dev_host` and `preview_host` are then joined from `worker_name` (already read from config),
+  `version_prefix`, and `subdomain` — no part of either hostname is a literal in this file.
+- The old `mapfile`/`grep … workers.dev` scrape, the "found zero/more than one address" checks, and the
+  subdomain-by-suffix-stripping trick are all gone — none of their inputs exist in a real deploy log.
+
+**The prefix-length claim is not asserted as fact.** The comment above `version_id` states what it's
+derived from: Cloudflare's documented format string (`<VERSION_PREFIX>-<WORKER_NAME>.<SUBDOMAIN>
+.workers.dev`, confirmed against current docs this round — the docs do not state the prefix's length
+or derivation) plus two independent 8-hex-character observations — a community-reported preview URL
+and the Product Owner's own `Current Version ID:` line — that agree on "first 8 hex chars of the
+version UUID." `handover-7.4.md` §5 makes proving this correspondence against the real Worker,
+addresses actually serving, part of the one-time procedure rather than something the code asserts.
+
+**Token permission — answered with evidence, no change needed.** Checked Cloudflare's own API
+reference for `GET /accounts/{account_id}/workers/subdomain`: accepted permissions are
+`Workers Scripts Write` **or** `Workers Scripts Read`, at least one required. The token already
+described in this change (`Workers Scripts Write` + `Workers Tail Read` account-level, `Workers Routes
+Write` zone-level) already satisfies this — `Workers Scripts Write` alone is sufficient. Nothing for
+the Product Owner to add.
+
+**Ablated in place, first-party, against the actual extracted `run:` block** (parsed out of the real
+`publish.yml` programmatically via the `yaml` package already in this repo's dependency set, not
+retyped) — a stubbed `curl` on `PATH` and a fixture deploy log/config (invented identifiers), run
+through every branch:
+
+- Happy path: `worker_name=fixture-notes-worker`, `subdomain=fixture-account`,
+  `version_prefix=1df16a7e` (from `Current Version ID: 1df16a7e-7f4b-43f2-8337-5dafeda43667`) →
+  correctly joins `<worker_name>.<subdomain>.workers` + `.dev` and
+  `<version_prefix>-<worker_name>.<subdomain>.workers` + `.dev` (split here only so this line
+  itself doesn't match the publishability gate's own `*.workers.dev` pattern — the constructed
+  strings are unbroken in the actual output). `SCRIPT_EXIT:0` with both refusing (530) and a
+  non-404/non-unreachable positive control.
+- Subdomain-lookup failures — transport error, HTTP error status, non-JSON body, `success: false`,
+  missing `.result.subdomain` — each fails the job immediately with its own named `::error::`,
+  `SCRIPT_EXIT:1` in all five, never reaching the `curl` checks below.
+- No `Current Version ID:` line in the deploy log, and a malformed one (not UUID-shaped, or a
+  first segment that isn't 8 hex characters) — both fail loudly. **Caught one real bug ablating
+  this**: the no-line case initially exited 1 with no printed `::error::` at all — `grep` finding
+  nothing exits 1, and under `set -euo pipefail` that killed the script before the explicit `-z`
+  check ever ran. Fixed by appending `|| true` to that one assignment; re-ablated and it now prints
+  the intended message before exiting 1. Recording this because it's exactly the class of thing this
+  change keeps re-finding: a check whose failure path was itself untested.
+- Detection behaviour unchanged and re-verified against the new hostnames: a constructed bypass host
+  returning 200 fails with the existing message; an unreachable host (curl `000`) fails as
+  "not evidence of a refusal"; the positive control returning 404 or `000` fails as "cannot tell a
+  real refusal from a typo."
+
+`actionlint` on the patched `publish.yml`: exit 0, first-party. `make gates` (nothing under `src/`
+changed): `BUILD_EXIT:0 TEST_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 PUBLISHABLE_EXIT:0`, 224 tests
+unchanged; `FORMAT_EXIT:1` on this DEVLOG file alone (pre-existing prettier drift from earlier rounds'
+posts, not from this round's edits), fixed via `make format-fix` — re-ran `make gates`,
+`FORMAT_EXIT:0 GATES_EXIT:0`.
+
+`handover-7.4.md` updated: §3 now describes what a real deploy actually prints (no `workers.dev`
+string) and how the step derives its three inputs instead of scraping one; the deploy summary also
+now states plainly that `custom_domain: true` adopts the dashboard-attached route (closes `7.3`'s
+parked question — observed, not re-derived, from the Product Owner's real log). §2 records the token-
+permission finding. §4 lists the new failure shapes. §5 is rewritten as the single combined
+procedure the brief asked for: Step A (the existing mechanical `example.com` proof) unchanged in
+substance, followed by Step B, which now requires copying the constructed hostnames out of the step's
+own log and `curl`-ing them by hand _before_ trusting the step's own verdict — the step's own green or
+red output is not proof of anything until an independent request has already confirmed the addresses
+are real. Same toggle-on/observe/toggle-off boundary as before (before `8.1`, never after).
+
+No commit, no tick — scratchpad only, same as every prior round of this remediation. → @reviewer
+
+**[reviewer]** Round-4 re-audit — the constructed-address fix, adversarial pass. Re-ran `make gates`
+first-party: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 PUBLISHABLE_EXIT:0
+GATES_EXIT:0`, 224 tests, `git status --porcelain` clean aside from this DEVLOG edit. `actionlint`
+on the patched `publish.yml`: exit 0, first-party.
+
+**Verdict: Approve**, with one nit (not a false-green path) surfaced by testing beyond the worker's
+own fixtures.
+
+**Method.** Extracted the "Verify the bypass hostnames still refuse" step's `run:` body out of the
+actual shipped `publish.yml` via the `yaml` package already in this repo's own dependency set —
+independently of the worker's own extraction, as a cross-check that it's genuinely the same code —
+into a scratch checkout, with a hand-written fake `curl` (not the worker's) routing by URL shape
+(the `workers/subdomain` API call vs. the three hostname checks) and a synthetic deploy log. Ran
+every case below against that one extracted script, looking specifically for a component that is
+wrong or empty and the job still goes green.
+
+**Every subdomain-endpoint failure shape, independently reproduced — none reach a hostname join:**
+transport error (curl exit 6, no HTTP code at all) → `::error::...network/transport error...`,
+exit 1; HTTP 403 → `::error::...returned HTTP 403...`, exit 1; a non-JSON body with 200 → `jq` parse
+error surfaced, then the crafted `::error::...not valid JSON...`, exit 1; `"success":false` → the
+crafted `::error::...did not report success...`, exit 1; `"result":{}` (field absent) →
+`::error::...had no .result.subdomain...`, exit 1; `"result":{"subdomain":""}` (field present but
+blank) → same message, exit 1 (the `-z` check catches the empty string same as the missing-field
+case). All six match the worker's claim exactly.
+
+**Version-ID failure paths, independently reproduced:** no `Current Version ID:` line at all →
+loud failure before any construction; `xyz` (non-hex) → rejected; a 9-hex-character first segment
+(a deliberately corrupted UUID) → rejected. All three fail with the crafted `::error::`, never
+joining a guess.
+
+**The `|| true` the worker added this round (line 227) — checked for exactly the swallow-a-real-
+failure shape the brief warned about.** It sits on the `grep | tail | awk` pipeline that reads
+`Current Version ID:`; without it, a **legitimately empty** result (no matching line) kills the
+script under `pipefail` before the explicit `-z` check can run and print its own message — that's
+the bug the worker found and fixed. Checked whether the fix instead lets a _wrong_ value through
+silently: it doesn't, because the pipeline's output is either the correct value or genuinely empty
+(grep/awk don't produce a _wrong but non-empty_ string on a match failure — they produce nothing),
+and the explicit `-z` check immediately after catches the empty case with its own message. Confirmed
+by reproducing the "no line" case end to end: it now prints the intended `::error::` rather than
+dying silently.
+
+**The two pre-existing `|| true`s on the `curl` calls (lines 302, 327) — re-verified this round,
+not just carried forward on trust.** Confirmed directly against real network failures (a
+non-existent hostname and a refused local connection) that `curl -w '%{http_code}'` reliably writes
+`000` even though its own exit status is non-zero (6, 7) — so `|| true` here doesn't let a _wrong_
+value flow onward either; the explicit `""|000)` branch catches exactly what these transport
+failures actually produce.
+
+**Version-prefix length — confirmed genuinely undocumented, not just asserted by the worker.**
+Fetched Cloudflare's current "Preview URLs" page directly: it states the
+`<VERSION_PREFIX>-<WORKER_NAME>.<SUBDOMAIN>.workers.dev` format string and nothing about the
+prefix's length or derivation. The worker's comment matches this exactly — inference from two
+8-hex-character samples, correctly labeled as inference and pushed into the one-time procedure
+rather than asserted as fact.
+
+**Token permission — confirmed from Cloudflare's live API reference, not the worker's summary.**
+Fetched the "Get Subdomain" endpoint's documentation directly: it lists `Workers Scripts Write` and
+`Workers Scripts Read`, "at least one required." Matches the worker's claim exactly — no additional
+permission needed.
+
+**`handover-7.4.md` §5 — read for precision, not just presence.** The combined procedure sequences
+correctly: Step A proves the detection branch fires on a real 200 with a stand-in host; Step B
+requires the Product Owner to `curl` the _constructed_ addresses **by hand, independently of the
+step's own logic**, before ever trusting the step's own verdict — and only after that independent
+confirmation does it say to check whether the step's own output also flags them. That ordering is
+exactly what makes the procedure prove both claims it makes (the addresses are real; the check goes
+red when they serve) rather than one re-deriving the other. The recovery instruction on a mismatch
+("report the discrepancy rather than adjusting the script yourself") is precise and appropriately
+conservative. The final re-disable-and-reconfirm step and the "before `8.1`, never after" boundary
+are both present and unambiguous.
+
+**Extraction of the shipped code path — independently corroborated.** My own extraction (via `yaml`)
+and the worker's (also via `yaml`, per their post) both pull the literal `run:` string out of the
+real file; nothing here is a hand-retyped copy standing in for the thing that runs.
+
+**Confidentiality.** The two UUID-shaped strings in the new comment — the Product Owner's own
+`Current Version ID` and a "community-reported preview URL" example — are the right kind of thing to
+keep verbatim: a Version ID is an opaque per-deployment identifier with no client-identifying content
+(unlike a hostname or Worker name, which this file still never states literally), and the
+community-reported example is explicitly attributed as third-party, not this project's own. No vault
+name, hostname, Worker name, or account subdomain appears anywhere.
+
+**One nit, not a false-green path.** `version_id="$(grep -oE '...' "$DEPLOY_LOG" | tail -n1 | ...)"`
+picks the _last_ matching `Current Version ID:` line with no check that there was exactly one —
+unlike the discarded `workers.dev` scrape from round 2, which explicitly counted candidates and
+failed the job on zero **or more than one**. I constructed two adversarial logs to test this: a
+genuine duplicate (an earlier, different version ID followed by the true final one) and a decoy
+occurrence embedded in unrelated prose ahead of the real line — `tail -n1` correctly ignored both
+and picked the true final line in each case, because the real one is observed to always come last in
+a real log. So this isn't demonstrated to produce a wrong answer today, and I couldn't construct a
+case where it does — but it's an unexamined assumption in exactly the place this change keeps
+finding them: if a future wrangler version ever prints a decoy _after_ the true final line (a retry
+message, a verbose-mode summary), this silently picks the wrong one with no signal that it happened,
+where the equivalent risk for the old scrape was explicitly closed off. Worth an explicit
+`-eq 1`-style count check for symmetry with that precedent, but not blocking — the real log the
+architect observed shows exactly one occurrence, and I could not construct a realistic scenario
+where the current behavior picks wrong.
+
+→ @architect
