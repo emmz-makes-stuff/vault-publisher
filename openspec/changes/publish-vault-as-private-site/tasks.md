@@ -76,9 +76,9 @@ These come first deliberately: the guarantee must be in place and proven before 
 
 ## 8. A front page always exists
 
-- [ ] 8.1 Match the vault root's index note case-insensitively when selecting the front page, so a vault whose file is `index.md` is not silently treated as having none
-- [ ] 8.2 Generate a front page when no index note from the vault root is in the published set: an `index.html` at the site root carrying the explorer and no content derived from any unpublished note. Assert directly that a vault holding an unpublished index note produces a generated page whose bytes contain nothing from it — the failure that matters here is leakage, not a missing file
-- [ ] 8.3 Verify the generated page is replaced by the real one when an index note is added to the published set, and that removing it from the set restores the generated page
+- [x] 8.1 Match the vault root's index note case-insensitively when selecting the front page, so a vault whose file is `index.md` is not silently treated as having none
+- [x] 8.2 Generate a front page when no index note from the vault root is in the published set: an `index.html` at the site root carrying the explorer and no content derived from any unpublished note. Assert directly that a vault holding an unpublished index note produces a generated page whose bytes contain nothing from it — the failure that matters here is leakage, not a missing file
+- [x] 8.3 Verify the generated page is replaced by the real one when an index note is added to the published set, and that removing it from the set restores the generated page
 - [ ] 8.4 Close the bypass check's false-green: with the site root always served, confirm that a bypass hostname serving the site is now detected. The check reads a 404 as "refused", so before this section a published site with no front page returned 404 at `/` on an open `workers.dev` address and the check reported the bypass closed — the exact failure it exists to catch. Prove the fix by observation, not inspection: the address must serve, and the check must go red
 - [ ] 8.5 Tag a new `v1` on the publisher so the vault's workflow picks the change up, and verify the vault's next run renders a front page — the action is consumed as `@v1` and nothing reaches the vault until the tag moves
 

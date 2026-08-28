@@ -243,11 +243,18 @@ async function ensureOutputDirectoryReadyForPublish(outputDir: string): Promise<
  * Without the clearing, a note dropped from the config on a later run would
  * keep serving its page and its full body from a stale file this run never
  * touched — a confidentiality failure, not a tidiness one.
+ *
+ * `generatedFrontPageHtml`, when given, is written to `index.html` after
+ * every page in `pages` — `index.ts` supplies it only when
+ * `findVaultRootIndexNote` found no real index note in `published`, so the
+ * site root always ends up with something at it either way
+ * (`site-navigation`'s "The site root always serves a page").
  */
 export async function writeSite(
   outputDir: string,
   vaultRoot: string,
   pages: readonly RenderedPage[],
+  generatedFrontPageHtml?: string,
 ): Promise<void> {
   assertNoOutputPathCollisions(pages);
   await assertOutputDirectoryOutsideVault(vaultRoot, outputDir);
@@ -259,6 +266,15 @@ export async function writeSite(
     const filePath = resolveOutputFilePath(outputDir, page.notePath);
     await mkdir(path.dirname(filePath), { recursive: true });
     await writeFile(filePath, page.html, "utf8");
+  }
+  if (generatedFrontPageHtml !== undefined) {
+    // Only ever passed when no page in `pages` already writes to
+    // `index.html` — the caller (`index.ts`) checks
+    // `findVaultRootIndexNote` before calling — so this can never collide
+    // with a real page's output path. Written outside the `pages` loop and
+    // `assertNoOutputPathCollisions` deliberately: this page is not a note
+    // and carries no `notePath`, so it has nothing to collide against.
+    await writeFile(path.join(outputDir, "index.html"), generatedFrontPageHtml, "utf8");
   }
 }
 

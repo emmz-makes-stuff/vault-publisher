@@ -5,7 +5,7 @@ import type { PublishConfig } from "./config.ts";
 import { loadConfig } from "./config.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
 import { buildNavigationTree } from "./navigation.ts";
-import { renderPage } from "./page.ts";
+import { renderGeneratedFrontPage, renderPage } from "./page.ts";
 import { renderNoteToHast } from "./pipeline.ts";
 import {
   isEntryWithheldByFloor,
@@ -15,7 +15,7 @@ import {
   VaultRootWithheldByFloorError,
 } from "./selection.ts";
 import { reportWarnings, WarningCollector } from "./warnings.ts";
-import { buildNoteIndex, VAULT_ROOT_INDEX_NOTE } from "./wikilinks.ts";
+import { buildNoteIndex, findVaultRootIndexNote } from "./wikilinks.ts";
 import { resolveRealOrNaivePath, writeSite, type RenderedPage } from "./writer.ts";
 
 const USAGE =
@@ -139,12 +139,15 @@ export async function main(argv: readonly string[] = process.argv): Promise<void
 
   const collector = new WarningCollector();
   collectSelectionWarnings(config, unmatched, path.basename(configPath), collector);
-  if (!published.includes(VAULT_ROOT_INDEX_NOTE)) {
-    collector.push(
-      VAULT_ROOT_INDEX_NOTE,
-      'is not in the published set; the site has no front page and "/" will serve nothing',
-    );
-  }
+  // No warning when the root index note is absent from the published set:
+  // per the `site-navigation` amendment, the site root always serves a page
+  // either way — the generated front page below when there is no published
+  // root index note, that note's own rendered page when there is. A vault
+  // may simply have no root index note at all (an ordinary, unremarkable
+  // shape), and the vault's own owner may deliberately keep a personal
+  // landing page out of the published set — neither is a degraded publish
+  // needing the Product Owner's attention the way an unresolved wikilink or
+  // a dropped Bases block is, so this no longer earns a `[WARNING]` line.
 
   try {
     await publishSite(vaultRoot, published, outputDir, collector);
@@ -192,6 +195,14 @@ async function loadNotes(
  * navigation tree's labels (built before any page renders, so every page's
  * explorer is identical regardless of render order) and its own page's
  * frontmatter table.
+ *
+ * `findVaultRootIndexNote(published)` decides, from the published set
+ * alone, whether the vault root's own index note is one of the pages
+ * already being rendered above. When it is not, `renderGeneratedFrontPage`
+ * builds a fallback from `navigation` — never from any note's content, so a
+ * root index note that exists in the vault but was left out of `published`
+ * cannot leak through it — and `writeSite` lands it at `index.html`, so the
+ * site root always serves something.
  */
 async function publishSite(
   vaultRoot: string,
@@ -230,7 +241,12 @@ async function publishSite(
     });
   }
 
-  await writeSite(outputDir, vaultRoot, pages);
+  const generatedFrontPageHtml =
+    findVaultRootIndexNote(published) === undefined
+      ? renderGeneratedFrontPage(navigation)
+      : undefined;
+
+  await writeSite(outputDir, vaultRoot, pages, generatedFrontPageHtml);
 }
 
 /**

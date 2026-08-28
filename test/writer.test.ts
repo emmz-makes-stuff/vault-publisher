@@ -170,3 +170,37 @@ describe("writeSite — 5.6 the stylesheet actually lands in the output director
     await expect(readFile(path.join(outputDir, "styles.css"), "utf8")).resolves.toBe(STYLESHEET);
   });
 });
+
+describe("writeSite — 8.2 the generated front page", () => {
+  let outputDir: string;
+
+  beforeEach(async () => {
+    outputDir = await mkdtemp(path.join(tmpdir(), "vault-publisher-writer-generated-front-page-"));
+  });
+
+  afterEach(async () => {
+    await rm(outputDir, { recursive: true, force: true });
+  });
+
+  it("writes the given generated front page to index.html alongside the other pages", async () => {
+    await writeSite(
+      outputDir,
+      unrelatedVaultRoot,
+      [{ notePath: "Handbook/Onboarding.md", html: "<p>Onboarding</p>" }],
+      "<p>Generated</p>",
+    );
+
+    const frontPage = await readFile(path.join(outputDir, "index.html"), "utf8");
+    expect(frontPage).toBe("<p>Generated</p>");
+    const onboarding = await readFile(path.join(outputDir, "Handbook", "Onboarding.html"), "utf8");
+    expect(onboarding).toBe("<p>Onboarding</p>");
+  });
+
+  it("writes no index.html when no generated front page is given and no page names it", async () => {
+    await writeSite(outputDir, unrelatedVaultRoot, [
+      { notePath: "Handbook/Onboarding.md", html: "<p>Onboarding</p>" },
+    ]);
+
+    await expect(readFile(path.join(outputDir, "index.html"), "utf8")).rejects.toThrow();
+  });
+});

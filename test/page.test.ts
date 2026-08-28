@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderPage } from "../src/page.js";
+import { renderGeneratedFrontPage, renderPage } from "../src/page.js";
 
 describe("renderPage — 5.4 a hast tree serialised once, never a string spliced in", () => {
   it("escapes an HTML metacharacter in a note title", () => {
@@ -54,6 +54,43 @@ describe("renderPage — 5.4 a hast tree serialised once, never a string spliced
       navigation: [],
       noteContent: [{ type: "text", value: "Body." }],
     });
+
+    expect(html).not.toContain("<script");
+  });
+});
+
+describe("renderGeneratedFrontPage — 8.2 the fallback front page", () => {
+  it("takes no note content — it has nothing to derive a leak from", () => {
+    // Signature-level guarantee: this function's only input is the
+    // navigation tree, which is itself built from `published` alone
+    // (`navigation.ts`) — there is no parameter through which an
+    // unpublished note's markdown, frontmatter or title could reach this
+    // function in the first place.
+    expect(renderGeneratedFrontPage.length).toBe(1);
+  });
+
+  it("carries the explorer, built from the navigation tree it was given", () => {
+    const html = renderGeneratedFrontPage([
+      {
+        type: "note",
+        notePath: "Handbook/Onboarding.md",
+        label: "Onboarding",
+        sortKey: "Onboarding.md",
+      },
+    ]);
+
+    expect(html).toContain('<nav class="explorer">');
+    expect(html).toContain('<a href="/Handbook/Onboarding.html">Onboarding</a>');
+  });
+
+  it("has a fixed, generic title, not derived from any note", () => {
+    const html = renderGeneratedFrontPage([]);
+
+    expect(html).toContain("<title>Home</title>");
+  });
+
+  it("emits no script tag anywhere in the page", () => {
+    const html = renderGeneratedFrontPage([]);
 
     expect(html).not.toContain("<script");
   });

@@ -36,16 +36,41 @@ function noteNameKey(notePath: string): string {
 
 /**
  * The vault-relative path of the vault's own index note — the one
- * `site-navigation` names as the front page. Compared case-sensitively:
- * Obsidian note names are, and a `folders`/`notes` config entry naming
- * anything else at root (`index.md`, lowercase) is a different note that
- * happens to collide on a case-insensitive filesystem, not this one.
+ * `site-navigation` names as the front page. `isVaultRootIndexNote` below
+ * matches it case-insensitively (`site-navigation`'s "Index note named in a
+ * different case" scenario) but still only at the vault root: a
+ * `folders`/`notes` config entry naming a subfolder's own `index.md`
+ * (`Handbook/index.md`) is a different note untouched by this rule.
  *
- * Exported so `index.ts` can warn when this exact note is absent from the
- * published set — the one condition under which the site has no front
- * page — without hard-coding the note name a second time.
+ * Exported so `index.ts` can decide, from the published set alone, whether
+ * the site has a real front page or needs a generated one — without
+ * hard-coding the note name or the case rule a second time.
  */
 export const VAULT_ROOT_INDEX_NOTE = "Index.md";
+
+/**
+ * Whether `notePath` is the vault's own root index note — a root-level
+ * (no `/`) file whose name matches `VAULT_ROOT_INDEX_NOTE` case-
+ * insensitively. The single decision point `outputPathForNote` and
+ * `findVaultRootIndexNote` both build on, so the two can never disagree
+ * about which published path is the front page.
+ */
+function isVaultRootIndexNote(notePath: string): boolean {
+  return !notePath.includes("/") && notePath.toLowerCase() === VAULT_ROOT_INDEX_NOTE.toLowerCase();
+}
+
+/**
+ * The published note, if any, that is the vault's root index note —
+ * case-insensitive, root-only, per `isVaultRootIndexNote`. `index.ts` uses
+ * this both to render that note as the front page when present and to
+ * decide when a generated front page (`page.ts`'s
+ * `renderGeneratedFrontPage`) is needed instead. Built from the published
+ * set alone, the same posture `buildNoteIndex` takes: an unpublished or
+ * absent index note is simply not found here, never a second code path.
+ */
+export function findVaultRootIndexNote(published: readonly string[]): string | undefined {
+  return published.find(isVaultRootIndexNote);
+}
 
 /**
  * The output file path a note path writes to, relative to the site root —
@@ -56,17 +81,18 @@ export const VAULT_ROOT_INDEX_NOTE = "Index.md";
  * would 404 behind authentication with no test able to see it, since a
  * test asserting only the href's shape would still pass.
  *
- * The vault root's own `Index.md` is special-cased here, not in the writer
+ * The vault root's own index note is special-cased here, not in the writer
  * or the CLI, so every caller — the writer landing the file, `[[Index]]`
  * resolving through `notePathToHref`, the round-trip test — agrees on the
  * same one answer: it becomes `index.html`, the site's front page, without
- * a second write path or a second decision anywhere else. A subfolder's own
- * `Index.md` (e.g. `Handbook/Index.md`) is untouched by this rule; only the
- * vault-relative path `"Index.md"` itself matches.
+ * a second write path or a second decision anywhere else. Matched via
+ * `isVaultRootIndexNote`, so `Index.md`, `index.md` and `INDEX.md` at the
+ * vault root all collapse onto the same output path; a subfolder's own
+ * `Index.md` (e.g. `Handbook/Index.md`) is untouched by this rule.
  *
  * `hrefToOutputPath` stays a pure decode with no knowledge of this rule: it
  * inverts the *encoding* `notePathToHref` applies to whatever
- * `outputPathForNote` returns, and for `Index.md` that is already
+ * `outputPathForNote` returns, and for the root index note that is already
  * `index.html` — so `hrefToOutputPath(notePathToHref("Index.md"))` still
  * equals `outputPathForNote("Index.md")` (`"index.html"`), even though
  * neither function can recover the original note path `"Index.md"` from
@@ -75,7 +101,7 @@ export const VAULT_ROOT_INDEX_NOTE = "Index.md";
  * makes `/index.html` a single, unambiguous file to serve.
  */
 export function outputPathForNote(notePath: string): string {
-  if (notePath === VAULT_ROOT_INDEX_NOTE) {
+  if (isVaultRootIndexNote(notePath)) {
     return "index.html";
   }
   const withoutExtension = notePath.endsWith(".md") ? notePath.slice(0, -".md".length) : notePath;
