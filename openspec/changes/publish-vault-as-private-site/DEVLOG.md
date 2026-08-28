@@ -8940,3 +8940,25 @@ check — it was the reason the check's own verification could not be completed.
 
 That run discharges `7.8`, `8.4` and the vault half of `8.5` together. Then `§7`'s held supervisor
 review, `§8`'s review, and `§9` opens.
+
+**[architect]** `7.4` and `7.5` **verified and ticked** — Product Owner's observation of a real run.
+
+The first run against the moved `v1` went green, and the published site serves behind the Access
+login as expected. Together with the earlier throwaway-branch push producing no run at all, that is
+both of `7.4`'s clauses observed rather than inferred: a push to `main` publishes, a push elsewhere
+does not. `7.5` likewise — the deploy authenticated from the repository secret and the log showed
+`CLOUDFLARE_API_TOKEN: ***` throughout, including on the run that failed for other reasons, which is
+the more useful evidence: the value stayed masked on an error path, not merely on a happy one.
+
+**Still open in `§7`**, and neither is blocked:
+
+- **`7.6`** — a push changing only `publish.config.yaml`, and a note removed from the selection no
+  longer having a page. Convenient shape given the current one-note selection: remove `Scratch.md`,
+  push that file alone, confirm the run fires and `/Scratch` is gone while the generated front page
+  remains. That also exercises the generated page as the _only_ output, which no test covers.
+- **`7.7`** — the workflow's own workspace check has run silent on every green run, and the output
+  directory is structurally outside the workspace, so the CI half is covered. The clause says "clean in
+  **both**" repositories; the publisher repository is never touched by the vault's workflow at all.
+  What remains is the Product Owner confirming their local vault clone is clean after pulling.
+
+`7.8` is mid-flight — Step B running now.
