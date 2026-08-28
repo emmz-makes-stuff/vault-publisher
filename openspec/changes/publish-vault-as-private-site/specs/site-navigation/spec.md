@@ -58,17 +58,41 @@ The explorer SHALL label each entry with the note's `title` frontmatter value wh
 
 ### Requirement: The vault's index note is the front page
 
-The site's front page SHALL be the rendered `Index.md` note from the vault root. It SHALL be subject to the same rendering rules as any other published page.
+The site's front page SHALL be the rendered index note from the vault root when that note is in the published set. The note SHALL be matched by filename case-insensitively. It SHALL be subject to the same rendering rules as any other published page.
 
 #### Scenario: Reader arrives at the site root
 
 - **WHEN** an authenticated reader opens the site without naming a page
 - **THEN** the rendered index note is shown
 
+#### Scenario: Index note named in a different case
+
+- **WHEN** the vault's root index note differs from `Index.md` only by letter case
+- **THEN** it is used as the front page
+
 #### Scenario: Links from the index
 
 - **WHEN** the index note links to notes that are not published
 - **THEN** those links degrade to plain text as they would on any other page
+
+### Requirement: The site root always serves a page
+
+The site SHALL serve a page at its root on every publish, whether or not an index note is in the published set. WHEN no index note from the vault root is published, the publisher SHALL generate a front page rather than leaving the root unserved. A generated front page SHALL carry the explorer and SHALL contain no content derived from unpublished notes.
+
+#### Scenario: No index note is published
+
+- **WHEN** the published set contains no index note from the vault root
+- **THEN** the site root serves a generated front page carrying the explorer
+
+#### Scenario: Vault holds an index note that is not published
+
+- **WHEN** the vault root has an index note but the configuration does not select it
+- **THEN** the site root serves a generated front page, and no content from the unpublished index note appears on it
+
+#### Scenario: Generated front page is replaced by a published index
+
+- **WHEN** an index note from the vault root is added to the published set
+- **THEN** the site root serves that rendered note instead of a generated front page
 
 ### Requirement: The site is readable on a phone
 

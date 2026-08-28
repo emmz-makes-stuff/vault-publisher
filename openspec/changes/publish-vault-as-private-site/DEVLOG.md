@@ -8473,3 +8473,71 @@ architect observed shows exactly one occurrence, and I could not construct a rea
 where the current behavior picks wrong.
 
 → @architect
+
+**[worker]** Fix — `handover-7.4.md` §5 stated the wrong refusal criterion for the bypass hosts.
+
+The re-disable paragraph said to confirm the two bypass hosts "refuse (non-200, non-404,
+non-unreachable...)" — that's the **positive control's** rule, not the bypass loop's. Re-read the
+shipped step: the loop's `case` only fails on `200` and on `""`/`000`; everything else, 404 included,
+hits the `*)` branch and prints `ok: ... (refused)`. So for `workers_dev_host`/`preview_host`, **404 is
+the expected pass**, and the old wording told the reader to require the opposite of what the code
+does, at exactly the point they'd be judging a real result by hand.
+
+Checked this against the record rather than assuming it: `2.2`'s verification (this DEVLOG, the
+section-2 posts) found the disabled `workers.dev` route returning 404 from Cloudflare's edge, confirmed
+against the dashboard as the right address rather than a mistyped one — so 404-from-a-disabled-route
+is exactly the observed shape here, not a guess.
+
+Rewrote the paragraph: bypass hosts should read non-200 and reachable after re-disabling (404 named as
+the expected shape, citing `7.3`'s fixture-deploy precedent), with the protected-host rule stated
+separately and explicitly as the different, non-404 one. Checked the rest of §4 and §5 for the same
+conflation — the "positive control fails" bullet in §4 and the rest of §5 already attribute each rule
+to the correct host; this was the one place the two got crossed. No code changed.
+
+Scratchpad only, no commit, no tick. → @reviewer
+
+**[architect]** Spec amended — the site root must always serve, and why that is a security fix
+
+**Found by the Product Owner running `7.8`'s Step B, against the live Worker.** The bypass check
+probes `https://<host>/`. With no index note in the published set there is no asset at the root, so
+that URL returns 404 — **and the check reads 404 as "refused"**. A site published with no front page
+would therefore serve every published note on an open `workers.dev` address while the check reported
+the bypass closed. That is a **false green in the one check whose failure mode is "content is
+reachable without authentication"**, and it was live in the workflow, not hypothetical: it is exactly
+what Step B was in the middle of demonstrating when the 404 appeared.
+
+Worth being precise about what went wrong in the reasoning, because the bug is older than the check.
+`## NEXT` has carried "**`/` is a 404 when no front page is selected**" since `7.3`'s fixture deploy,
+filed as a *cosmetic* note about the real config needing to select one. The same fact, once a check
+started probing `/`, became a security defect — and nobody re-read the carried item when the check was
+written. **A known-harmless fact does not stay harmless when new code depends on it.**
+
+**Product Owner's decisions, 2026-08-28** — both taken after the finding was put to them:
+
+1. **Generate a front page when no index note is published.** The publisher emits an `index.html`
+   carrying the explorer. Chosen over a config-nominated front page (`front_page:`) and over probing a
+   known-published path instead of `/`. It fixes the false green at its root — the site root always
+   serves, so `/` becomes a truthful probe — and it removes the pressure to publish an index note that
+   was written for the vault's owner rather than for readers.
+2. **Amend this change rather than open a new one.** Keeps the defect and its proof in one place. The
+   cost is reopening `site-navigation`'s delta spec after `§5` closed, and a new `v1` tag before the
+   vault sees any of it.
+
+**Spec delta** (`specs/site-navigation/spec.md`): the existing front-page requirement now matches the
+index note **case-insensitively** and applies only when that note is in the published set. A new
+requirement, **"The site root always serves a page"**, adds the generated fallback and — the part that
+matters — requires that a generated page **contain no content derived from unpublished notes**. The
+vault holds an index note that is deliberately not published; a fallback that scraped it for a summary
+would be a leak wearing the costume of a convenience.
+
+**Section numbering — `## 8. Final verification` is now `## 9.`** New work is `## 8. A front page
+always exists`, placed before final verification because `9.1` publishes the real set and the false
+green must be closed first. **Every DEVLOG post written before today that says `8.1`, `8.3` or `8.6`
+means today's `9.1`, `9.3` and `9.6`.** The posts are append-only so they were not rewritten; this note
+is the mapping. `## NEXT` has been updated to the new numbers.
+
+`make validate` → `VALIDATE_EXIT:0`.
+
+**§7 is not closed and does not close until `8.4`.** Its supervisor review is deliberately held: the
+section's central guarantee is a check that we now know can report green while the bypass is open, and
+reviewing it as-is would be reviewing a section against a spec it does not yet meet.

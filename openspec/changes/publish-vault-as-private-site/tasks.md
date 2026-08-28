@@ -74,11 +74,19 @@ These come first deliberately: the guarantee must be in place and proven before 
 - [ ] 7.7 Verify the built site is not committed to either repository — `git status` is clean in both after a publish
 - [ ] 7.8 Make the vault's publish workflow verify the guarantee on every run: after `wrangler deploy`, request the `workers.dev` address and a preview address and **fail the job** unless both refuse to serve the site. The preview address MUST be the one the deploy actually produced — `wrangler deploy` prints it — not a fixed literal: preview addresses are per-version, so a hardcoded one 404s forever whether or not previews are live, which would make this check green over exactly the territory it exists to examine. Verify by temporarily pointing the check at an address that does serve and confirming the job fails — a check that cannot fail proves nothing. This is the only part of `reader-access` that keeps holding after this change ships: everything else proven in section 2 is dashboard state on a third-party service that no gate in this repository can see change
 
-## 8. Final verification
+## 8. A front page always exists
 
-- [ ] 8.1 Publish the real selected set and verify the site contains exactly those notes, with the explorer showing no trace of excluded ones
-- [ ] 8.2 Re-verify unauthenticated refusal on the live site — a page, a nested path, and a static asset — after real content is deployed
-- [ ] 8.3 Re-verify every bypass hostname serves nothing now that real content exists — the `workers.dev` address and any Preview URL — since the deploys in section 7 ran between this check and 2.2
-- [ ] 8.4 Have each reader complete a login end to end and confirm they reach the site
-- [ ] 8.5 Review the publish log's `[WARNING]` lines with the Product Owner and confirm each degraded link is expected
-- [ ] 8.6 Verify credential expiry against the live site: request a credential, leave it unused past its stated lifetime, and confirm it is refused and a new one can be obtained. It MAY be discharged as soon as convenient rather than waiting for section 8 — earlier is better, since every other `reader-access` property was proven before confidential content existed and this one would otherwise be first observed against the real published set. Deferred from 2.8 because it requires an uninterrupted wait; the stated lifetime is currently quoted from vendor documentation rather than observed, and expiry is the half of the credential guarantee that nothing has yet exercised
+- [ ] 8.1 Match the vault root's index note case-insensitively when selecting the front page, so a vault whose file is `index.md` is not silently treated as having none
+- [ ] 8.2 Generate a front page when no index note from the vault root is in the published set: an `index.html` at the site root carrying the explorer and no content derived from any unpublished note. Assert directly that a vault holding an unpublished index note produces a generated page whose bytes contain nothing from it — the failure that matters here is leakage, not a missing file
+- [ ] 8.3 Verify the generated page is replaced by the real one when an index note is added to the published set, and that removing it from the set restores the generated page
+- [ ] 8.4 Close the bypass check's false-green: with the site root always served, confirm that a bypass hostname serving the site is now detected. The check reads a 404 as "refused", so before this section a published site with no front page returned 404 at `/` on an open `workers.dev` address and the check reported the bypass closed — the exact failure it exists to catch. Prove the fix by observation, not inspection: the address must serve, and the check must go red
+- [ ] 8.5 Tag a new `v1` on the publisher so the vault's workflow picks the change up, and verify the vault's next run renders a front page — the action is consumed as `@v1` and nothing reaches the vault until the tag moves
+
+## 9. Final verification
+
+- [ ] 9.1 Publish the real selected set and verify the site contains exactly those notes, with the explorer showing no trace of excluded ones
+- [ ] 9.2 Re-verify unauthenticated refusal on the live site — a page, a nested path, and a static asset — after real content is deployed
+- [ ] 9.3 Re-verify every bypass hostname serves nothing now that real content exists — the `workers.dev` address and any Preview URL — since the deploys in section 7 ran between this check and 2.2
+- [ ] 9.4 Have each reader complete a login end to end and confirm they reach the site
+- [ ] 9.5 Review the publish log's `[WARNING]` lines with the Product Owner and confirm each degraded link is expected
+- [ ] 9.6 Verify credential expiry against the live site: request a credential, leave it unused past its stated lifetime, and confirm it is refused and a new one can be obtained. It MAY be discharged as soon as convenient rather than waiting for section 9 — earlier is better, since every other `reader-access` property was proven before confidential content existed and this one would otherwise be first observed against the real published set. Deferred from 2.8 because it requires an uninterrupted wait; the stated lifetime is currently quoted from vendor documentation rather than observed, and expiry is the half of the credential guarantee that nothing has yet exercised
