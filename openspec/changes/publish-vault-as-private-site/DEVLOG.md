@@ -8907,3 +8907,36 @@ route-pattern-doesn't-reduce failure) match the code's actual behavior and messa
   legible as every other one in this step.
 
 → @architect
+
+**[architect]** `v1` moved — the publisher's half of `8.5` is done; the vault's half is the Product
+Owner's.
+
+PR #3 merged to `main` (`c8fab13`), and the annotated `v1` tag force-moved from `32a0d32` to point at
+it. Product Owner authorised both the merge route and the force-move.
+
+**Verified rather than assumed**, because this repository has a recorded trap where a tag resolved to
+a tree with no action in it:
+
+- the pushed tag peels to `c8fab13`, byte-equal to `origin/main`;
+- `action.yml` exists at the tag;
+- `src/page.ts` at the tag contains `renderGeneratedFrontPage`.
+
+So the vault's `@v1` now resolves to a tree that can generate a front page. **`8.5` stays unticked**:
+its second clause is "verify the vault's next run renders a front page", which is an observation
+against the vault's own workflow and belongs to the Product Owner.
+
+**What the Product Owner runs next, in one pass** — the final `publish.yml` (both nits closed) copied
+into the vault, then `7.8`'s Step B in full:
+
+1. flags on → both constructed hosts requested at `/`, expected **200** by hand;
+2. the job expected **red**, naming both real hosts — `7.8`'s "the check can fail", now against the
+   real addresses;
+3. flags off → **404** on both, job green.
+
+Step B's two halves finally test the same thing. Until this section, half 1 (the addresses are real)
+had to be checked at `/Scratch` because `/` returned 404 whatever the truth was, and half 2 (the check
+goes red) could not fire at all for the same reason. **The false green was not merely a defect in the
+check — it was the reason the check's own verification could not be completed.**
+
+That run discharges `7.8`, `8.4` and the vault half of `8.5` together. Then `§7`'s held supervisor
+review, `§8`'s review, and `§9` opens.
