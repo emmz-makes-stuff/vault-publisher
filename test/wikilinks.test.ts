@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildNoteIndex,
+  findVaultRootIndexNote,
   hrefToOutputPath,
   notePathToHref,
   outputPathForNote,
@@ -81,5 +82,50 @@ describe("outputPathForNote — vault-root front page", () => {
 
   it("routes [[Index]] at the vault root to /index.html", () => {
     expect(notePathToHref("Index.md")).toBe("/index.html");
+  });
+});
+
+describe("outputPathForNote — 8.1 case-insensitive root index match", () => {
+  it("maps a lowercase root index.md to index.html", () => {
+    expect(outputPathForNote("index.md")).toBe("index.html");
+  });
+
+  it("maps an all-caps root INDEX.md to index.html", () => {
+    expect(outputPathForNote("INDEX.md")).toBe("index.html");
+  });
+
+  it("leaves a subfolder's own index.md (any case) untouched by the front-page rule", () => {
+    expect(outputPathForNote("Handbook/index.md")).toBe("Handbook/index.html");
+  });
+});
+
+describe("findVaultRootIndexNote — 8.1", () => {
+  it("finds the root index note by exact name", () => {
+    expect(findVaultRootIndexNote(["Handbook/Onboarding.md", "Index.md"])).toBe("Index.md");
+  });
+
+  it("finds the root index note case-insensitively", () => {
+    expect(findVaultRootIndexNote(["Handbook/Onboarding.md", "index.md"])).toBe("index.md");
+  });
+
+  it("does not match a subfolder's own index note", () => {
+    expect(findVaultRootIndexNote(["Handbook/Index.md"])).toBeUndefined();
+  });
+
+  it("returns undefined when the published set has no root index note", () => {
+    expect(findVaultRootIndexNote(["Handbook/Onboarding.md"])).toBeUndefined();
+  });
+
+  it("cannot match a floor-excluded name — none of the exclusion floor's own entries share a name with the index note", () => {
+    // Floor exclusion (`selection.ts`'s `isExcluded`) already runs before
+    // `resolveSelection` returns `published`, and is itself case-
+    // insensitive across every EXCLUSION_FLOOR entry, so a floor-withheld
+    // path can never reach `published` regardless of its case. This test
+    // covers the narrower, independent fact this function relies on: none
+    // of "CLAUDE.md", ".claude", ".obsidian", "Journal" or "Private" is a
+    // case variant of "Index.md", so even a (hypothetical) unfiltered list
+    // could not have this function mistake one for the front page.
+    const floorNames = ["CLAUDE.md", ".claude", ".obsidian", "Journal", "Private"];
+    expect(findVaultRootIndexNote(floorNames)).toBeUndefined();
   });
 });

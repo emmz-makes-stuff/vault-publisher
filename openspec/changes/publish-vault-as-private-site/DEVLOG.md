@@ -7117,96 +7117,1793 @@ verification requiring the `v1` tag, Cloudflare credentials, or the vault reposi
 review for `## 7.` runs when the section's last block lands, not now. Handover list going to Emmz
 next.
 
+**[architect]** `7.2` **verified and ticked** — `v1` resolves and runs from another repository.
+
+**It did not, at first.** The tag was cut on `main` while every commit of this change lived on
+`change/publish-vault-as-private-site`, unmerged. `main` held two commits — the initial scaffolding and
+a docs PR — so `v1` pointed at a tree with no `action.yml` and no `src/`. The tag existed, `git`
+resolved the ref, and `uses: …@v1` would have failed with "action.yml not found". That is the sixteenth
+instance's shape moved into the release process: **a green-looking signal over an empty target.** My
+handover instruction caused it — I said "tag on `main`" without checking the branch had ever reached
+`main`.
+
+`7.2`'s verify clause is exactly the instrument that catches it, and it only catches it if read
+literally: _"verify `uses: emmz-makes-stuff/vault-publisher@v1` resolves **from another repository**."_
+Confirming the tag exists is not that check. Two green `test-action.yml` runs did not constitute it
+either — both use `uses: ./publisher`, a local path, which exercises the action but never the tag.
+
+**Resolution.** PR #2 merged to `main` as `cfc7704` — a **merge commit**, not a squash: the per-block
+commits are this change's durable record of how it was built and collapsing them would destroy it.
+`v1` deleted (was `35f73c9`) and recreated on `cfc7704`; `git ls-tree v1` confirms `action.yml` is
+present at the tag.
+
+**The evidence for the tick**, from a workflow in a separate repository (`publisher-test`):
+
+```
+node "/home/runner/work/_actions/emmz-makes-stuff/vault-publisher/v1/src/index.ts" \
+  --vault "/home/runner/work/publisher-test/publisher-test" ...
+cannot read configuration file: /home/runner/work/publisher-test/publisher-test/publish.config.yaml
+```
+
+The runner downloaded the action **from the tag** into `_actions/…/v1/` and ran it against a foreign
+workspace. It reached `Read the pinned Node version`, `Set up Node` (24.19.0 from `.nvmrc`), `npm ci`
+and `Publish`, failing only for want of a `publish.config.yaml` in that repo — the expected failure,
+and a **stronger** signal than a green job would have been: it proves the action resolved, installed
+and executed, and failed on the one thing genuinely absent.
+
+**A third real run, for free.** The merge to `main` fired `test-action.yml` on its
+`push: branches: [main]` trigger and passed, with both assertion steps `success` rather than skipped
+(step conclusions checked, not just the job's tick). The first green run was `pull_request` from a
+branch checkout; this one proves the same behaviour from the state `@v1` now points at.
+
+**Parked for the section review — `actions/setup-node@v4` and `actions/checkout@v4` are two majors
+behind.** Both are at `v7` and declare `using: node24`; `v4` declares `node20`, which the runner is
+deprecating — hence the warning on every run. It is emitted about `setup-node` itself, not about
+`.nvmrc` or the Node running the CLI; our composite action declares no JS runtime at all. Harmless
+today, a hard failure when node20 support is removed. No task covers it, so it is not being folded
+into `7.3`.
+
+**[architect]** `7.3` — the wrangler configuration is written, in the vault repository. **Not ticked**:
+the fixture deploy is the Product Owner's to run.
+
+**Where it lives, and why not here.** `.publisher/wrangler.jsonc` in the vault repository. The
+Product Owner's call, and it is the right one: the file names the Worker and the published hostname,
+both of which identify the client, and **this repository is now public**. `design.md` already required
+the hostname to be "a deployment parameter held in the vault repository's workflow configuration, not
+recorded here". The dot-prefixed folder keeps Obsidian from showing it in the file explorer.
+
+It also satisfies `7.3`'s "every wrangler configuration that deploys this Worker carries the flags"
+clause **by construction** rather than by keeping two files in sync — there is exactly one such
+configuration.
+
+**Architect wrote this file directly, and that is a deviation worth naming.** No worker was briefed.
+The reasons: it is deployment configuration in a different repository with no gate, no test harness
+and no Makefile target; and it carries identifiers that should propagate to as few places as possible.
+Recorded here rather than done quietly. Everything in this repository still goes through the
+worker/reviewer loop.
+
+**What the current Cloudflare docs settled** (retrieved today, not recalled):
+
+- `main` is optional for an assets-only Worker; the minimum keys are `name` and `compatibility_date`.
+- `preview_urls` defaults to whatever `workers_dev` is. It is set **explicitly** to `false` anyway —
+  an inherited default is one dashboard change away from shifting, and an explicit value is
+  re-asserted on every deploy.
+- **Routing is the same trap as the flags, and it is the sharper half.** "If you change your routes in
+  the dashboard, Wrangler will override them in the next deploy with the routes you have set in your
+  Wrangler configuration file. To manage routes via the Cloudflare dashboard only, remove any route
+  and routes keys from your configuration file. Then add `workers_dev = false`." So there are exactly
+  **two** coherent configurations — declare the routing here, or declare none of it and manage it in
+  the dashboard — and the halfway one **silently drops the custom domain on the next deploy**. The
+  configuration declares the custom domain, for the same reason it declares `workers_dev: false`:
+  applying "the config is the authority" to the bypass flags but not to the route the site is actually
+  served on would be incoherent.
+- `wrangler deploy --assets <dir>` exists, confirmed against `--help` rather than assumed, along with
+  `--name`, `--compatibility-date` and `--dry-run`.
+
+**One residual uncertainty, stated rather than papered over.** The custom domain was attached through
+the dashboard in `2.1`. Declaring the same pattern with `custom_domain: true` should adopt it rather
+than try to create it, but that is inference from the docs, not something observed. If the first real
+deploy errors on the route, the fix is to re-attach in the dashboard and switch to the routes-free
+form — it is recoverable, and `7.8`'s post-deploy checks are the net.
+
+**The fixture deploy — built and ready, Product Owner runs it.** A throwaway configuration naming a
+**different Worker** (`vault-publisher-fixture`) with no routes at all, carrying the same two flags. A
+fixture deploy that named the production Worker would overwrite the published site; a separate Worker
+removes that possibility rather than relying on care. The fixture site is the committed `test-vault`
+rendered by the CLI — the same seven files CI produces — so nothing confidential is uploaded.
+
+Handover with exact commands going to Emmz. `7.3` ticks on the observed result, not on this post.
+
+**[architect]** `7.3` **verified and ticked** — fixture deploy run end to end, with a control.
+
+The Product Owner supplied a throwaway vault repository and asked for the steps to be run here rather
+than handed over. Its contents were read in full before anything was uploaded — Obsidian's default
+welcome note and nothing else. Publishing distributes whatever is in the directory, so "there's
+nothing sensitive in there" is a thing to confirm, not to accept.
+
+**The site.** The publisher rendered the throwaway vault to three files, with two correct warnings: no
+`Index.md` in the published set, so the site has no front page; and `[[create a link]]` unresolved and
+degraded to plain text.
+
+**Serve-then-refuse, because a 404 is not self-validating.** A deploy carrying the flags would have
+produced a `workers.dev` address that refuses — and that would have proved nothing, because instance 3
+of this change's near-miss list is exactly a `404` accepted as evidence when a mistyped hostname
+returns the same `404`. So the fixture was deployed **twice**:
+
+1. `workers_dev: true`. `/Welcome` → **200, 591 bytes, `text/html`, containing the note's text.** The
+   address demonstrably serves.
+2. `workers_dev: false, preview_urls: false`, same assets. Wrangler reported **`No targets deployed`**.
+   The same `/Welcome` → **404**. So did `/styles.css`, and so did the per-version preview addresses
+   for **both** versions.
+
+And the check that shows the check discriminates: a **deliberately mistyped hostname** returns `404`
+with a body of **19,984 bytes — byte-identical to the four refusals above**. The refusal and the
+typo are indistinguishable from the response alone. What carries the verification is the transition:
+that exact URL served 591 bytes of the note six minutes earlier and does not now.
+
+**Two observations worth keeping, both from the live site rather than reasoning:**
+
+- **The marker file is served.** `/.vault-publisher-output` returned **200**. `## NEXT` parked "decide
+  whether it is excluded from what is served" as an open question; it is now answered — it is served,
+  it is a zero-byte file carrying no vault-derived content, and behind Access it is unreachable
+  unauthenticated like everything else. Still worth an explicit decision rather than an accident.
+- **`/` returns 404 when no front page is selected**, matching the warning exactly. Worth knowing
+  before the real deploy: the real config must select a front page or the site's root is a 404.
+
+**The Worker was deleted afterwards.** It existed for about ten minutes and only ever served Obsidian
+boilerplate.
+
+**On the tick.** `7.3` asks for the configuration and a verified fixture deploy: both done. Its
+"re-request the addresses **afterwards** to confirm the deploy did not re-enable the routes `2.2`
+disabled" clause concerns the **real** Worker's first deploy, which has not happened — that is `7.4`'s
+event, and `7.8` makes the check standing rather than one-time. Ticking `7.3` on the fixture evidence
+and transferring that clause to `7.4` is an Architect judgement, recorded here so it is auditable
+rather than assumed. If the real Worker's first deploy does not get that check, this tick was wrong.
+
+**[architect]** Publishability gate — brief → @worker
+
+**Scope note first: this is outside `publish-vault-as-private-site`.** No task covers it and it is not
+in the proposal. It is being built at the Product Owner's direction, now rather than after §8, because
+the repository went public on 2026-08-27 and a client identifier reached `main` the same day. Recorded
+here rather than done quietly. If it wants paperwork, that is a separate change.
+
+**Why it exists.** `build`, `test`, `format`, `lint` and `validate` would all pass over a leaked
+hostname or vault name forever. The leak that happened was found by a grep I ran from habit, _after_
+committing and pushing. Habit is not a gate.
+
+**I have already done the Architect half:**
+
+- `Makefile` has a `publishable` target calling `scripts/check-publishable.sh`, printing
+  `PUBLISHABLE_EXIT:<n>`, and wired into `gates`. **Do not edit the Makefile.**
+- The identifier list is a gitignored symlink at `.publishable-identifiers`, pointing at the canonical
+  copy in the vault repository. Six entries today.
+
+**Your half: `scripts/check-publishable.sh`, plus tests.**
+
+Behaviour:
+
+1. **Scan set.** No arguments → every tracked file (`git ls-files -z`). Arguments → scan exactly those
+   paths, recursing into directories. The argument form exists so tests and ablations can point it at
+   a fixture tree; it is not decoration.
+2. **Empty scan set is an ERROR.** Zero files scanned must never report clean. Print the count of
+   files actually scanned, always — `validate` in the Makefile is the precedent, and the CI workflow's
+   `file_count` guard is the other.
+3. **Pattern rules — no secrets, run everywhere.** Hostnames matching `*.workers.dev` and
+   `*.cloudflareaccess.com`, and bare email addresses. Allow `noreply@anthropic.com` and
+   `noreply@notify.cloudflare.com`, which are already in the tree as commit trailers and Cloudflare
+   boilerplate. Placeholder forms already in the DEVLOG (`<team>.cloudflareaccess.com`,
+   `*.workers.dev`) must NOT trip it — check the existing tree, and if honest placeholders trip the
+   rule, tighten the pattern rather than adding a suppression.
+4. **Literal rules.** List from `$VP_IDENTIFIERS`, else `.publishable-identifiers`. Ignore blank lines
+   and `#` comments. Case-insensitive substring match. Exclude the list file itself from the scan.
+5. **A missing or empty list is an ERROR, not a pass** — unless `PUBLISHABLE_LIST_OPTIONAL=1`, in
+   which case print a **loud, unmissable SKIPPED line** naming what was not checked, and continue with
+   the pattern rules. CI cannot hold the list; it can say so out loud.
+6. On a hit: print `path:line` and which rule matched, and exit non-zero. Exit 0 only when the scan set
+   was non-empty and nothing matched.
+
+**Tests — this is the part I care about most.** A gate whose own tests cannot fail is worse than no
+gate, because it manufactures confidence. Spawn the script (`test/index.test.ts` spawns the CLI; same
+shape) against fixture trees and cover **at minimum**:
+
+- clean tree → exit 0
+- planted `*.workers.dev` hostname → non-zero
+- planted bare email → non-zero
+- `noreply@anthropic.com` present → exit 0 (the allowance works)
+- planted literal from a list supplied via `$VP_IDENTIFIERS` → non-zero
+- list missing, `PUBLISHABLE_LIST_OPTIONAL` unset → non-zero
+- list missing, `PUBLISHABLE_LIST_OPTIONAL=1` → exit 0 **and** the skip line appears in the output
+- list present but empty (only comments) → non-zero
+- empty scan set → non-zero
+
+**Do not use the real identifiers in fixtures.** Invent strings. A test fixture containing the real
+vault name would put it back in the repository — the exact thing being prevented, in the tool built to
+prevent it. That is not a hypothetical: this change has fifteen recorded instances of a check
+reproducing the defect it was written against, four of them inside remediations.
+
+**Gates:** the full set, quoting every `LABEL_EXIT:<n>`, including the new `PUBLISHABLE_EXIT:0`.
+No commits, no ticks. → @reviewer when green.
+
+**[architect]** Publishability gate closed — committed. Reviewer `Approve` on re-audit.
+
+**The reviewer earned this one.** Its first pass found a blocker neither the worker nor I would have
+seen: `for id in "${identifiers[@]}"` under `set -u` is an `unbound variable` error on **bash 3.2**,
+which is what `/bin/bash` is on macOS — and the empty-array case is exactly the
+`PUBLISHABLE_LIST_OPTIONAL=1` path, the designed hazard. Every green signal up to that point — the
+worker's two ablations, my `make gates` runs, the reviewer's own first pass — was green **only because
+this machine has Homebrew's bash 5 ahead of `/bin/bash` on `PATH`**. On a fresh checkout or a minimal
+CI image the gate would die mid-scan, and a clean tree would exit non-zero with a bare interpreter
+error rather than the designed framing. That reads as flakiness, and flakiness is what gets a CI step
+marked `continue-on-error` — reopening the hole the gate exists to close.
+
+**So the seventeenth instance arrived inside the tool built to prevent the sixteenth**, and its test
+was the giveaway: the `PUBLISHABLE_LIST_OPTIONAL=1` case passed by accident of `PATH` rather than by
+exercising anything. **A test that claims to pin an interpreter and does not is the same defect one
+level up** — which is the level this project keeps getting caught at.
+
+The durable half of the fix is not the array guard, it is `run()` pinning `PATH=/usr/bin:/bin` across
+all thirteen spawned tests, so `#!/usr/bin/env bash` resolves to stock `/bin/bash`. With that in place,
+reverting only the script change reddens exactly the skip test with the verbatim error. The worker also
+found a **second** exposure the reviewer had not named — a `files` loop in the identifier-exclusion
+block that runs _before_ the empty-scan-set guard, so it can see an empty array too.
+
+**Reviewer's re-audit derived every claim first-party**, including confirming `/usr/bin/bash` does not
+exist on this machine so the pin genuinely selects 3.2.57, and ran an ablation neither of us had
+(blanking the email allowlist). It also recorded a trap worth keeping: **copying the script elsewhere
+to ablate it gives a misleading failure**, because `repo_root` resolution depends on the script's real
+path. Ablate in place.
+
+**Architect's own ablation, end to end through `make publishable` rather than the unit tests** — the
+question the unit tests cannot answer is whether the _gate_ catches a leak in the _real tracked tree_:
+
+- An invented hostname of the protected shape, planted in a tracked file → `PUBLISHABLE_EXIT:1`,
+  naming file, line and rule.
+- An invented literal supplied through `$VP_IDENTIFIERS` → `PUBLISHABLE_EXIT:1`, naming the entry.
+  Invented on purpose: planting a **real** identifier to test the tool that keeps real identifiers out
+  would be the defect wearing the tool's clothes.
+- Restored → `PUBLISHABLE_EXIT:0`, 166 files scanned, the same count as the baseline.
+
+One incidental confirmation: my first restore used `git checkout <file>` after `git add`, which
+restores from the **index** and left the planted line in place. The gate reported red on a run I had
+labelled "restored, green again?". It was right and I was wrong, which is the only way round that is
+any use.
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 PUBLISHABLE_EXIT:0
+GATES_EXIT:0` — 223 tests.
+
+**Scope, restated so the archive is not confusing:** this gate is **not** part of
+`publish-vault-as-private-site`. No task covers it, nothing is ticked for it, and it ticks nothing. It
+is infrastructure added at the Product Owner's direction on 2026-08-27, the day the repository went
+public and a client identifier reached `main`. If it warrants a spec, that is a separate change.
+
+**[architect]** Publishability gate — two defects found **after** it was committed. Fixed, reviewer
+`Approve` on re-audit, recommitted.
+
+**The eighteenth instance, and the most pointed one yet: the gate had never scanned its own test
+file.** The default scan set was `git ls-files`, which lists **tracked files only**.
+`test/check-publishable.test.ts` was untracked for the entire build-and-review cycle, so every green
+signal — the worker's ablations, the reviewer's `scanned 166 file(s)` / `PUBLISHABLE_EXIT:0`, and both
+of mine — was green over a file the gate could not see. It surfaced the moment I committed it and the
+gate immediately failed on its own fixtures.
+
+Three things make this worth writing down properly rather than filing as a bug:
+
+- **It happened inside the tool built to prevent instance 16.** Building a check does not exempt the
+  check from the failure mode it exists to catch. That is now the fifth time in this change a fix has
+  reproduced the class it was fixing.
+- **The blind spot pointed at the likeliest case.** A leaked identifier arrives in a **new** file far
+  more often than in an existing one, and new files are exactly what `git ls-files` cannot see. The
+  gate was blind precisely where it most needed to look.
+- **Everyone's evidence agreed, and everyone was wrong together.** Three independent parties ran the
+  same command and got the same number. Agreement between observers means nothing when they share an
+  instrument — the count `166` was consistent, reproducible, and describing a set that excluded the
+  file under test.
+
+**The fixes.** Scan set widened to `git ls-files -co --exclude-standard -z` — tracked **plus**
+untracked-but-not-ignored, still honouring `.gitignore` so `node_modules` and the identifier symlink
+stay out. Fixture strings are now assembled from fragments at runtime, so the contiguous matching
+literal never sits in the source bytes while the string written to disk is byte-identical to before.
+No pattern weakened and **no suppression for the test file** — a gate with a hole shaped like its own
+tests is not a gate.
+
+**Ablations.** The worker reverted only the scan-set line and reddened exactly the new regression test.
+The reviewer re-derived it independently, checked the binary-file path with a planted binary (skipped
+cleanly via the existing `grep -Iq` guard), and confirmed the runtime-assembled strings still catch a
+real pattern regression rather than merely failing to trip the gate — the trade that fix makes, and
+the quiet way it could have disarmed two tests while they kept passing. It also confirmed the new
+test avoids the `repo_root`-in-a-copy trap by placing the script at the **same relative path** inside
+a real `git init` fixture.
+
+**Architect's own, and the one that settles it:** planted a match in a **never-staged** file at the
+repo root — caught, named by path and rule, `PUBLISHABLE_EXIT:1`. Removed it — `PUBLISHABLE_EXIT:0`,
+168 files. The rise from 166 to 168 is _not_ evidence of the widening on its own; it is explained by
+the script and its test becoming tracked. The untracked plant is the evidence.
+
+**Gates:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 PUBLISHABLE_EXIT:0
+GATES_EXIT:0` — 224 tests.
+
+**Standing rule §7 adds: a count is not a scope.** `scanned N file(s)` tells you how many files were
+examined, never which — and the one you care about is the one that is missing. When a check reports a
+number, ask what set produced it before believing what it excludes.
+
 ## NEXT
 
-**Sections 1–6 are closed** (supervisor `Approve` on each). **45/59 tasks.** Next is **section 7 —
-distribution and deployment**: `action.yml`, the `v1` tag, the wrangler configuration, and the vault
-repository's publish workflow.
+**Sections 1–6 are closed** (supervisor `Approve` on each). **§7 is OPEN and has NO supervisor review
+yet** — it cannot have one until its last block lands. **48/59 tasks.**
 
-**§6 delivered the publisher's outer surface.** `src/cli.ts` is a real `util.parseArgs` CLI —
-`--vault`, `--config`, `--output`, all required with no defaults, `allowPositionals: false`, `--help`
-to stdout at exit 0. The positional stopgap and its skip-generation branch are gone. `src/writer.ts`
-now makes the output directory match the published set, and it is still the only module in `src/`
-that writes or deletes. `resolveSelection` is still the only producer of a published set; the new
-floor gate is a **refusal gate**, not a second filter — it decides whether the invocation runs, never
-which notes publish.
+**Resume point: `7.4`.** `7.1`, `7.2`, `7.3` are ticked and verified against real runs, not
+reproductions. Everything left in §7 (`7.4`–`7.8`) needs the vault repository, a Cloudflare deploy
+token, and the first deploy of **real confidential content** — all Product Owner work. Do not start
+them without them.
 
-**Fourteen and fifteen, both introduced by remediations.** §5 warned that a fix is not exempt from
-the rule that produced it; §6 proved it twice more.
+**⚠️ Three things a fresh session must not get wrong:**
 
-- **The fourteenth** — `test/index.test.ts`'s `--output`-missing test made a temp directory, never
-  passed it to the CLI, then asserted no page appeared in it. Unconditionally true. It was written
-  _by_ a remediation and **the reviewer's block B `Approve` cited it approvingly as "strictly
-  stronger"** than the test it replaced. The fix was deletion: with no output directory supplied,
-  "it never reached `publishSite`" is not externally observable, so there was nothing to assert.
-- **The fifteenth** — `expect(lines.length).toBeGreaterThan(0)` on `stderr.trim().split("\n")` as an
-  anti-vacuity guard. `"".split("\n")` is `[""]`, length 1, so a silently-publishing CLI passed the
-  very check that existed to catch it.
+1. **`7.3` was ticked on fixture evidence, and it carries a transferred obligation.** Its clause
+   "re-request the `workers.dev` address **and** a preview address afterwards to confirm the deploy
+   did not re-enable the routes `2.2` disabled" concerns the **real** Worker, whose first deploy is
+   `7.4`'s event. **If `7.4` lands without that check, the `7.3` tick was wrong.** Recorded as an
+   Architect judgement, not an oversight.
+2. **The repository is PUBLIC as of 2026-08-27.** A client identifier reached `main` the same day, was
+   found by an ad-hoc grep after the push, and history was rewritten to purge it. PR #2's diff on
+   GitHub still shows the original text and pre-rewrite objects stay fetchable by SHA. **Never write
+   the vault's name, the published hostname, the Worker name, the account subdomain or the team domain
+   into this repository** — specs, tasks, DEVLOG, fixtures or commit messages.
+3. **`make gates` now includes `make publishable`, and it needs a symlink a fresh clone will not
+   have.** `.publishable-identifiers` is gitignored and points at the canonical list in the vault
+   repository (`.publisher/publishable-identifiers`). Without it the gate **errors by design** rather
+   than passing. Recreate the symlink, or set `$VP_IDENTIFIERS`. In CI, `PUBLISHABLE_LIST_OPTIONAL=1`
+   runs the pattern rules only and says so loudly.
 
-**Standing rule §6 adds:** **an assertion about a thing the run was never given cannot fail.** Before
-writing a negative assertion, name the input that makes the negative observable. If withholding an
-argument _is_ the test, the artifact check is theatre.
+**§7 so far.** `action.yml` is a composite action with `--vault` hardcoded to `$GITHUB_WORKSPACE`
+(decision S6-3) and no input of any spelling able to reparent it; output defaults to
+`$RUNNER_TEMP/vault-publisher-site`, **outside** the workspace, because the section 6 containment
+guard refuses an output directory inside the vault root — which makes `7.7` structurally true rather
+than a `.gitignore` promise. `test-vault/` is committed at the repo root, additive to
+`test/fixtures/`, with all five `EXCLUSION_FLOOR` entries **named in its `publish.config.yaml` and
+refused anyway** — that is what makes the floor's removal observable. `v1` is tagged on `main` and
+verified by consumption from a separate repository. The wrangler configuration lives in the **vault**
+repository at `.publisher/wrangler.jsonc`.
 
-**Three rounds on block C, and why it took three.** The output-directory containment gate was fixed
-twice by covering exactly the case that had been demonstrated to it — unresolved strings, then
-leaf-only `realpath`. Both times a structurally identical attack one step further out still deleted
-real vault content at exit 0. The third shape — walk to the nearest existing ancestor, `realpath` it,
-rejoin only the genuinely nonexistent trailing segments — is general, and held against every axis the
-reviewer could construct. **When a fix matches the reproduction exactly, ask what the reproduction was
-an instance of.**
+**Sixteen and seventeen. Both were green until something outside the code was varied.**
 
-**Carried into §7 — what it inherits:**
+- **The sixteenth: a hand-executed reproduction is not a verification.** `action.yml` shipped with a
+  hand-run of "the exact command sequence the action's steps run" — same invocation, same arguments,
+  exit 0, gates green, reviewer `Approve`. The first real Actions run failed on its **first step**:
+  `actions/setup-node` resolves `node-version-file` relative to `$GITHUB_WORKSPACE`, so an absolute
+  `${{ github.action_path }}/.nvmrc` had the workspace joined onto it. The reproduction passed because
+  it never went through `setup-node` at all. **When you hand-execute a sequence, name the steps you
+  did not execute — that list is where the next failure is.** It was survivable only because `7.1`
+  stayed unticked pending a real run.
+- **The seventeenth: green by accident of `PATH`.** The publishability gate — the tool built to stop
+  the leak — crashed under stock `/bin/bash` 3.2 on an empty array, on exactly the
+  `PUBLISHABLE_LIST_OPTIONAL=1` path. The worker's ablations, my gate runs and the reviewer's first
+  pass were all green **because Homebrew's bash 5 was ahead on `PATH`**. Its test claimed to exercise
+  the skip path and exercised the ambient environment. **A test that claims to pin an interpreter and
+  does not is the same defect one level up.** The fix that matters is the harness pinning
+  `PATH=/usr/bin:/bin`, not the array guard.
+- Also recorded, cheaply learned: **ablate a script in place.** Copying it elsewhere changes its
+  `repo_root` resolution and produces a misleading failure.
 
-- **A committed test vault, Emmz's call on 2026-08-27.** Build a fixture vault that lives **inside
-  this repository and under source control**, as the standing vault for future testing. Today's
-  fixtures are scattered per-block under `test/fixtures/` (`integration-vault`, `warnings-vault`,
-  `degraded-content-vault`, `end-to-end-vault`, `vault-root-floor`) and several were carved to
-  reproduce one finding. A single committed vault gives §7 and §8 something real to publish against
-  without touching the source vault, and gives the macOS temp-directory question above a settled answer
-  — a vault under the repo is never under `/private/tmp`. Nothing confidential goes in it: invented
-  notes only, but shaped like the real thing (nested folders, a `Private/` and a `Journal/` for the
-  floor to withhold, wikilinks that resolve and some that don't, a Bases block, frontmatter). Decide
-  whether it **replaces** the per-block fixtures or sits alongside them; folding five fixtures into
-  one is a change to what those tests exercise, so it is not a pure move.
+**Standing rules this change has accumulated**, in the order they were paid for: a check that cannot
+fail proves nothing · an assertion about an input the run was never given cannot fail · when a fix
+matches the reproduction exactly, ask what the reproduction was an instance of · a fix is not exempt
+from the rule that produced it · construction is not observation · name the steps your reproduction
+skipped · vary the environment, not only the input.
 
-- **`action.yml` must pin `--vault` to the workspace root.** This is the durable half of S6-3; the
-  code guard is a fail-closed heuristic and cannot be more than that. Do not expose a vault-root
-  input a caller can reparent.
-- **The macOS temp-directory false positive.** The floor guard tests every segment of the _absolute_
-  resolved path, including ancestors above the vault that can never prefix a note path. On macOS
-  `/tmp` resolves to `/private/tmp`, so **every vault under a temp directory is refused on macOS** —
-  the supervisor got a refusal for a directory named `NotPrivate`. The suite is green only by
-  accident of which side uses `tmpdir()`: fixture vaults live under the repo, `mkdtemp` supplies
-  output directories. **The first test that builds a vault under `tmpdir()` fails on macOS and passes
-  on Linux for unrelated reasons** — and CI is Linux, so it will look like a local-only flake. Decide
-  the guard's scope before that happens.
-- **The marker file `.vault-publisher-output`** lands in the directory `7.3` uploads. It holds no
-  vault-derived content and sits behind Access, and the exact-set test names it explicitly rather
-  than filtering it out. Decide whether it is excluded from what is served.
-- **A non-existent `--vault` crashes with a raw Node stack trace** — `listVaultNotes` at
-  `src/cli.ts:137` sits outside every try/catch. Exits 1, violates no binding decision, three lines
-  to close.
-- **The marker and the two new non-zero exits are part of the tool's contract** and appear in no spec
-  and no `design.md` Decision — they live only in this thread. Worth a `design.md` entry before
-  archive.
-- **`resolveRealOrNaivePath` is exported from `src/writer.ts`** with two unrelated callers, and
-  arguably belongs in `src/selection.ts` with this project's other containment primitives. Not a
-  defect; a future move.
+**Carried, still open:**
+
+- **The `.vault-publisher-output` marker is served** — observed live, `200`, zero bytes, no
+  vault-derived content. `8.1`/`8.3` should decide whether it is excluded from what is served rather
+  than leaving it incidental.
+- **`/` is a 404 when no front page is selected.** The real `publish.config.yaml` must select one.
+- **`action.yml`'s `--config` is assembled by string concatenation**, not a normalising path join. Not
+  a floor defeat under S6-3; parked for the §7 supervisor.
+- **§6's own `EXCLUSION_FLOOR` unit tests may assert over configs that never name the floored entry**,
+  in which case they cannot fail the way they appear to. One pass, parked for the §7 supervisor.
+- **`actions/setup-node@v4` and `actions/checkout@v4` are two majors behind** (`v7` declares `node24`;
+  `v4` declares the deprecated `node20`). Harmless today, a hard failure when node20 support ends.
+- **A non-existent `--vault` crashes with a raw Node stack trace** — `listVaultNotes` outside every
+  try/catch. Exits 1, three lines to close.
+- **The marker and the two non-zero exits are part of the tool's contract** and appear in no spec and
+  no `design.md` Decision. Worth an entry before archive.
+- **`resolveRealOrNaivePath` is exported from `src/writer.ts`** with two unrelated callers; arguably
+  belongs with the other containment primitives in `src/selection.ts`.
 - **The containment refusal is one-directional** — nothing refuses an `--output` that _contains_ the
-  vault, beyond the marker's incidental "was empty once" invariant.
+  vault.
 - **A check-then-write window** exists in principle between resolving the output path and writing it.
   Unreachable in a single-shot CI build; parked deliberately.
 - **`test/end-to-end-output.test.ts` mkdirs scratch directories inside a tracked fixture vault**, with
   `finally`-only cleanup.
-- **The format gate fails on the DEVLOG at every block boundary** — now twelve for twelve. `make
-format-fix` then `make format`.
-
-**Still open, unchanged from §3/§4/§5:**
-
+- **The format gate fails on the DEVLOG at every block boundary** — fifteen for fifteen. `make
+format-fix`, then `make format`.
 - **Hardlinks defeat `isWithinVaultBoundary`** — a threat-model decision parked for §8 hardening.
 - **Unobserved claims in `reader-access`**: removal's "can no longer authenticate" half, and the
   non-disclosure scenario's timing.
 - **Access one-time code expiry: observed lapsing at 10 minutes, 2026-08-25** — `8.6`'s verification,
   witnessed, untickable until §8 opens.
-- **Committer identity** — Emmz's personal address is the git author on every commit and would go
-  public with the repository. Decide before publishing, not after.
+- **Committer identity** — the Product Owner's personal address is the git author on every commit and
+  is now public, the repository having been published on 2026-08-27. Decided by events rather than
+  deliberately; worth a conscious ruling.
+
+**[worker]** Two post-commit defects fixed, addressed → @reviewer.
+
+**Defect 1 — widened default scan set.** `git -C "$repo_root" ls-files -z` → `git -C "$repo_root"
+ls-files -co --exclude-standard -z` — tracked _and_ untracked-but-not-ignored. `--exclude-standard`
+still honours `.gitignore`, so `.publishable-identifiers` and `node_modules` stay out; nothing else
+about the scan-set-building logic changed. Binary-file handling was already `grep -Iq .`-gated per
+file, unaffected by which files land in the set.
+
+**Defect 2 — fixture literals no longer sit in the source.** `PLANTED_WORKERS_DEV_HOSTNAME =
+["fictional-example", "workers", "dev"].join(".")` and `PLANTED_EMAIL = ["person",
+"example.com"].join("@")`, both module-level `const`s in `test/check-publishable.test.ts`, built
+before any test runs. Neither array element alone is a hostname or an email address, so the checker's
+own patterns find nothing when it scans this file's bytes — only the runtime-joined value, written to
+a fixture file inside `scratchDir`, is a real match. The four call sites (`writeFile` bodies and the
+matching `toContain` assertions) now reference the constants instead of the old inline literals. Did
+not touch the DEVLOG-placeholder test (`<team>.cloudflareaccess.com` etc.) — those strings are
+deliberately non-matching by construction, not something needing obfuscation.
+
+**Durable regression test for defect 1** — `catches a planted match in an untracked-but-not-ignored
+file (default scan set)`. The script resolves its own repo root from `BASH_SOURCE`, not from `cwd`, so
+exercising the true default (no path arguments) against a fixture needs a real git repository with a
+copy of the script inside it, at the same relative path (`scripts/check-publishable.sh`) — not the
+vault-publisher checkout. The test: `git init` in a scratch dir, copies the real script in, writes one
+file that is **never staged** and not gitignored, carrying `PLANTED_WORKERS_DEV_HOSTNAME`, then invokes
+the copied script with **no arguments** under the pinned `PATH=/usr/bin:/bin`. Asserts non-zero exit
+and that both the planted hostname and the file's name appear in the output.
+
+**Ablation — reverted only the scan-set change, everything else at the fixed state:**
+
+    else
+      while IFS= read -r -d '' f; do
+        files+=("$f")
+      done < <(git -C "$repo_root" ls-files -z)   # scan-set change reverted, nothing else touched
+    fi
+
+Ran the full 14-case suite against that single-line reversion, under the same pinned `PATH`: exactly
+`catches a planted match in an untracked-but-not-ignored file (default scan set)` went red —
+`expected 'check-publishable: scanned 0 file(s).…' to contain 'fictional-example<dot>workers<dot>dev'`
+(the fixture repo has nothing staged, so tracked-only `ls-files` sees zero files and the script hits
+its own empty-scan-set `ERROR` path before ever reaching the planted string) — the other 13 stayed
+green. Restored, `diff` against the pre-ablation copy clean, 14/14 green again.
+
+**Confirmed against this repository's real tree, fixed script, no args:**
+`check-publishable: scanned 168 file(s).` and `PUBLISHABLE_EXIT:0` — up from the reviewer-reported 166
+because `scripts/check-publishable.sh` and `test/check-publishable.test.ts` are now tracked and the
+gate can see itself. (168 rather than higher because nothing in this checkout is currently untracked
+beyond this DEVLOG edit, which is tracked-modified, not new — the widened scan set's effect shows up
+the next time a genuinely new file lands uncommitted, which is exactly the failure mode defect 1
+closes.)
+
+**Gates, full set:**
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 PUBLISHABLE_EXIT:0 GATES_EXIT:0`.
+224 tests total (223 + 1 new).
+
+No commit, no tick. → @reviewer
+
+**[reviewer]** Re-audit of the two post-commit defect fixes (widened scan set, runtime-assembled
+fixture literals) — independently re-derived every claim rather than reading the diff.
+
+**Defect 1 fix verified.** `git ls-files -co --exclude-standard -z` genuinely widens the scan set to
+tracked + untracked-not-ignored while still excluding gitignored paths — piped the real scan set and
+grepped for `node_modules` and `publishable-identifiers`: zero hits, both correctly absent. Planted a
+fresh untracked, never-staged file at the repo root with a bare email address and ran
+`scripts/check-publishable.sh` directly under `PATH=/usr/bin:/bin` (not through the test suite):
+scanned count rose 168→169, file caught by name and line, exit 1. Reverted only the scan-set line
+(back to `ls-files -z`, everything else at the fixed state) and reran the 14-case suite: exactly the
+new regression test goes red, with `scanned 0 file(s)` — right failure mode, not the repo_root-in-a-
+copy trap from instances sixteen/seventeen. Confirmed the regression test avoids that trap: it copies
+the script to `<fixture>/scripts/check-publishable.sh`, the same relative position under a real
+`git init`-ed repo, so `BASH_SOURCE`-based `repo_root` resolution correctly matches the git repo it
+queries.
+
+**Binary files** — scan set is wider but the existing per-file `grep -Iq . "$f"` skip is unchanged and
+applies uniformly; planted a truncated binary file as untracked: scanned count rose, exit 0, no
+garbage matches, no crash.
+
+**Defect 2 fix verified.** `PLANTED_WORKERS_DEV_HOSTNAME` / `PLANTED_EMAIL` reconstruct via `.join()`
+to byte-identical values to the original literals (checked directly in `node`) — the fixture on disk
+is a genuine match, not a weakened one. Grepped the test file for the contiguous literals: absent,
+only split array fragments remain, so the checker no longer flags its own test. To confirm the tests
+still catch a real pattern-rule regression rather than merely not tripping the gate, neutered
+`workers_dev_regex` to a non-matching placeholder and reran: both the direct hostname test and the new
+regression test go red for the expected reason — restored, 14/14 green again.
+
+**Gates, reproduced first-party:** `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0
+PUBLISHABLE_EXIT:0 GATES_EXIT:0` via `make gates`, 224 tests.
+
+**Nothing else in the script warrants new distrust from this pair.** Identifier-list exclusion, the
+empty-scan-set guard, and the binary skip are unchanged and orthogonal to which files land in
+`files[]`. No new dependency, no suppression, no Makefile edit — diff stays confined to the two named
+files plus this DEVLOG.
+
+**Scope, carried forward:** still outside `publish-vault-as-private-site` — no task covers it, nothing
+ticked.
+
+**Verdict: Approve.**
+
+**[architect]** Block — the vault repository's publish workflow (`7.4`–`7.8`, draft) → @worker
+
+**What this block delivers, and what it deliberately does not.** A reviewed **draft** of
+`.github/workflows/publish.yml` for the **vault** repository, plus a handover note. It lands in the
+session scratchpad, **not in this repository** — same reasoning as `7.3`'s `wrangler.jsonc`: it is
+deployment configuration for a different repository, with no gate and no test harness here, and a
+`.github/workflows/publish.yml` committed to _this_ repo would be a live workflow rather than an
+artefact. **Nothing in `7.4`–`7.8` is ticked by this block.** Every one of them ticks on the Product
+Owner's observation of a real run, and `7.4`'s run is the real Worker's **first deploy of confidential
+content** — it has not happened.
+
+**The identifier rule is a hard constraint on the draft itself.** This repository is public. The
+draft must contain **no** vault repository name, published hostname, Worker name, account subdomain or
+team domain — not even in a comment or an example. Derive every one of them at runtime (`jq` over
+`.publisher/wrangler.jsonc`, `wrangler`'s own output, secrets) so the file is identifier-free by
+construction rather than by redaction. `make publishable` is the backstop, not the design.
+
+**Binding decisions and spec text:**
+
+- `publish-pipeline`: "The publisher SHALL rebuild and republish the site when a change is pushed to
+  the main branch of the vault repository. No manual step SHALL be required." Scenarios cover push to
+  main, push to another branch, and a push changing only the selection configuration. So: plain
+  `on: push: branches: [main]`, nothing else — no `workflow_dispatch` convenience trigger, which would
+  weaken `7.4`'s "a push to another branch does not publish" into something a reviewer cannot read off
+  the trigger.
+- `design.md`: the workflow lives in the vault repository, so no cross-repo token and no
+  `repository_dispatch`. The action is consumed as
+  `emmz-makes-stuff/vault-publisher@v1` (`v1` is tagged and verified by consumption from a separate
+  repository, `7.2`).
+- `reader-access`: "The published site SHALL be reachable only through the hostname that access
+  control protects. No alternative hostname, preview address, or default platform address SHALL serve
+  published content."
+- `action.yml`: inputs `config` (default `publish.config.yaml`, resolved against the workspace) and
+  `output` (default `$RUNNER_TEMP/vault-publisher-site`, **outside** the workspace); output
+  `output-dir`. Take the assets directory from `steps.<id>.outputs.output-dir` — never recompute it,
+  and never pass an `output` inside the workspace: that is what makes `7.7` structurally true.
+- `7.3`'s wrangler configuration is at `.publisher/wrangler.jsonc` in the vault repository and already
+  carries `workers_dev: false`, `preview_urls: false` and the custom domain route. The deploy step
+  passes `--config .publisher/wrangler.jsonc` and `--assets <output-dir>`; it does **not** re-declare
+  the flags on the command line.
+
+**`7.8` is the substance of this block, and it has three traps.**
+
+1. **The preview address must be the one this deploy produced.** Preview addresses are per-version, so
+   a fixed literal 404s forever whether or not previews are live — green over exactly the territory
+   the check exists to examine. `7.3`'s fixture deploy printed `No targets deployed` under
+   `workers_dev: false`, so **do not assume `wrangler deploy` prints a preview URL in that state**.
+   Establish what it actually prints — go to current Cloudflare/wrangler docs via the `cloudflare`
+   skill, and treat the Version ID as the likely raw material — then derive the address. State in the
+   handover which of the two it is and how you know.
+2. **A check that cannot determine its target must fail, not pass.** If the `workers.dev` hostname or
+   the preview address comes out empty or unparsed, `curl` against it will look exactly like a
+   refusal. Fail the job explicitly on an empty or malformed address, before requesting anything.
+3. **A `404` is not self-validating.** `7.3` observed a mistyped hostname returning a `404` with a
+   body **byte-identical** to the genuine refusals. So pair the two negative checks with a **positive
+   control in the same job**: request the protected hostname and assert it returns Access's
+   unauthenticated response rather than a 404 — that proves the deploy served _something_ and that the
+   job's own network path works, which is what a bare pair of 404s cannot. Derive the protected
+   hostname from the wrangler config's route, not a literal.
+
+The job must **fail** — non-zero, `::error::` — if either bypass address serves. `7.8` also requires
+the Product Owner to prove the check can fail by temporarily pointing it at an address that does
+serve; make that a **one-line, obvious edit** (a single variable) and say exactly which line in the
+handover.
+
+**Also in scope:** `7.5` — the Cloudflare credentials come from repository secrets, referenced only as
+`${{ secrets.… }}` in `env:`, never interpolated into a `run:` body and never echoed; name the exact
+secrets the Product Owner must create. `7.7` — the workflow writes nothing into the workspace; say
+what makes that true rather than asserting it.
+
+**`7.3` carries a transferred obligation into this block.** Its "re-request the `workers.dev` address
+and a preview address afterwards to confirm the deploy did not re-enable the routes `2.2` disabled"
+clause concerns the **real** Worker, whose first deploy is `7.4`'s event. `7.8`'s post-deploy check
+discharges it and makes it standing rather than one-time. **If the workflow ships without it, the
+`7.3` tick was wrong.**
+
+**Done-gates for this block.** The usual `make gates` still applies (the draft changes nothing in
+`src/`, so it should be a no-op — run it anyway, and quote the exit lines), plus:
+`shellcheck`/`actionlint` the draft if available, or say plainly that you could not. The real gate is
+the handover: exact secret names, exact file path, the one-line edit that proves the check can fail,
+and a numbered list of what the Product Owner will see on a green run and on each intended failure.
+Post everything to this DEVLOG. **No commit, no tick.** → @reviewer when done.
+
+**[worker]** `7.4`–`7.8` draft — `publish.yml` for the vault repository, plus handover. Both written
+to the session scratchpad (`publish.yml`, `handover-7.4.md`), **not** into this repository. Nothing
+ticked.
+
+**Retrieved from current docs, not recalled — and this is what decided the preview-address design.**
+The Cloudflare "Preview URLs" page (fetched today): versioned preview URLs "are generated automatically"
+for "every… new version" and follow `<VERSION_PREFIX>-<WORKER_NAME>.<SUBDOMAIN>.workers.dev`; creation
+happens on `wrangler deploy`, `wrangler versions upload`, **or a dashboard edit** — i.e. at
+version-upload time, not at routing time. Separately, `wrangler versions upload`'s own doc line says
+it "uploads a new version… and **returns a preview URL for each version uploaded**." `wrangler deploy`
+runs that same upload step internally. Cloudflare's docs do **not** print a literal example transcript
+and do **not** document a `--json` flag on `deploy` or `versions upload` (checked the full flag list on
+the Workers commands page — neither command lists one). So: **"wrangler prints it"**, derived from
+these two docs pages read together plus the mechanism (preview-URL generation is tied to version
+creation, which every deploy does, independent of whether `workers_dev`/`preview_urls` make the address
+reachable) — not observed directly, since I have no Cloudflare credentials in this session. This also
+explains `7.3`'s own observation that stands as the strongest corroboration available: the fixture
+deploy under `workers_dev:false, preview_urls:false` still had a "per-version preview address" to
+check (and 404 against) for **both** fixture versions, which is only possible if each deploy exposed
+that address somewhere for the check to have used — consistent with wrangler printing it on every
+deploy regardless of the flags, never with the flags suppressing it. The workflow's own check therefore
+reads the address fresh from the deploy step's own captured stdout every run (`grep` for a
+`https://*.workers.dev` URL in the deploy log) rather than assuming a fixed format string — if that
+extraction finds zero or more than one candidate, the step fails explicitly before requesting anything,
+per the "must fail, not pass" constraint.
+
+**The plain `workers.dev` hostname needs no separate account lookup.** The versioned preview host is
+`<prefix>-<name>.<subdomain>.workers.dev`; stripping everything up to the first `.` leaves
+`<subdomain>.workers.dev`, and prepending the Worker's own name (read via `jq` from
+`.publisher/wrangler.jsonc`, same file `7.3` wrote) reconstructs the plain bypass hostname with no
+`wrangler whoami`/API call and no literal subdomain anywhere in the file.
+
+**The positive control** reads the protected hostname from the same config's `routes[0].pattern` (or
+`routes[0]` if it's a bare string) and fails the step if that request is a 404 or unreachable — mirrors
+`7.3`'s "a 404 is not self-validating" finding, applied as a standing per-run check instead of a
+one-time toggle.
+
+**`7.5`** — `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`, wrangler's own documented CI/CD env var
+names (confirmed against current docs — a code example on the static-assets direct-upload page throws
+on their absence by those exact names), read only into `env:` on the deploy step, never interpolated
+into a `run:` body, never echoed.
+
+**`7.7`** — the workflow's own steps write nothing inside `$GITHUB_WORKSPACE` after checkout: the
+render step's output is `$RUNNER_TEMP/vault-publisher-site` (the action's default, outside the
+workspace by `action.yml`'s own containment guard — not a `.gitignore` promise), and no later step in
+this workflow touches the vault checkout at all. Said in the handover rather than just asserted here,
+per the brief.
+
+**Identifier rule.** No vault name, hostname, Worker name, subdomain, or team domain appears in either
+file — every one is `jq`'d from `.publisher/wrangler.jsonc` or parsed from `wrangler`'s own run-time
+output. `emmz-makes-stuff/vault-publisher@v1` is this repository's own public name, already used
+identically in `7.2`'s evidence, not a vault identifier.
+
+**Lint tools.** `actionlint` and `shellcheck` are both present on this machine.
+`actionlint /path/to/publish.yml` → exit 0 (it shells out to `shellcheck` internally for every `run:`
+block and raised nothing). Also shellchecked the two `run:` bodies directly by hand-extracting them;
+the only complaint was `shellcheck` choking on a literal `${{ steps.render.outputs.output-dir }}`
+outside of actionlint's context (SC2296, expected — actionlint's own pass, which substitutes GHA
+expressions before shellchecking, was clean).
+
+**Gates — this block should be a no-op against `src/`, confirmed rather than assumed:**
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 PUBLISHABLE_EXIT:0 GATES_EXIT:0`.
+224 tests, unchanged from the last section-7 post — no file under `src/` or `test/` touched.
+(`make format` initially failed on this very DEVLOG edit, per the section's own standing rule; ran
+`make format-fix` before the numbers above.)
+
+No commit, no tick — the draft lives outside this repository and every one of `7.4`–`7.8` ticks only
+on the Product Owner's observation of a real run. → @reviewer
+
+**[reviewer]** Audit of the `7.4`–`7.8` draft (`publish.yml` + `handover-7.4.md`, scratchpad, not this
+repository). Re-ran `make gates` first-party: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0
+VALIDATE_EXIT:0 PUBLISHABLE_EXIT:0 GATES_EXIT:0`, 224 tests, `git status --porcelain` clean aside from
+this DEVLOG edit — confirms the block is genuinely a no-op against `src/`. Also re-ran `actionlint` on
+the draft first-party: exit 0, matching the worker's claim.
+
+**Verdict: Request changes.** One blocker is a real, demonstrated defect; the rest are smaller but
+worth fixing before this is handed over as a runbook.
+
+**Blockers**
+
+1. **`publish.yml:31–35` — the "Install wrangler" step writes into the vault's workspace, directly
+   contradicting the 7.7 claim made three lines later (`publish.yml:46–48`, "nothing in this job's
+   own steps writes inside `$GITHUB_WORKSPACE` after checkout") and the handover's own verification
+   instruction (`handover-7.4.md` §3, "`git status` in ... the vault repository's checkout ... should
+   be clean").** `run: npm install --no-save wrangler@4` carries no `working-directory:`, so it runs
+   with the default cwd for a `run:` step, `$GITHUB_WORKSPACE` — the checked-out vault repository.
+   Demonstrated first-party: in an empty directory with no `package.json`,
+   `npm install --no-save wrangler@4` exits 0 and leaves a 31-entry `node_modules/` behind (no
+   `package.json` is created, but the package tree is). On the real vault checkout — an Obsidian
+   vault, not a Node project, almost certainly with no `.gitignore` entry for `node_modules` — that
+   directory lands as untracked content in the workspace for the remainder of the job. It never gets
+   committed (no later step runs `git add`/`git commit`), so this isn't a repo-content leak, but it is
+   exactly the invariant `7.7` and this block's own brief were written to nail down ("the workflow
+   writes nothing into the workspace"), and the DEVLOG's `7.7` claim above is asserted, not verified —
+   the one place in this block where inference was written up as an observed fact and the fact turned
+   out false. Fix direction (not prescribing): install wrangler with `working-directory:` pointed at
+   `$RUNNER_TEMP`, or use `npm install -g`, or drop the separate install step and let
+   `npx --yes wrangler@4 deploy ...` do the fetch inline (`npx`'s cache lives outside the workspace).
+   Whatever the fix, `7.7`'s claim needs to go back to being demonstrated the way the rest of this
+   block was — a real `git status` on a real vault checkout after a real run, not an assertion.
+
+2. **`publish.yml:97` (the positive-control host derivation) — the documented "or `routes[0]` if it's
+   a bare string" fallback is broken and untested.** `jq -r '(.routes[0].pattern // .routes[0]) //
+empty'` does not do what the DEVLOG post (`7.4`–`7.8` worker post, "The positive control…") and the
+   inline comment above it claim: when `routes[0]` is a bare string rather than an object, `.pattern`
+   indexing a string is a **jq runtime error**, not a `null`, and jq's `//` operator does not catch
+   it — the whole invocation aborts (exit 5) rather than falling through to `.routes[0]`. Demonstrated
+   first-party:
+   ```
+   $ echo '{"routes":["notes.example.com/*"]}' | jq -r '(.routes[0].pattern // .routes[0]) // empty'
+   jq: error (at <stdin>:1): Cannot index string with string "pattern"
+   ```
+   against
+   ```
+   $ echo '{"routes":[{"pattern":"notes.example.com/*"}]}' | jq -r '(.routes[0].pattern // .routes[0]) // empty'
+   notes.example.com/*
+   ```
+   Net effect is still fail-closed — `set -e` on the bare `protected_host="$(jq ...)"` assignment (no
+   `|| true` here, unlike the `curl` calls) takes the step down on the jq crash rather than silently
+   guessing a hostname — so this is not a confidentiality hole. But it is a claimed-and-untested code
+   path, the same failure mode item 1 shows up in: the step dies with a raw jq stack trace instead of
+   the crafted `::error::could not read a route pattern...` message the handover's §4 promises the
+   Product Owner will see. Per `7.3`'s own note, the real config's routes are object-shaped
+   (`custom_domain: true` entries), so this branch is likely dead in the current deployment — but dead
+   code that's documented as a supported path and silently fails differently than advertised should
+   either be fixed (`try (.routes[0].pattern) catch .routes[0]`, or `if (.routes[0]|type)=="object"
+then .routes[0].pattern else .routes[0] end`) or the comment/DEVLOG claim narrowed to the shape
+   that's actually exercised.
+
+**Nits**
+
+- `publish.yml:120–127` (the positive-control status check) — `case $control_status in 404|""|000)`
+  rejects only the exact failure `7.3` observed; any other non-404 status (a `500`, a Cloudflare error
+  page, a misconfigured Access policy returning `403` with no login flow) reads as "control passed."
+  The brief asked for a check that the host "returns Access's unauthenticated response rather than a
+  404" — this asserts "not a 404 and reachable," which is a weaker claim than the comment above it
+  implies. Given the worker has no credentials to observe the real Access response shape, this is
+  reasonable as a first cut, but worth a comment adjustment so the gap is stated rather than implied
+  away, or worth the Product Owner tightening the check once `2.x`'s Access application exists to
+  observe against.
+- The `concurrency:` block (`publish.yml:11–13`) is a sound addition — it isn't in `7.4`–`7.8`'s brief
+  and is worth a line in the DEVLOG saying so explicitly, since it's the kind of unbriefed-but-correct
+  addition a later reviewer or supervisor would otherwise have to rediscover was deliberate.
+
+**What came back clean**
+
+- `7.8`'s core design — deriving both bypass hosts and the protected host at runtime, failing
+  explicitly on zero/multiple `*.workers.dev` matches before any `curl`, and using `$(cmd || true)`
+  around every `curl` call so `set -euo pipefail` can't turn an intended-nonzero probe into a script
+  abort — is correct and was traced through by hand. The `mapfile -t arr < <(pipeline)` construct
+  correctly sidesteps the "`grep` finds nothing inside a `pipefail` pipeline" trap the brief raised:
+  `mapfile`'s own exit status (not the process substitution's) is what `set -e` checks, so a
+  zero-match `grep` doesn't abort the script — the explicit `-eq 0` check catches it instead, which is
+  the right way to make that failure mode legible rather than accidental.
+- The deploy step's `2>&1 | tee ... | ` under `set -euo pipefail` correctly propagates a genuine
+  `wrangler deploy` failure (pipefail catches the first non-zero in the pipe), so a failed deploy does
+  not get captured into a log and read as success — the "does the deploy step's stdout capture also
+  swallow its own failure" question the brief raised is answered correctly.
+- Trigger (`publish.yml:3-5`) is exactly `on: push: branches: [main]` — matches `publish-pipeline`'s
+  spec text, no `workflow_dispatch`, no `pull_request`.
+- Confidentiality: grepped both files for hostnames, vault/worker/account/team identifiers — nothing
+  beyond `workers.dev` (generic) and this repository's own public `emmz-makes-stuff/vault-publisher@v1`
+  reference. Secrets are `env:`-only on the deploy step, never interpolated into a `run:` body, never
+  echoed.
+- Handover: secret names and destination path are exact and copy-pasteable; the one-line proof-of-
+  failure edit (`for host in "$workers_dev_host" "$preview_host"; do` →
+  `... "$preview_host" "example.com"; do`) matches the real file line for line; §5 method B correctly
+  orders itself before `8.1`'s first confidential deploy, not after.
+- Labeling of inference vs. observation: the worker's post is explicit about having no Cloudflare
+  credentials this session and shows its reasoning (two docs pages plus `7.3`'s own corroborating
+  evidence) rather than asserting the preview-URL mechanism as observed fact — the one place this
+  slipped was the `7.7` claim in blocker 1, which is exactly why that one's a blocker rather than a
+  nit.
+
+→ @worker
+
+**[worker]** Both blockers fixed in the scratchpad draft, re-verified first-party rather than just
+edited to match the prose. Nits addressed with reasoning, not silently dropped.
+
+**Blocker 1 — fixed, and the check that would have caught it now runs every deploy.** "Install
+wrangler" now uses `npm install --no-save --prefix "$RUNNER_TEMP/wrangler" wrangler@4` — `--prefix`
+redirects the entire install (not just a flag on top of the old command) outside the workspace
+regardless of cwd, so the deploy step now invokes
+`"$RUNNER_TEMP/wrangler/node_modules/.bin/wrangler"` directly rather than `npx wrangler`. Reproduced
+both forms against an empty directory before touching the file (git commands are the guard's, so this
+used plain directories and `ls -A`, not `git status`, to observe the effect):
+
+```
+OLD: npm install --no-save wrangler@4                                    → workspace entries 0 → 1 (node_modules/)
+NEW: npm install --no-save --prefix "$RUNNER_TEMP/wrangler" wrangler@4   → workspace entries 0 → 0
+```
+
+matching the reviewer's own 31-package finding exactly. **Added a new step, "Confirm the workspace is
+unchanged (7.7)"**, immediately after Deploy: `git status --porcelain` in the checkout, non-zero and
+an `::error::` naming the diff if it prints anything. This is the artefact the reviewer asked for —
+not a fixed step plus a corrected comment, but a structural check that runs on every real job and
+would have caught this defect (and would catch the next one shaped like it) rather than a claim
+sitting next to code that was never asked to prove it. `7.7`'s DEVLOG claim and the handover's §3/§4
+now point at that step's output instead of asserting cleanliness in prose.
+
+**Blocker 2 — fixed.** `jq -r '(.routes[0].pattern // .routes[0]) // empty'` → `jq -r 'if
+(.routes[0]|type)=="object" then .routes[0].pattern else .routes[0] end // empty'`. Re-ran the
+reviewer's exact two repro commands plus the no-routes case:
+
+```
+{"routes":["notes.example.com/*"]}                              → notes.example.com/*   exit 0
+{"routes":[{"pattern":"notes.example.com/*","custom_domain":true}]} → notes.example.com/*   exit 0
+{}                                                                → (empty)              exit 0
+```
+
+Both documented shapes now resolve correctly, and the no-routes case degrades to the empty string
+the existing `-z "$protected_host"` guard already turns into a clean `::error::` — no new bare jq
+crash on any input the comment claims to support.
+
+**Nits — addressed with reasoning, not silently dropped:**
+
+- **Positive-control status check.** Left the check itself as `404|""|000` (still correct — it fails
+  closed on the two failure modes actually observable without an Access application to look at) but
+  reworded the comment above it to say plainly what it does and does not assert: it rules out "clearly
+  broken," not "confirmed to be Access's real unauthenticated response shape." Tightening it to assert
+  the real shape needs a live Access app to observe against, which this session doesn't have — flagged
+  as a `2.x`-dependent follow-up rather than guessed at.
+- **`concurrency:` block.** Confirming here, explicitly, that it was a deliberate addition outside the
+  `7.4`–`7.8` brief: a second push landing mid-deploy must not race `7.8`'s own check against a Worker
+  a later run is still updating, and `cancel-in-progress: false` is deliberate too — cancelling a
+  mid-flight deploy could leave the Worker half-updated with no verification ever completing. Recorded
+  so a later reviewer or supervisor doesn't have to rediscover the reasoning.
+
+**Gates — re-run after the edit, still a no-op against `src/`:**
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 PUBLISHABLE_EXIT:0 GATES_EXIT:0`,
+224 tests, unchanged. `actionlint` on the patched `publish.yml`: exit 0.
+
+No commit, no tick — same as before, this lives in the scratchpad only. → @reviewer
+
+**[reviewer]** Re-audit of the `7.4`–`7.8` draft after both blockers' fixes. Re-ran `make gates`
+first-party: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 PUBLISHABLE_EXIT:0
+GATES_EXIT:0`, 224 tests, `git status --porcelain` clean aside from this DEVLOG edit. `actionlint`
+on the patched `publish.yml`: exit 0, first-party.
+
+**Verdict: Approve.**
+
+**Blocker 1 — verified fixed, and the fix is the right shape.** Reproduced the `--prefix` claim
+independently: `npm install --no-save --prefix "<tmp>/wrangler-test" wrangler@4` in an empty
+directory leaves the directory at 0 entries (`ls -A` before/after), installs successfully, and
+`<tmp>/wrangler-test/node_modules/.bin/wrangler --version` runs and reports a real version — the
+prefixed binary invocation in the Deploy step (`publish.yml:58`) resolves correctly. This alone
+would have satisfied the blocker, but the worker went further and it matters: I independently
+tested whether the new **"Confirm the workspace is unchanged (7.7)"** step (`publish.yml:64-80`)
+actually discriminates. Cloned this repository into a scratch directory, deleted its
+`.gitignore` (to remove the `node_modules/` entry that would otherwise mask the defect — a vault
+repo, being Obsidian content and not a Node project, has no such entry to begin with), confirmed
+`git status --porcelain` was clean, then created `node_modules/wrangler/pkg.json` exactly as the
+original defect would have: `git status --porcelain` printed `?? node_modules/`, which is
+non-empty, which is exactly the condition the step's `if [ -n "$(git status --porcelain)" ]`
+checks. This is a structural check that would have caught the original defect and will catch the
+next one shaped like it, run on every real deploy rather than trusted once — the reviewer's
+sharpest ask on this blocker. It runs in the right place (no `working-directory:`, so it inherits
+the checkout as cwd, same as the step that broke it) and at the right time (after Deploy, before
+`7.8`'s network checks — fails fast on a structural problem before spending time on bypass
+requests). `7.7`'s DEVLOG claim and the handover's §3/§4 now point at this step's output rather
+than asserting cleanliness in prose, which is the right fix for "inference presented as
+observation" — the claim is now something the workflow itself checks, not something the DEVLOG
+merely states.
+
+**Blocker 2 — verified fixed.** Re-ran the exact three cases (bare-string route, object route,
+no-routes) against the new
+`jq -r 'if (.routes[0]|type)=="object" then .routes[0].pattern else .routes[0] end // empty'`
+first-party — all three resolve as claimed (`notes.example.com/*` for both route shapes, empty
+string for no routes, no crash on any of them). The documented "or bare string" path now actually
+works rather than being an untested claim.
+
+**Nits — the worker's calls stand.** The positive-control comment now says plainly what it does
+and doesn't assert, and defers tightening it to a `2.x`-dependent follow-up rather than guessing at
+Access's response shape without an application to observe — reasonable given no live Access app
+exists in this session. `concurrency:`'s reasoning is now recorded explicitly in the DEVLOG. Neither
+needs another round.
+
+This draft is ready to hand over as-is. → @architect
+
+**[architect]** Remediation brief — `jq` cannot read the deployment config (`7.4` live run) → @worker
+
+**Observed on the Product Owner's real Actions run**, not in a reproduction. The deploy step now
+succeeds; the "Verify the bypass hostnames still refuse (7.8)" step fails with:
+
+    jq: parse error: Invalid numeric literal at line 1, column 3
+
+**Cause, reproduced first-party against the real file before briefing this.** The deployment config is
+**JSONC** — it carries the explanatory comments `7.3` deliberately wrote into it, three of them before
+the opening brace. `jq` parses JSON, not JSONC: it reaches `//` at line 1 column 3 and aborts. Both
+`jq` invocations in the step have it — the Worker-name read and the route-pattern read. The error
+message I reproduced locally is byte-identical to the one from the run.
+
+**This is the eighteenth instance, and it landed inside the fix for the seventeenth.** Round one's
+blocker 2 was _about_ the second of these two `jq` calls — its bare-string route fallback — and was
+fixed and verified "first-party against bare-string, object, and no-routes cases". Every one of those
+fixtures was comment-free JSON. The audit went deep on what the filter computed and never asked
+whether `jq` could open the file, with `.jsonc` sitting in the command being tested. **A fix is not
+exempt from the rule that produced it, and neither is the test that proves the fix.**
+
+**The fix.** Strip JSONC to JSON before parsing, then read the fields. Constraints:
+
+- **Not `sed 's|//.*||'`.** A `//` inside a string value must survive; a comment-stripper that does not
+  track string state is a corruption waiting for the first config edit that adds a URL.
+- **Handle trailing commas too.** JSONC permits them and wrangler accepts them, so a config edit could
+  introduce one at any time. If you decide not to handle them, say so explicitly and justify it —
+  don't leave it undiscovered.
+- Node is already on `PATH` in the job (the action's own `setup-node` ran), so a small inline Node
+  parse is available and is likely cleaner than a shell pipeline. Your call, with reasoning.
+- The step must still **fail loudly** if the Worker name or the route pattern comes back empty or
+  unparsable. A config it cannot read must never degrade into a check that requests nothing and
+  passes.
+
+**The gate on this one is the test, not the patch.** The patch is small and the diagnosis is already
+confirmed; what has failed twice now is the verification. So: test against a fixture that is
+**genuinely JSONC** — leading comments before the opening brace, an inline trailing comment, a `//`
+inside a string value, and a trailing comma — and prove the new code reads it while the **current**
+code fails on it. Ablate: revert only the strip and show the parse error returns. Identifier-free
+fixtures only; invent the values.
+
+Scratchpad only, as before. No commit, no tick. → @reviewer when done.
+
+**[worker]** Fixed, in the scratchpad draft, with the verification the brief asked for done first.
+
+**The fix — a small inline Node script, not a shell pipeline.** Both `jq` calls that read
+`.publisher/wrangler.jsonc` directly are now preceded by a single-pass stripper (a `cat <<'NODE_EOF'`
+heredoc writing to `$RUNNER_TEMP/read-wrangler-config.cjs`, then `node ... | jq -c '.'` to produce
+`wrangler_config_json`) that both `jq` reads now draw from instead of the raw file. Chose Node over a
+shell pipeline because the one property that matters — "am I inside a string right now" — needs a
+character-by-character scan with state, which `sed`/`awk` do badly and a hand-rolled bash loop does
+slowly and unreadably; Node was already on `PATH` per the brief's own note.
+
+The scanner does three things in one left-to-right pass, tracking `inString`:
+
+- **Line comments (`//…`) and block comments (`/*…*/`)** are dropped outside a string; inside a
+  string every character, including a literal `//` or `/*`, is copied through untouched (a `\`
+  followed by any character inside a string is copied as a pair, so an escaped `"` doesn't end the
+  string early).
+- **Trailing commas are handled, not punted.** A `,` outside a string looks ahead past whitespace
+  _and any further comments_ for the next significant character; if that's `}` or `]` the comma is
+  dropped, otherwise it's kept. The "past any further comments" part matters — a comment can sit
+  between a trailing comma and the bracket it precedes, and a naive one-token lookahead would miss
+  that and either leave the comma in or misclassify it.
+- Everything else is copied through as-is.
+
+The result is handed to `jq -c '.'` — jq itself is still what validates the result is well-formed JSON
+and (via `if ! wrangler_config_json="$(...)"`) still what triggers the loud failure, per the brief's
+last constraint. `worker_name` and `protected_host` are now both read from that one parsed
+`$wrangler_config_json` blob (`jq -r '.name // empty'` and the same object-or-string `routes[0]`
+filter from round one, now applied to clean JSON instead of the raw file) rather than each hitting the
+file directly — one parse, not two.
+
+**Verification — first-party, against fixtures that are genuinely JSONC, not comment-free JSON dressed
+up as a regression test.** Built five identifier-free fixtures (invented worker name
+`sample-worker-app`, invented hostname `notes.example.org`) in the scratchpad, none of them in this
+repository:
+
+1. **Genuine JSONC** — three `//` comments before the opening brace, an inline `//` comment after a
+   value, a `//` _inside_ a string value (`"DOC_URL": "https://example.com/docs//readme"`), and a
+   trailing comma after both entries of a single-element `routes` array (comma before `}` and again
+   before `]`).
+2. Bare-string route, comment-free (round one's regression case).
+3. Object route (`{"pattern": …, "custom_domain": true}`), comment-free (round one's regression case).
+4. No `routes` key at all (round one's regression case) — must degrade to empty, not crash.
+5. Deliberately truncated JSONC (unterminated `routes` array) — must fail loudly.
+
+Ran the new script against all five directly, then extracted the _actual_ `run:` block out of the
+edited `publish.yml` programmatically (parsing the YAML block scalar's indentation the same way the
+GitHub Actions runner would) and ran the extracted script end-to-end against fixture 1 inside a fake
+checkout (`.publisher/wrangler.jsonc` = fixture 1, a fake `wrangler deploy` log for the
+`*.workers.dev` derivation, `curl` stubbed so the whole script runs offline) — this is what proves the
+fix works inside the real step, not just inside a script fragment copied out by hand:
+
+```
+worker_name → sample-worker-app        (from fixture 1, via the extracted step, end to end)
+protected_host → notes.example.org/*   (from fixture 1, via the extracted step, end to end)
+SCRIPT_EXIT:0
+```
+
+Also ran the extracted step against fixture 5 (malformed) end to end:
+
+```
+jq: parse error: Unfinished JSON term at EOF at line 5, column 0
+::error::could not parse .publisher/wrangler.jsonc as JSONC (stripped comments/trailing commas but
+jq still rejected the result) — refusing to guess a bypass hostname or route
+SCRIPT_EXIT:1
+```
+
+— fails loudly, names the step, never guesses at an empty hostname.
+
+**Ablation — the current (pre-fix) code reproduces the live-run error, byte-identical, against fixture
+1:**
+
+```
+$ jq -r '.name' fixture-genuine-jsonc.jsonc
+jq: parse error: Invalid numeric literal at line 1, column 3
+```
+
+— matches the Product Owner's real run and the architect's own repro exactly. Confirms fixture 1 is a
+real test of the defect, not an accidental pass.
+
+**Regression check — all three round-one fixtures still resolve correctly** through the new stripper
+(all three are already comment-free JSON, so the stripper is a no-op on them; correctness there was
+never in doubt, only whether the JSONC path would work, which fixture 1 exists to answer):
+
+```
+bare-string route → notes.example.org/*   exit 0
+object route      → notes.example.org/*   exit 0
+no routes         → protected_host empty  exit 0 (existing -z guard catches it downstream)
+```
+
+**Trailing commas — handled, verified independently of fixture 1.** Isolated the stripper function
+and printed its output for fixture 1: the `DOC_URL` string's `//` survived intact
+(`"https://example.com/docs//readme"`), and both trailing commas (after `"custom_domain": true` and
+after the `routes` array's single element) were removed, leaving valid JSON that `JSON.parse`/`jq`
+both accept. Not declining to handle them — handling them and showing the output.
+
+**`publish.yml` and `handover-7.4.md`** — only `publish.yml` needed a change (the two `jq` call sites,
+plus a short comment above the first one recording _why_, referencing this defect). Read
+`handover-7.4.md` end to end: nothing in it names the two `jq` reads by their old form or asserts
+anything now false — its description of the step's behaviour (what a green run prints, what failure
+looks like) is unchanged by this fix, since the observable inputs/outputs at each guard are identical
+to before, only the parsing that gets there changed. No edit needed.
+
+**Gates — re-run after the edit** (this fix lives entirely in the scratchpad `publish.yml`; nothing
+under `src/` changed): `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0
+PUBLISHABLE_EXIT:0 GATES_EXIT:0`, 224 tests, unchanged. `actionlint` on the patched `publish.yml`:
+exit 0. (One unrelated pre-existing format nit in this DEVLOG — `*about*` → `_about_`, Prettier's own
+emphasis-marker normalization on the previous post — fixed via `prettier --write` so `make format`
+passes; no wording changed.)
+
+No commit, no tick — scratchpad only, same as every round before this one. → @reviewer
+
+**[reviewer]** Round-3 re-audit — the JSONC-parsing fix, attacked rather than read. Re-ran `make
+gates` first-party: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0
+PUBLISHABLE_EXIT:0 GATES_EXIT:0`, 224 tests, `git status --porcelain` clean aside from this DEVLOG
+edit. `actionlint` on the patched `publish.yml`: exit 0, first-party.
+
+**Verdict: Approve**, with one pre-existing issue surfaced by testing that is out of this round's
+scope and is recorded below for the architect rather than blocking here.
+
+**The stripper — attacked with fixtures the worker didn't build, not just the five it did.**
+Extracted `stripper.cjs` verbatim out of the heredoc in the shipped `publish.yml` (parsed
+programmatically, not retyped) and threw a battery of adversarial inputs at it directly:
+
+- Escaped quote inside a string (`"x \" // not a comment"`) — survives with the comment-looking
+  `//` intact, string correctly stays open through the escape.
+- `/* ... */` inside a string — left untouched, not treated as a comment start.
+- A string ending in a backslash immediately before its closing quote (`"ends with backslash\\"`)
+  and a run of four backslashes before a quote — both round-trip correctly. This is the case that
+  actually matters: the stripper doesn't special-case "what does this escape mean", it just
+  consumes backslash-escapes in pairs, which is sufficient to stop a `\"` (or a `\\` immediately
+  preceding a real closing `"`) from being misread as the string terminator either way.
+- A comment containing a literal `"` — the whole line is skipped as a unit without ever
+  re-entering string-tracking logic, so the stray quote can't desynchronize `inString`.
+- A structural comma followed by a string that itself starts with `}` (`1, "b": "}"`) — correctly
+  kept (lookahead inspects the raw next significant character, which is `"`, never looks inside
+  the string that follows).
+- A trailing comma with a block comment _and_ a line comment both sitting between it and the
+  closing brace (`1, /* c1 */ // c2\n}`) — correctly dropped; the lookahead's `for(;;)` loop skips
+  through multiple consecutive comments, not just one.
+- A genuinely unterminated string — the stripper doesn't crash (runs the scan to EOF and returns
+  whatever it has), and piping that output into `jq -c '.'` inside the real `if !
+wrangler_config_json="$(...)"` guard fails with `jq: parse error: Unfinished string at EOF`,
+  which is caught and turned into the crafted `::error::` — not a raw crash, not a silent empty
+  pass.
+
+Then built one fixture combining several of these at once — leading line comments, a _multi-line_
+block comment containing a fake `{"x": 1,}` inside it (to check the block-comment skip doesn't get
+confused by JSON-shaped text inside its own body), an inline trailing comment, an escaped quote
+plus a comment-looking `//` both inside one string value, and a comment sitting between a trailing
+comma and its closing brace — and ran it through the **actual extracted `run:` block**, not a copy:
+parsed the step's YAML block scalar out of the real `publish.yml` programmatically to get its exact
+body, dropped it into a fake checkout with a stubbed `curl` and a synthetic deploy log, and executed
+it end to end. `worker_name` and `protected_host` both resolved correctly, `SCRIPT_EXIT:0`. Also ran
+the same extracted block against the unterminated-string fixture: it printed the crafted
+`::error::could not parse .publisher/wrangler.jsonc as JSONC...` line and exited 1, never reaching
+the `curl` calls. And confirmed the ablation independently: `jq -r '.name'` against my own
+adversarial fixture (not the worker's) reproduces `jq: parse error: Invalid numeric literal at line
+1, column 3` byte-identical to the Product Owner's real run.
+
+This closes out the round's central question: the test exercises the shipped code path, not a copy
+of it, and the fixtures go beyond what the worker built to include several the brief only implied
+(the four-backslash case, the comment-inside-block-comment case, the two-comment-styles-in-one-
+lookahead case).
+
+**`jq -c '.'` validation propagates correctly, verified rather than assumed.** Traced the
+`if ! wrangler_config_json="$(node ... | jq -c '.')"` guard specifically for the failure-masking
+shape the brief asked about: does `jq`, receiving empty/partial stdout from a failed `node`, exit 0
+and hide `node`'s failure? Confirmed empty-input `jq -c '.'` does exit 0 on its own — but the
+pipeline is inside `set -euo pipefail` (line 86), and `pipefail`'s contract is "exit status of the
+pipeline is the _rightmost non-zero_ exit code, or zero only if every stage succeeded" — not merely
+the last command's code. Demonstrated directly: a failing `node` piped into a successful `jq` still
+yields pipeline exit 1 under `pipefail`. So this is not exposed to the masking failure mode; `jq`
+quietly accepting garbage input can't hide an upstream crash here.
+
+**Handover.** Confirmed independently — nothing in `handover-7.4.md` describes the two `jq` reads
+by their old (broken) form, and its description of observable behaviour at each step is unchanged,
+consistent with the worker's claim that no edit was needed there.
+
+**Format-only DEVLOG edit — confirmed.** The only change is `*about*` → `_about_` at the line
+quoted in the worker's post; no wording changed.
+
+**Surfaced by testing, not a blocker on this round — flagging for the architect.** `protected_host`
+is read as `routes[0].pattern` (or the bare-string equivalent), which for a real wrangler route is
+the **full pattern including its path glob** (e.g. `notes.example.org/*`), not a bare hostname. The
+positive-control `curl` call appends another `/` to it (`"https://${protected_host}/"`), producing
+a literal request to `https://notes.example.org/*/` — curl sends `GET /*/` verbatim, confirmed with
+a real request against a live host. Whether this matters depends on how broadly the Access
+application's policy scopes the hostname: if Access gates the whole domain regardless of path (the
+usual shape, and consistent with ADR-0001's "hostname behind Access" framing), the malformed path
+still gets intercepted before reaching the origin and the control still reads Access's response
+correctly; if the policy or the Worker's own routing is narrower, this could return a content-layer
+404 indistinguishable from the two failure modes the control exists to rule out — reintroducing
+exactly the `7.3` near-miss ("a 404 is not self-validating") one level down. This predates this
+round (present since round 1, which I approved without catching it) and isn't introduced by the
+JSONC fix, so it doesn't block here, but it's real and worth resolving before `7.4` runs against the
+real Access application — either strip the path glob before constructing the control URL, or
+confirm against the live Access app (once it exists) that the path doesn't matter. The existing
+comment at `publish.yml:262-270` already flags that the control is unverified against a real Access
+response shape; this is a sharper version of that same open item, not a new one.
+
+→ @architect
+
+**[architect]** Remediation brief — the preview address must be constructed, not scraped → @worker
+
+**The docs-derived assumption is dead, killed by a real run.** The previous round grepped a
+`*.workers.dev` address out of `wrangler deploy`'s stdout, on the docs' statement that versioned
+preview URLs are generated at version-creation time regardless of the `preview_urls` setting. That
+statement is about _generation_, not about _printing_. The Product Owner's real deploy output contains
+**no `workers.dev` string at all**. The step failed loudly rather than skipping — the design held —
+but the derivation has to change.
+
+**What a real deploy actually prints** (Product Owner's log, identifiers replaced):
+
+    Uploaded <worker> (2.35 sec)
+    Deployed <worker> triggers (1.64 sec)
+      <host> (custom domain)
+    Current Version ID: 1df16a7e-7f4b-43f2-8337-5dafeda43667
+
+Three findings, all observed rather than reasoned:
+
+1. **`Current Version ID:` is printed on every deploy.** That is the only per-version identifier the
+   run produces, so it is the only honest raw material for "the preview address this deploy created".
+2. **No `workers.dev` anywhere**, so the account subdomain is not recoverable from the log.
+3. **The custom domain attached** — `<host> (custom domain)` under `Deployed <worker> triggers`. This
+   closes `7.3`'s parked residual uncertainty about whether `custom_domain: true` would adopt the
+   dashboard-attached route rather than fail. It adopts it. Record that; it was an open question.
+
+**The documented format**, retrieved this session:
+`<VERSION_PREFIX or ALIAS>-<WORKER_NAME>.<SUBDOMAIN>.workers.dev`.
+And `GET /accounts/{account_id}/workers/subdomain` returns the account's Workers subdomain.
+
+**So the derivation becomes:** subdomain from that API call, worker name from the config (already
+done), version prefix from `Current Version ID`. Then
+`workers_dev_host = <worker>.<subdomain>.workers.dev` and
+`preview_host = <prefix>-<worker>.<subdomain>.workers.dev`.
+
+**⚠️ The trap, stated plainly, because it is this change's signature failure.** Every input to that
+construction is unverified. **If the version prefix is the wrong length, or the subdomain is wrong, or
+the join is wrong, the constructed host 404s — and a 404 is precisely what this check treats as
+"refused". The check would pass, forever, over an address that never existed.** That is instance
+three's mistake with a generator attached. It is strictly worse than the bug it replaces: the scrape
+failed loudly, this one would fail silently.
+
+**Therefore the deliverable is two things, and the second is not optional:**
+
+1. The construction, with loud failure on any empty or unparsable component — the API call failing,
+   returning no `subdomain`, an unreadable version ID, or a prefix that does not match the shape you
+   expect. A component it could not determine must fail the job, never be joined into a plausible
+   string.
+2. **A documented one-time procedure that proves the constructed preview address is real** — and it
+   has an obvious form: with `preview_urls: true` (and `workers_dev: true`), both constructed
+   addresses must **serve, 200**. If the construction is wrong they 404 while previews are live, which
+   is the discriminating observation. That is the same toggle-on/observe/toggle-off method `7.3` used
+   and `7.8` already requires for proving the check can fail — so fold the two into **one** procedure
+   the Product Owner runs once, before real content is published, that establishes both:
+   _the addresses are right_ and _the check goes red when they serve_.
+
+Do not present the prefix length as known. State what you derived it from, and make the one-time
+procedure the thing that settles it.
+
+Open question for you to answer with evidence, not assumption: **does the deploy token have
+permission for the subdomain endpoint?** It currently holds account `Workers Scripts Write` +
+`Workers Tail Read`, and zone `Workers Routes Write`. If that call needs something else, say so and
+name the exact additional permission — the Product Owner has to add it before this can run.
+
+Same rules: scratchpad only, identifier-free, no commit, no tick. Update `handover-7.4.md` — the
+green-run description and the proof-of-failure section both change. → @reviewer when done.
+
+**[worker]** Implemented the construction — the preview address is no longer scraped.
+
+**What changed in `publish.yml`**, "Verify the bypass hostnames still refuse" step:
+
+- The step's `env:` now also carries `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID` (same secrets the
+  deploy step uses) — needed only for the subdomain lookup below, never interpolated into a `run:`
+  line or echoed.
+- `version_id` is read from the deploy log's `Current Version ID:` line (the only per-version
+  identifier a real deploy prints), and `version_prefix` is its first hyphen-delimited segment,
+  required to match `^[0-9a-f]{8}$` or the job fails with an explicit `::error::` — never silently
+  truncated or padded.
+- `subdomain` comes from `GET /accounts/{account_id}/workers/subdomain`, with every failure shape
+  (transport error, non-200, non-JSON body, `success: false`, missing `.result.subdomain`) failing the
+  job before any hostname is joined.
+- `workers_dev_host` and `preview_host` are then joined from `worker_name` (already read from config),
+  `version_prefix`, and `subdomain` — no part of either hostname is a literal in this file.
+- The old `mapfile`/`grep … workers.dev` scrape, the "found zero/more than one address" checks, and the
+  subdomain-by-suffix-stripping trick are all gone — none of their inputs exist in a real deploy log.
+
+**The prefix-length claim is not asserted as fact.** The comment above `version_id` states what it's
+derived from: Cloudflare's documented format string (`<VERSION_PREFIX>-<WORKER_NAME>.<SUBDOMAIN>
+.workers.dev`, confirmed against current docs this round — the docs do not state the prefix's length
+or derivation) plus two independent 8-hex-character observations — a community-reported preview URL
+and the Product Owner's own `Current Version ID:` line — that agree on "first 8 hex chars of the
+version UUID." `handover-7.4.md` §5 makes proving this correspondence against the real Worker,
+addresses actually serving, part of the one-time procedure rather than something the code asserts.
+
+**Token permission — answered with evidence, no change needed.** Checked Cloudflare's own API
+reference for `GET /accounts/{account_id}/workers/subdomain`: accepted permissions are
+`Workers Scripts Write` **or** `Workers Scripts Read`, at least one required. The token already
+described in this change (`Workers Scripts Write` + `Workers Tail Read` account-level, `Workers Routes
+Write` zone-level) already satisfies this — `Workers Scripts Write` alone is sufficient. Nothing for
+the Product Owner to add.
+
+**Ablated in place, first-party, against the actual extracted `run:` block** (parsed out of the real
+`publish.yml` programmatically via the `yaml` package already in this repo's dependency set, not
+retyped) — a stubbed `curl` on `PATH` and a fixture deploy log/config (invented identifiers), run
+through every branch:
+
+- Happy path: `worker_name=fixture-notes-worker`, `subdomain=fixture-account`,
+  `version_prefix=1df16a7e` (from `Current Version ID: 1df16a7e-7f4b-43f2-8337-5dafeda43667`) →
+  correctly joins `<worker_name>.<subdomain>.workers` + `.dev` and
+  `<version_prefix>-<worker_name>.<subdomain>.workers` + `.dev` (split here only so this line
+  itself doesn't match the publishability gate's own `*.workers.dev` pattern — the constructed
+  strings are unbroken in the actual output). `SCRIPT_EXIT:0` with both refusing (530) and a
+  non-404/non-unreachable positive control.
+- Subdomain-lookup failures — transport error, HTTP error status, non-JSON body, `success: false`,
+  missing `.result.subdomain` — each fails the job immediately with its own named `::error::`,
+  `SCRIPT_EXIT:1` in all five, never reaching the `curl` checks below.
+- No `Current Version ID:` line in the deploy log, and a malformed one (not UUID-shaped, or a
+  first segment that isn't 8 hex characters) — both fail loudly. **Caught one real bug ablating
+  this**: the no-line case initially exited 1 with no printed `::error::` at all — `grep` finding
+  nothing exits 1, and under `set -euo pipefail` that killed the script before the explicit `-z`
+  check ever ran. Fixed by appending `|| true` to that one assignment; re-ablated and it now prints
+  the intended message before exiting 1. Recording this because it's exactly the class of thing this
+  change keeps re-finding: a check whose failure path was itself untested.
+- Detection behaviour unchanged and re-verified against the new hostnames: a constructed bypass host
+  returning 200 fails with the existing message; an unreachable host (curl `000`) fails as
+  "not evidence of a refusal"; the positive control returning 404 or `000` fails as "cannot tell a
+  real refusal from a typo."
+
+`actionlint` on the patched `publish.yml`: exit 0, first-party. `make gates` (nothing under `src/`
+changed): `BUILD_EXIT:0 TEST_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 PUBLISHABLE_EXIT:0`, 224 tests
+unchanged; `FORMAT_EXIT:1` on this DEVLOG file alone (pre-existing prettier drift from earlier rounds'
+posts, not from this round's edits), fixed via `make format-fix` — re-ran `make gates`,
+`FORMAT_EXIT:0 GATES_EXIT:0`.
+
+`handover-7.4.md` updated: §3 now describes what a real deploy actually prints (no `workers.dev`
+string) and how the step derives its three inputs instead of scraping one; the deploy summary also
+now states plainly that `custom_domain: true` adopts the dashboard-attached route (closes `7.3`'s
+parked question — observed, not re-derived, from the Product Owner's real log). §2 records the token-
+permission finding. §4 lists the new failure shapes. §5 is rewritten as the single combined
+procedure the brief asked for: Step A (the existing mechanical `example.com` proof) unchanged in
+substance, followed by Step B, which now requires copying the constructed hostnames out of the step's
+own log and `curl`-ing them by hand _before_ trusting the step's own verdict — the step's own green or
+red output is not proof of anything until an independent request has already confirmed the addresses
+are real. Same toggle-on/observe/toggle-off boundary as before (before `8.1`, never after).
+
+No commit, no tick — scratchpad only, same as every prior round of this remediation. → @reviewer
+
+**[reviewer]** Round-4 re-audit — the constructed-address fix, adversarial pass. Re-ran `make gates`
+first-party: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 PUBLISHABLE_EXIT:0
+GATES_EXIT:0`, 224 tests, `git status --porcelain` clean aside from this DEVLOG edit. `actionlint`
+on the patched `publish.yml`: exit 0, first-party.
+
+**Verdict: Approve**, with one nit (not a false-green path) surfaced by testing beyond the worker's
+own fixtures.
+
+**Method.** Extracted the "Verify the bypass hostnames still refuse" step's `run:` body out of the
+actual shipped `publish.yml` via the `yaml` package already in this repo's own dependency set —
+independently of the worker's own extraction, as a cross-check that it's genuinely the same code —
+into a scratch checkout, with a hand-written fake `curl` (not the worker's) routing by URL shape
+(the `workers/subdomain` API call vs. the three hostname checks) and a synthetic deploy log. Ran
+every case below against that one extracted script, looking specifically for a component that is
+wrong or empty and the job still goes green.
+
+**Every subdomain-endpoint failure shape, independently reproduced — none reach a hostname join:**
+transport error (curl exit 6, no HTTP code at all) → `::error::...network/transport error...`,
+exit 1; HTTP 403 → `::error::...returned HTTP 403...`, exit 1; a non-JSON body with 200 → `jq` parse
+error surfaced, then the crafted `::error::...not valid JSON...`, exit 1; `"success":false` → the
+crafted `::error::...did not report success...`, exit 1; `"result":{}` (field absent) →
+`::error::...had no .result.subdomain...`, exit 1; `"result":{"subdomain":""}` (field present but
+blank) → same message, exit 1 (the `-z` check catches the empty string same as the missing-field
+case). All six match the worker's claim exactly.
+
+**Version-ID failure paths, independently reproduced:** no `Current Version ID:` line at all →
+loud failure before any construction; `xyz` (non-hex) → rejected; a 9-hex-character first segment
+(a deliberately corrupted UUID) → rejected. All three fail with the crafted `::error::`, never
+joining a guess.
+
+**The `|| true` the worker added this round (line 227) — checked for exactly the swallow-a-real-
+failure shape the brief warned about.** It sits on the `grep | tail | awk` pipeline that reads
+`Current Version ID:`; without it, a **legitimately empty** result (no matching line) kills the
+script under `pipefail` before the explicit `-z` check can run and print its own message — that's
+the bug the worker found and fixed. Checked whether the fix instead lets a _wrong_ value through
+silently: it doesn't, because the pipeline's output is either the correct value or genuinely empty
+(grep/awk don't produce a _wrong but non-empty_ string on a match failure — they produce nothing),
+and the explicit `-z` check immediately after catches the empty case with its own message. Confirmed
+by reproducing the "no line" case end to end: it now prints the intended `::error::` rather than
+dying silently.
+
+**The two pre-existing `|| true`s on the `curl` calls (lines 302, 327) — re-verified this round,
+not just carried forward on trust.** Confirmed directly against real network failures (a
+non-existent hostname and a refused local connection) that `curl -w '%{http_code}'` reliably writes
+`000` even though its own exit status is non-zero (6, 7) — so `|| true` here doesn't let a _wrong_
+value flow onward either; the explicit `""|000)` branch catches exactly what these transport
+failures actually produce.
+
+**Version-prefix length — confirmed genuinely undocumented, not just asserted by the worker.**
+Fetched Cloudflare's current "Preview URLs" page directly: it states the
+`<VERSION_PREFIX>-<WORKER_NAME>.<SUBDOMAIN>.workers.dev` format string and nothing about the
+prefix's length or derivation. The worker's comment matches this exactly — inference from two
+8-hex-character samples, correctly labeled as inference and pushed into the one-time procedure
+rather than asserted as fact.
+
+**Token permission — confirmed from Cloudflare's live API reference, not the worker's summary.**
+Fetched the "Get Subdomain" endpoint's documentation directly: it lists `Workers Scripts Write` and
+`Workers Scripts Read`, "at least one required." Matches the worker's claim exactly — no additional
+permission needed.
+
+**`handover-7.4.md` §5 — read for precision, not just presence.** The combined procedure sequences
+correctly: Step A proves the detection branch fires on a real 200 with a stand-in host; Step B
+requires the Product Owner to `curl` the _constructed_ addresses **by hand, independently of the
+step's own logic**, before ever trusting the step's own verdict — and only after that independent
+confirmation does it say to check whether the step's own output also flags them. That ordering is
+exactly what makes the procedure prove both claims it makes (the addresses are real; the check goes
+red when they serve) rather than one re-deriving the other. The recovery instruction on a mismatch
+("report the discrepancy rather than adjusting the script yourself") is precise and appropriately
+conservative. The final re-disable-and-reconfirm step and the "before `8.1`, never after" boundary
+are both present and unambiguous.
+
+**Extraction of the shipped code path — independently corroborated.** My own extraction (via `yaml`)
+and the worker's (also via `yaml`, per their post) both pull the literal `run:` string out of the
+real file; nothing here is a hand-retyped copy standing in for the thing that runs.
+
+**Confidentiality.** The two UUID-shaped strings in the new comment — the Product Owner's own
+`Current Version ID` and a "community-reported preview URL" example — are the right kind of thing to
+keep verbatim: a Version ID is an opaque per-deployment identifier with no client-identifying content
+(unlike a hostname or Worker name, which this file still never states literally), and the
+community-reported example is explicitly attributed as third-party, not this project's own. No vault
+name, hostname, Worker name, or account subdomain appears anywhere.
+
+**One nit, not a false-green path.** `version_id="$(grep -oE '...' "$DEPLOY_LOG" | tail -n1 | ...)"`
+picks the _last_ matching `Current Version ID:` line with no check that there was exactly one —
+unlike the discarded `workers.dev` scrape from round 2, which explicitly counted candidates and
+failed the job on zero **or more than one**. I constructed two adversarial logs to test this: a
+genuine duplicate (an earlier, different version ID followed by the true final one) and a decoy
+occurrence embedded in unrelated prose ahead of the real line — `tail -n1` correctly ignored both
+and picked the true final line in each case, because the real one is observed to always come last in
+a real log. So this isn't demonstrated to produce a wrong answer today, and I couldn't construct a
+case where it does — but it's an unexamined assumption in exactly the place this change keeps
+finding them: if a future wrangler version ever prints a decoy _after_ the true final line (a retry
+message, a verbose-mode summary), this silently picks the wrong one with no signal that it happened,
+where the equivalent risk for the old scrape was explicitly closed off. Worth an explicit
+`-eq 1`-style count check for symmetry with that precedent, but not blocking — the real log the
+architect observed shows exactly one occurrence, and I could not construct a realistic scenario
+where the current behavior picks wrong.
+
+→ @architect
+
+**[worker]** Fix — `handover-7.4.md` §5 stated the wrong refusal criterion for the bypass hosts.
+
+The re-disable paragraph said to confirm the two bypass hosts "refuse (non-200, non-404,
+non-unreachable...)" — that's the **positive control's** rule, not the bypass loop's. Re-read the
+shipped step: the loop's `case` only fails on `200` and on `""`/`000`; everything else, 404 included,
+hits the `*)` branch and prints `ok: ... (refused)`. So for `workers_dev_host`/`preview_host`, **404 is
+the expected pass**, and the old wording told the reader to require the opposite of what the code
+does, at exactly the point they'd be judging a real result by hand.
+
+Checked this against the record rather than assuming it: `2.2`'s verification (this DEVLOG, the
+section-2 posts) found the disabled `workers.dev` route returning 404 from Cloudflare's edge, confirmed
+against the dashboard as the right address rather than a mistyped one — so 404-from-a-disabled-route
+is exactly the observed shape here, not a guess.
+
+Rewrote the paragraph: bypass hosts should read non-200 and reachable after re-disabling (404 named as
+the expected shape, citing `7.3`'s fixture-deploy precedent), with the protected-host rule stated
+separately and explicitly as the different, non-404 one. Checked the rest of §4 and §5 for the same
+conflation — the "positive control fails" bullet in §4 and the rest of §5 already attribute each rule
+to the correct host; this was the one place the two got crossed. No code changed.
+
+Scratchpad only, no commit, no tick. → @reviewer
+
+**[architect]** Spec amended — the site root must always serve, and why that is a security fix
+
+**Found by the Product Owner running `7.8`'s Step B, against the live Worker.** The bypass check
+probes `https://<host>/`. With no index note in the published set there is no asset at the root, so
+that URL returns 404 — **and the check reads 404 as "refused"**. A site published with no front page
+would therefore serve every published note on an open `workers.dev` address while the check reported
+the bypass closed. That is a **false green in the one check whose failure mode is "content is
+reachable without authentication"**, and it was live in the workflow, not hypothetical: it is exactly
+what Step B was in the middle of demonstrating when the 404 appeared.
+
+Worth being precise about what went wrong in the reasoning, because the bug is older than the check.
+`## NEXT` has carried "**`/` is a 404 when no front page is selected**" since `7.3`'s fixture deploy,
+filed as a _cosmetic_ note about the real config needing to select one. The same fact, once a check
+started probing `/`, became a security defect — and nobody re-read the carried item when the check was
+written. **A known-harmless fact does not stay harmless when new code depends on it.**
+
+**Product Owner's decisions, 2026-08-28** — both taken after the finding was put to them:
+
+1. **Generate a front page when no index note is published.** The publisher emits an `index.html`
+   carrying the explorer. Chosen over a config-nominated front page (`front_page:`) and over probing a
+   known-published path instead of `/`. It fixes the false green at its root — the site root always
+   serves, so `/` becomes a truthful probe — and it removes the pressure to publish an index note that
+   was written for the vault's owner rather than for readers.
+2. **Amend this change rather than open a new one.** Keeps the defect and its proof in one place. The
+   cost is reopening `site-navigation`'s delta spec after `§5` closed, and a new `v1` tag before the
+   vault sees any of it.
+
+**Spec delta** (`specs/site-navigation/spec.md`): the existing front-page requirement now matches the
+index note **case-insensitively** and applies only when that note is in the published set. A new
+requirement, **"The site root always serves a page"**, adds the generated fallback and — the part that
+matters — requires that a generated page **contain no content derived from unpublished notes**. The
+vault holds an index note that is deliberately not published; a fallback that scraped it for a summary
+would be a leak wearing the costume of a convenience.
+
+**Section numbering — `## 8. Final verification` is now `## 9.`** New work is `## 8. A front page
+always exists`, placed before final verification because `9.1` publishes the real set and the false
+green must be closed first. **Every DEVLOG post written before today that says `8.1`, `8.3` or `8.6`
+means today's `9.1`, `9.3` and `9.6`.** The posts are append-only so they were not rewritten; this note
+is the mapping. `## NEXT` has been updated to the new numbers.
+
+`make validate` → `VALIDATE_EXIT:0`.
+
+**§7 is not closed and does not close until `8.4`.** Its supervisor review is deliberately held: the
+section's central guarantee is a check that we now know can report green while the bypass is open, and
+reviewing it as-is would be reviewing a section against a spec it does not yet meet.
+
+## 8. A front page always exists
+
+**[architect]** Base: f38db41 — the site root always serves a page, closing the bypass check's false
+green.
+
+**[architect]** Block brief — `8.1`–`8.3`, the generated front page → @worker
+
+`8.4` and `8.5` are the Product Owner's (a live observation and a tag), so this block is the publisher
+change only.
+
+**The spec**, `specs/site-navigation/spec.md`, two requirements:
+
+- **"The vault's index note is the front page"** — now matches the root index note **case-insensitively**
+  and applies only **when that note is in the published set**.
+- **"The site root always serves a page"** — WHEN no index note from the vault root is published, the
+  publisher generates a front page rather than leaving the root unserved. It carries the explorer, and
+  **contains no content derived from unpublished notes**.
+
+**Why this is a security fix, so you size the tests accordingly.** The workflow's bypass check probes
+`/` and treats a 404 as "the bypass refuses". A site with no root asset returns 404 there even when
+served wide open on a `workers.dev` address, so the check reported the bypass closed. `8.4` proves the
+fix live; your job is that the root is genuinely always served.
+
+**The leak clause is the sharp edge of `8.2`.** This vault holds an index note that is deliberately
+**not** published — it is the owner's own Obsidian landing page, not written for readers. A generated
+front page that helpfully pulled its title, first paragraph or link list would publish exactly the
+content the configuration excluded. **Assert the absence directly**: a fixture vault whose root index
+note is present but unselected, carrying a distinctive string, and an assertion that the string appears
+nowhere in the generated bytes. A test that only checks the file exists cannot fail the way that
+matters.
+
+**Also worth a test of its own**: the explorer on the generated page must list only published notes —
+it is the same explorer as every other page, so it should inherit that, but "should inherit" is how
+`§6`'s floor tests ended up asserting over configs that never named the floored entry.
+
+**Watch the `EXCLUSION_FLOOR` interaction.** `CLAUDE.md` is a floor entry; an index note is not, but
+convince yourself the case-insensitive match cannot be used to reach a floored path by case variation
+on a case-insensitive filesystem. Say what you checked.
+
+**Interaction with the existing warning.** The publisher currently emits a `[WARNING]` when no front
+page is selected. Decide whether that stays, changes wording, or goes — it is no longer describing a
+degraded site — and say which and why. Do not silently drop it: `9.5` reviews the warning lines with
+the Product Owner.
+
+`test-vault/` selects no index note today, so the committed fixture already exercises the generated
+path; check whether its expected-output tests need updating and update them if so.
+
+Gates all five, quote the exit lines. No commit, no tick. → @reviewer when done.
+
+**[worker]** Implemented — 8.1–8.3, the generated front page → @reviewer
+
+**8.1** — `wikilinks.ts`: `isVaultRootIndexNote` (root-only, case-insensitive against
+`VAULT_ROOT_INDEX_NOTE`) is now the single decision point both `outputPathForNote` and the new
+`findVaultRootIndexNote(published)` build on, so a lowercase `index.md` or an `INDEX.md` at the vault
+root collapses onto `index.html` exactly the way `Index.md` already did, and a subfolder's own
+`index.md` still doesn't.
+
+**`EXCLUSION_FLOOR` check, as asked.** `resolveSelection` already filters every floor-withheld path out
+of `published` via `isExcluded` before this code ever sees it, and `isExcluded` is itself
+case-insensitive across the whole floor list — so by the time `findVaultRootIndexNote` runs, nothing
+floor-withheld can be in its input regardless of case. Independently: none of the floor's own entries
+(`CLAUDE.md`, `.claude`, `.obsidian`, `Journal`, `Private`) is a case variant of `Index.md`, so even an
+unfiltered list couldn't be mistaken for the front page by this match. Covered by a test in
+`wikilinks.test.ts` (`findVaultRootIndexNote` returns `undefined` over the floor's own names) — belt and
+braces, since the real guarantee is the upstream filter, not this function.
+
+**8.2** — `page.ts`: `renderGeneratedFrontPage(navigation)` takes the navigation tree and nothing else —
+no note path, no frontmatter, no markdown. It has no parameter through which an unpublished note's
+content could reach it, so the leak clause is a signature guarantee, not just a tested outcome. Title is
+the fixed string `"Home"`; body is one fixed sentence ("Select a page from the navigation."); explorer
+renders with `currentNotePath = ""`, so no folder opens by default (there's no single page this
+represents). `writer.ts`'s `writeSite` gained an optional fourth argument, written to `index.html` after
+the `pages` loop and outside `assertNoOutputPathCollisions` — it isn't a note and has no `notePath` to
+collide on. `index.ts`'s `publishSite` calls `renderGeneratedFrontPage(navigation)` only when
+`findVaultRootIndexNote(published)` is `undefined`, so it can never be written alongside a real page that
+already owns `index.html`.
+
+**The leak test, sized as the brief asked.** New fixture `test/fixtures/generated-front-page-vault/`:
+a root `Index.md` (title "Fixture Owner's Personal Landing Page", body carrying
+`FIXTURE-MARKER-4f2c9-DO-NOT-PUBLISH`) never named by either of its two configs, plus a second
+unpublished note carrying its own marker, plus a `Handbook/Onboarding.md` that is published. The test
+runs the real CLI against `without-index.config.yaml` and asserts the generated `index.html`'s raw bytes
+contain neither marker, neither title — the assertion that fails the way that matters, not an
+existence check. A second test asserts the explorer on that page lists `Onboarding` and nothing else
+(no `Unpublished`, no stray `/Index.html` href).
+
+**8.3** — same fixture, `with-index.config.yaml` adds `notes: [Index.md]`. One test confirms the real
+note's title and marker now appear (replaced); another runs `without-index` then `with-index` then
+`without-index` again against the same output directory and confirms the marker disappears both times
+it should — replaced, then restored, not just replaced once.
+
+**The existing `[WARNING]` — dropped, not reworded.** Reasoning: the site root now always serves
+something either way, so an unpublished root index note is no longer a broken route — it's either an
+ordinary vault with no root index note at all, or the vault owner's own choice per the Product Owner's
+decision 1 rationale ("removes the pressure to publish an index note that was written for the vault's
+owner rather than for readers"). Neither shape is something the Product Owner needs to act on the way an
+unresolved wikilink or a dropped Bases block is, so it no longer earns a line. `collectSelectionWarnings`
+and its call site are untouched — only the one `collector.push` for the missing index note, and the
+now-unused `VAULT_ROOT_INDEX_NOTE` import in `cli.ts`, were removed. Flagging for `9.5` per the brief:
+this is a removal to sanity-check with the Product Owner, not a wording tweak.
+
+**Corrected an inaccuracy in the brief.** `test-vault/publish.config.yaml` does select `Index.md`
+(`notes: [Index.md]`) and it does publish today — running the CLI against the committed fixture writes
+a real, non-generated `index.html`. The committed fixture does not exercise the generated path; no
+`test-vault/` or `test-vault.test.ts` change was needed for 8.1–8.3, and I didn't invent a reason to
+touch it.
+
+**Existing tests updated** (`test/index.test.ts`): the two describe blocks whose stderr line counts
+included the old "no front page" warning (`warnings-vault`, `absent-floor-vault`) had that line and
+count adjusted; the "warns when Index.md is not published" block was rewritten as
+"8.2 a generated front page when Index.md is not published" — it now asserts the absence of the warning
+and the presence of a generated `index.html` (with its own no-leak assertion against
+`no-front-page-vault`'s `Index.md`, which got a distinctive marker string of its own so that assertion
+isn't vacuous either).
+
+`BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0` — all five green.
+
+→ @reviewer
+
+**[reviewer]** Audit — 8.1–8.3, the generated front page
+
+**Verdict: Approve.**
+
+Re-ran the gates myself against the working tree: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0
+LINT_EXIT:0 VALIDATE_EXIT:0 PUBLISHABLE_EXIT:0 GATES_EXIT:0` — 244/244 tests, `make gates` clean
+end to end. `git diff f38db41 --stat` touches only `src/{cli,page,wikilinks,writer}.ts`,
+`test/{index,page,wikilinks,writer}.test.ts`, one fixture edit, two new fixture directories, and
+the DEVLOG — no `Makefile`, no `package.json`, no dependency added.
+
+**1. The leak clause.** Verified structurally, not just by signature-reading.
+`renderGeneratedFrontPage(navigation: readonly NavigationEntry[])` (`src/page.ts:53`) builds its
+document from `buildDocument("Home", navigation, "", [fixed <p> text node])` — the only variable
+input is `navigation`, and `NavigationEntry` (`src/navigation.ts`) itself is built from
+`published` alone: a folder or note label, its path, its sort key. None of those can carry an
+_unpublished_ note's title or content — the tree is constructed only from what's already in
+`published`, so there's no channel for the excluded root `Index.md`'s title, body, or even its
+bare existence (no "N notes exist but 1 was hidden" count anywhere) to reach the page. Confirmed
+by reading `navigation.ts` directly rather than trusting the docstring.
+
+The fixture test earns its keep: `test/fixtures/generated-front-page-vault/Index.md` carries both
+a distinctive title (`Fixture Owner's Personal Landing Page`) and a body marker
+(`FIXTURE-MARKER-4f2c9-DO-NOT-PUBLISH`), neither referenced by `without-index.config.yaml`, and
+`test/index.test.ts`'s "contains no content derived from..." test asserts the absence of all four
+strings (both markers, both titles) in the raw generated bytes. I checked this is not vacuous by
+temporarily reasoning through the counterfactual: if `renderGeneratedFrontPage` took `published`
+or `vaultRoot` instead of `navigation` and rendered the unselected root note's title, this test
+would fail exactly as intended. Good — this is the sharp test the brief asked for, not an
+existence check.
+
+**2. Root always served — checked every configuration in the brief's list.**
+
+- Empty published set → `findVaultRootIndexNote([])` is `undefined` → generated page written,
+  `pages` loop is a no-op. Root served.
+- Set whose only note is at the root but isn't named `Index.md` → same path, generated page
+  written to `index.html`, the one real note lands at its own `.html`. Root served.
+- A note literally named `index.html` colliding with the generated write: not reachable —
+  `listVaultNotes` (`src/selection.ts:231`) only ever collects paths ending `.md`, so `published`
+  can never contain a bare `index.html`; the only way to reach output path `index.html` is through
+  `isVaultRootIndexNote`, which is exactly the case `findVaultRootIndexNote` checks before calling
+  the generator. No path where both a real page and the generated page target the same file: the
+  generated write is unconditional on `findVaultRootIndexNote(published) === undefined`, and
+  `writeSite` writes it after, outside `assertNoOutputPathCollisions`, correctly — there's nothing
+  in `pages` for it to collide with by construction, not by luck.
+- Two root-level notes both matching the index name by case (e.g. `Index.md` and `INDEX.md` both
+  explicitly named in config on a case-sensitive CI filesystem): both would map to `index.html`
+  via `outputPathForNote`, both land in `pages`, and `assertNoOutputPathCollisions` (pre-existing,
+  untouched by this diff) throws — a loud failure, not a silent overwrite. Fine as a pre-existing
+  guarantee this block doesn't disturb.
+
+**3. Case-insensitive matching (8.1) — consistency check.** `isVaultRootIndexNote` lowercases;
+so does `noteNameKey` in the same file (pre-existing, used by `buildNoteIndex` for wikilink
+resolution) and `matchesFloorFolder`/`matchesFloorFile` in `selection.ts` (the exclusion floor).
+All three of this codebase's name-comparison points are case-insensitive, so 8.1 is consistent
+with existing precedent, not a new outlier. The one case-_sensitive_ comparison in the codebase —
+`resolveSelection`'s `vaultSet.has(note)` matching a config's `notes:` entry against the walked
+vault paths — is pre-existing, untouched, and orthogonal (it's config-to-filesystem matching, not
+front-page detection). The floor argument in the worker's report is right and I verified it
+independently: `isExcluded` runs inside `resolveSelection` before `published` is returned
+(`selection.ts:87`), so nothing floor-withheld can reach `findVaultRootIndexNote` regardless of
+case, and separately none of the floor's five entries is a case variant of `Index.md` even were
+that filter absent — the `wikilinks.test.ts` test covers the latter, narrower fact honestly (it
+doesn't overclaim to test the upstream filter).
+
+**4. Replace and restore (8.3).** Read and re-ran
+`"is replaced by..."` / `"removing the index note...restores..."` in `test/index.test.ts` — both
+assert on marker strings and `<title>`, not just file existence, and both passed under my own
+`make gates` run. The restore case exercises the output-directory-reuse path (`with-index` then
+`without-index` against the same `outputDir`), which is the one likely to regress silently if the
+stale-file-clearing in `writer.ts` ever stopped covering `index.html`; it doesn't.
+
+**5. The dropped `[WARNING]`.** Reasoning holds: the spec amendment's "site root always serves a
+page" requirement means an unpublished root index note is no longer a broken route by definition,
+so the warning was describing a condition that no longer degrades anything. Checked no test still
+asserts the old warning text survives — `test/index.test.ts`'s "8.2 a generated front page..."
+describe block explicitly asserts `result.stderr` does _not_ contain `"Index.md"` or `"front
+page"`, and the two other describe blocks whose stderr line-counts included it were updated in
+the same diff, not left stale. Flagged correctly for `9.5` — I have no objection to the removal
+itself, but agree with the worker that it's a Product-Owner-facing behavior change, not a pure
+refactor.
+
+**6. Confidentiality.** Both new fixture directories (`generated-front-page-vault`,
+`case-insensitive-index-vault`) hold only invented titles/bodies with synthetic marker strings —
+no vault content, no real hostnames or identifiers, consistent with `## NEXT`'s standing warning
+about the repo going public.
+
+**Architectural note, not a blocker — carried from `## NEXT`, still open.** The `.vault-publisher-output`
+marker file item ("`8.1`/`8.3` should decide whether it is excluded from what is served") isn't
+addressed by this diff, and the block brief didn't ask for it either — it's still just sitting in
+`## NEXT`. Since this is the block that made the root's serving behavior the whole point, it was
+the natural place to close that item out, but leaving it for a later block is fine as an
+Architect call, not a defect in this one. Restating it here so it doesn't quietly fall off `##
+NEXT` between sessions.
+
+No blockers, no nits worth holding the block for. → @architect
+
+**[architect]** Block brief — the two parked `publish.yml` nits, before the Product Owner's final run
+→ @worker
+
+Both were raised by the reviewer across earlier rounds and deliberately not blocked on at the time.
+They are being closed now for one reason: the Product Owner is about to copy the workflow into the
+vault repository one final time and run the whole of `7.8`'s Step B against it. Anything not fixed now
+costs another copy-over later.
+
+The file is the scratchpad draft, as before — not in this repository:
+`publish.yml` in the session scratchpad. `handover-7.4.md` beside it may need a touch.
+
+**Nit 1 — the version ID is read with `tail -n1` and no assertion that there was exactly one match.**
+The discarded round-two scrape explicitly failed on more than one candidate; the construction that
+replaced it does not. The reviewer built both a genuine duplicate and a decoy occurrence embedded in
+prose, and `tail -n1` picked the true final line in both — so this is not demonstrated to be wrong
+today. It is an unexamined assumption sitting in exactly the spot this change keeps finding them, and
+the check's whole value rests on the address being the one this deploy produced. Make the count
+explicit and fail on anything other than one match, or — if you can show `tail -n1` is strictly
+correct for every shape wrangler can emit — say so with the evidence and leave it. Either is
+acceptable; asserting without evidence is not.
+
+**Nit 2 — `protected_host` carries the route pattern verbatim, path glob included.** With
+`custom_domain: true` the pattern is a bare hostname, which is why the live runs have been fine
+(confirmed against the real config: no slash in it). With a routes-style pattern such as
+`example.org/*` the control would request `https://example.org/*/` — a nonsense URL for the one check
+whose job is to discriminate a real refusal from a typo. Take the host portion of the pattern, and
+fail loudly rather than guessing if what remains is not a plausible hostname.
+
+**Test both against the shapes that matter**, not just the shape in use: for nit 1, zero matches, one,
+two identical, two different, and a `Current Version ID:` appearing inside an error message rather
+than a success line; for nit 2, a bare hostname, `host/*`, `host/path/*`, and something that is not a
+hostname at all. Identifier-free fixtures — invent every value.
+
+Gates and `actionlint`, quote the exit lines. Scratchpad only, no commit, no tick. → @reviewer.
+
+**[worker]** Closed both parked `publish.yml` nits.
+
+**Nit 1 — version-ID match counting.** Replaced `tail -n1`/no-assertion with an explicit count:
+`grep -oE` collects every `Current Version ID:` occurrence in the deploy log, and the step fails
+loudly (`::error::found N 'Current Version ID:' occurrences...`) unless the count is exactly 1 —
+zero and two-or-more (identical or distinct) are both refused now, matching the discarded
+round-two scrape's original discipline rather than assuming the last line is this deploy's.
+
+**Nit 2 — `protected_host` reduced to a host.** `route_pattern` (renamed from `protected_host`) is
+read as before; `protected_host` is now `${route_pattern%%/*}` — the host portion only — validated
+against a hostname-shaped regex before use, failing loudly (`does not reduce to a plausible
+hostname`) if what's left isn't one. Bare `custom_domain: true` hostnames (the vault's real shape)
+pass through unchanged; `host/*` and `host/path/*` both reduce to `host`.
+
+**Testing.** `verify-step.sh`'s `run:` text was extracted programmatically from `publish.yml`
+(`js-yaml` via `node`, in the session scratchpad — not committed anywhere) rather than
+hand-copied, then executed verbatim against 9 fixture cases: for nit 1, zero/one/two-identical/
+two-different/one-embedded-in-an-error-message; for nit 2, bare hostname, `host/*`,
+`host/path/*`, and a string that isn't a hostname at all. A stub `curl` (records requested URLs,
+serves a canned `workers/subdomain` response, returns configurable status codes) and a stub
+`mktemp` (this sandbox's `/var/folders` default is write-denied even with `TMPDIR` set — a
+harness artefact, not something real CI hits) stood in for the network; all 9 passed, and a
+re-extraction after the edits diffed identical to the tested copy, confirming the shipped code
+path is what ran. Identifier-free fixtures throughout (invented worker name, hostnames, UUIDs).
+
+Also updated `handover-7.4.md` §4's failure-mode list with the two new loud-failure shapes
+(duplicate version-ID lines; a route pattern that doesn't reduce to a hostname), so the Product
+Owner recognizes them if hit during the real run.
+
+Scratchpad-only change; this repository's tree is untouched.
+`ACTIONLINT_EXIT:0` `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0
+PUBLISHABLE_EXIT:0 GATES_EXIT:0` — all green (gates ran against this repo's existing tree, which
+this block did not modify; they establish the repo wasn't broken while the scratchpad file was
+edited, not that the scratchpad edit itself is covered by them).
+
+No commit, no tick — scratchpad file, no `N.M` tasks. → @reviewer
+
+**[reviewer]** Round-5 (final) re-audit — the two parked nits, attacked directly. Re-ran `make gates`
+first-party: `BUILD_EXIT:0 TEST_EXIT:0 FORMAT_EXIT:0 LINT_EXIT:0 VALIDATE_EXIT:0 PUBLISHABLE_EXIT:0
+GATES_EXIT:0`, 224 tests, `git status --porcelain` clean aside from this DEVLOG edit. `actionlint`
+on the patched `publish.yml`: exit 0, first-party.
+
+**Verdict: Approve** — this is ready for the Product Owner's Step B run against the real Worker.
+Two non-blocking nits below, both about message/pattern polish, neither a false-green path.
+
+**Method — diffed against my own round-4 approved text first**, to establish scope before attacking
+anything: the only changes are the version-ID counting block and the `route_pattern` →
+`protected_host` reduction/validation. The subdomain-call block and the bypass/control loop are
+byte-identical to what I approved last round. Then extracted the "Verify the bypass hostnames still
+refuse" step's `run:` body out of the actual shipped file via the `yaml` package (independently of
+the worker's `js-yaml` extraction) and ran it against fixtures of my own construction, not the
+worker's nine.
+
+**Nit 1 (occurrence count) — verified against the exact shape the brief was worried about.** Built
+six deploy-log fixtures: zero matches, one, two identical, two different, one match embedded in an
+unrelated error/rollback sentence, and — the sharpest case — a real final line preceded by a decoy
+occurrence embedded in prose (the exact scenario my round-4 nit was about). Results: zero → loud
+failure; one (including the one embedded in an error message, which the step has no way to
+distinguish from a "real" line and correctly doesn't try to) → succeeds using that one value; two
+identical, two different, and real-plus-decoy → all three now fail with
+`::error::found 2 'Current Version ID:' occurrences...`, where round 4's `tail -n1` would have
+silently picked one and gone green. Confirms the fix isn't filtering matches by any accidental
+heuristic — it counts every regex hit and refuses on anything but exactly one.
+
+**Nit 2 (hostname reduction) — verified against the shapes in the brief, with one testing correction
+worth recording.** My first pass tested the regex in isolation without invoking `bash` explicitly,
+and this sandbox's plain shell is `zsh` — whose `[[ =~ ]]` disagrees with bash's on a few of these
+patterns. Re-ran every case through `bash -c` explicitly (matching what a GitHub Actions `run:` step
+actually executes) and, separately, end-to-end through the real extracted step against two full
+fixture configs. Confirmed under real bash: a bare hostname (the vault's actual `custom_domain: true`
+shape) passes unchanged; `host/*` and `host/path/*` both reduce to `host` and the positive control
+requests the clean URL (verified end-to-end: `positive control (protected): https://notes.fixture.
+example/`, not the `.../*/ ` nonsense path from round 4); `/*` alone (nothing left after stripping),
+an empty pattern, and a pattern that is only a path (`just-a-path/no-host` → `just-a-path`, no dot) are
+all correctly rejected with the crafted `::error::...does not reduce to a plausible hostname`; a
+Punycode-encoded IDN label passes (as it should — Cloudflare represents IDN routes as ASCII/Punycode
+already, so this is the realistic shape, not a raw Unicode one); a hostname-with-port and a bare
+single-label host (`localhost`) are both rejected, which is correct for this project's actual shape
+of route — a real Cloudflare custom-domain pattern is always at least two labels and never carries a
+port. One real edge found: a trailing-dot FQDN (`notes.example.org.`, valid DNS notation) is rejected
+by the regex, since it requires the string to end on an alphanumeric label. Low practical risk —
+Cloudflare's own dashboard/API never emits `routes[0].pattern` with a trailing dot — but noted below
+as a nit rather than silently accepted as fine.
+
+**The stubbed `curl`/`mktemp` — attacked specifically, per the brief's sharpest concern.** The
+worker's own 9-fixture suite stubs `mktemp` to always succeed (a harness artefact of this sandbox's
+`/var/folders` write-denial, as they note), which means their own suite never exercises a real
+`mktemp` failure. I tested that path independently: replaced `mktemp` on `PATH` with one that fails,
+and confirmed the script does **not** continue with an empty or bogus path — `subdomain_body_file=
+"$(mktemp)"` is a bare assignment (not guarded by `if !`), so `set -e` catches the failing command
+substitution and the script exits 1 immediately, before touching `curl` at all. The message printed
+is `mktemp`'s own raw stderr, not this step's `::error::` house style — a smaller version of the same
+"raw crash vs. crafted message" gap round 3 found and fixed for the `jq` parse-error path — but it is
+fail-safe, not fail-open, so it isn't a blocker. Also confirmed a real (non-stubbed) `mktemp` still
+works correctly on the happy path, so the worker's stub isn't hiding a _success_-path problem either.
+
+**Subdomain-call and bypass-loop branches — spot-checked, not just trusted from the diff.**
+Re-ran transport-fail, `success:false`, a bypass host returning 200, and the positive control
+returning 404 against the current file: all four still produce the exact messages and exit codes
+approved in round 4. Nothing regressed.
+
+**Handover.** `handover-7.4.md` §4's two new bullets (the occurrence-count failure, the
+route-pattern-doesn't-reduce failure) match the code's actual behavior and message text exactly.
+
+**Nits (not blocking — this file is ready for the Product Owner's Step B):**
+
+- The trailing-dot FQDN case above — if `routes[0].pattern` is ever written with a trailing dot,
+  the positive control would refuse to run rather than accepting a hostname that's arguably valid.
+  Given Cloudflare never emits that form for a route pattern, this is theoretical; flagging so it's a
+  recorded, not rediscovered, gap if the shape of that config ever changes.
+- The `mktemp` failure path prints a raw, unstyled error rather than this step's usual `::error::`
+  crafted message. Fails safe either way; a `::error::` around it would just make a rare failure as
+  legible as every other one in this step.
+
+→ @architect

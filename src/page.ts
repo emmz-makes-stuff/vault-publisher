@@ -38,6 +38,28 @@ export function renderPage(input: PageInput): string {
   return documentStringifier.stringify(document);
 }
 
+/**
+ * The fallback front page `index.ts` writes at the site root when no index
+ * note from the vault root is in the published set (`site-navigation`'s
+ * "The site root always serves a page"). Built from `navigation` alone —
+ * the same tree every other page's explorer renders from `published`, and
+ * nothing else — so this function has no way to read, and therefore no way
+ * to leak, the content, title or existence of any unpublished note,
+ * including a vault-root index note the configuration deliberately
+ * excluded. Its own title and body text are fixed strings, not derived
+ * from anything vault-supplied.
+ *
+ * `currentNotePath` is `""`, not a real note path — no folder in the
+ * explorer is the "current" one, so `renderExplorer` opens none of them by
+ * default, matching there being no single page this represents.
+ */
+export function renderGeneratedFrontPage(navigation: readonly NavigationEntry[]): string {
+  const document = buildDocument("Home", navigation, "", [
+    element("p", {}, [{ type: "text", value: "Select a page from the navigation." }]),
+  ]);
+  return documentStringifier.stringify(document);
+}
+
 function buildDocument(
   title: string,
   navigation: readonly NavigationEntry[],
