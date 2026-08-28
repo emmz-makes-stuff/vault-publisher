@@ -8962,3 +8962,48 @@ the more useful evidence: the value stayed masked on an error path, not merely o
   What remains is the Product Owner confirming their local vault clone is clean after pulling.
 
 `7.8` is mid-flight — Step B running now.
+
+**[architect]** `7.8`, `8.4`, `8.5` **verified and ticked** — Step B run end to end against the real
+Worker, with a control, by the Product Owner.
+
+**The construction is correct.** With both flags enabled, the two hostnames the step _constructs_ —
+never scrapes, never hardcodes — each returned **200 with the site's content**, confirmed by the
+Product Owner's own `curl`, independent of the step's logic. That settles the change's last unverified
+assumption: the version prefix really is the first eight hex characters of the ID `wrangler deploy`
+prints. It was inferred from two samples and a docs format string, deferred deliberately to this
+procedure rather than asserted, and it survived.
+
+**The check detects a real open bypass.** The same run went red naming **both real hosts**, not a
+stand-in. `7.8`'s "a check that cannot fail proves nothing" is discharged against the addresses it
+actually guards. And the exposure it reported was genuine — with the flags on, the published content
+was being served on two public addresses that carry no Access policy.
+
+**`8.4` closed the false green by demonstration.** Before `§8` the same scenario produced a _green_
+run: the site was served wide open and the check reported the bypass refused, because it probed `/`,
+`/` had no asset, and 404 reads as "refused". Same scenario, after the generated front page: red.
+That is the defect closed by observation rather than by inspection, which is what the task asked for.
+
+**`8.5`** — the vault's run rendered a front page and the site serves at its root behind Access.
+
+**⚠️ New finding, recorded rather than swept: disabling a bypass is not instantaneous, and the check
+can produce a false RED.** Reverting both flags to `false` and deploying produced a **red** run
+reporting both addresses still serving `200`, while the Product Owner's `curl` against the same
+addresses from a different vantage point returned `404`. A re-run minutes later, with nothing changed,
+went **green**, and `curl` confirmed `404` on both. So the addresses were closing while the runner
+still saw them open — propagation across edge locations, not a defect in the derivation.
+
+Two things follow, and they are different:
+
+1. **The check is racy in one direction only.** It probes seconds after `wrangler deploy` returns, so a
+   deploy that _transitions_ a bypass from serving to not-serving can be observed mid-flight. It fails
+   safe — a false red blocks a publish rather than passing an exposure — but a spurious red at `9.3`,
+   after real content is published, is exactly the moment a confusing failure costs the most. Worth a
+   bounded settle-and-retry: probe, wait, re-probe, and fail only if it is **still** serving at the end
+   of the window. That is strictly more accurate than one probe, because a genuinely open bypass stays
+   `200` indefinitely while a closing one does not.
+2. **The underlying property is real and belongs in the record**: there is a window after disabling a
+   bypass hostname during which content is still served, and its length is not something this project
+   has measured. `reader-access` says no alternative hostname SHALL serve published content; a
+   propagation window is a qualification on that guarantee which no spec currently states.
+
+**`§7` still has `7.6` and `7.7` open**, both Product Owner observations, neither blocked.
